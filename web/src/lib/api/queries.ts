@@ -44,10 +44,16 @@ export function useEntries(
 	}));
 }
 
-export function useEntry(id: number) {
+// `id` may be passed as a plain number (one-shot lookup) or as a getter
+// returning a number. The getter form lets a route component re-key the
+// query as its `[id]` param changes — without it, the closure freezes
+// the initial id and navigating to a sibling entry would keep showing
+// the old article.
+export function useEntry(id: number | (() => number)) {
+	const getId = typeof id === 'function' ? id : () => id;
 	return createQuery(() => ({
-		queryKey: keys.entry(id),
-		queryFn: () => getJSON<Entry>(`/entries/${id}`)
+		queryKey: keys.entry(getId()),
+		queryFn: () => getJSON<Entry>(`/entries/${getId()}`)
 	}));
 }
 
