@@ -7,7 +7,7 @@
 	import Wordmark from '$brand/Wordmark.svelte';
 	import { swatchFor } from './EntryRow.svelte';
 
-	let { active = 'unread' }: { active?: 'unread' | 'all' | 'saved' } = $props();
+	let { active }: { active?: 'unread' | 'all' | 'saved' } = $props();
 
 	const feeds = useFeeds();
 	const unread = useEntries({ status: 'unread', limit: 1 });

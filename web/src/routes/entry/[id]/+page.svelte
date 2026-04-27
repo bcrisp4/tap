@@ -125,7 +125,7 @@
 	</div>
 {:else}
 	<div class="tap reader-shell">
-		<Sidebar active="unread" />
+		<Sidebar />
 		<ReaderRail entries={railEntries} selectedId={entry.data.id} />
 		<div class="reader-pane">
 			<ReaderHeader
