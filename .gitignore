@@ -21,6 +21,9 @@ node_modules/
 /web/.env
 /web/.env.local
 
+# Staged SPA build for //go:embed (Makefile copies web/build here)
+/internal/web/build/
+
 # Editor / OS
 .DS_Store
 *~

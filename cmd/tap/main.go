@@ -26,6 +26,7 @@ import (
 	"github.com/bcrisp4/tap/internal/server"
 	"github.com/bcrisp4/tap/internal/storage"
 	"github.com/bcrisp4/tap/internal/version"
+	"github.com/bcrisp4/tap/internal/web"
 )
 
 func main() {
@@ -179,6 +180,11 @@ func runServe(ctx context.Context, cfg *config.Config, stderr io.Writer) error {
 		HTTPClient: httpCli,
 		RunState:   pol.State(),
 	}))
+	// SPA fallback: every non-API path falls through to the embedded
+	// SvelteKit build (or the placeholder when the SPA isn't embedded).
+	// http.ServeMux's longest-prefix-wins routing keeps /api/v1/* and
+	// /healthz registered above this from matching here.
+	srv.Mount("/", web.Handler())
 
 	logger.Info("tap starting",
 		"version", version.String(),
