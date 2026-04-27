@@ -1,8 +1,10 @@
 package config_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/peterbourgon/ff/v4"
@@ -89,4 +91,58 @@ func TestRegisterFlags_PrecedenceFlagOverEnvOverFile(t *testing.T) {
 func TestRegisterFlags_DurationParses(t *testing.T) {
 	cfg := parse(t, []string{"--http-timeout=5s"}, "")
 	require.Equal(t, "5s", cfg.HTTPTimeout.String())
+}
+
+// captureSet returns a set callback that records every (name, value)
+// pair YAMLParser hands it, plus a pointer to that record slice.
+type kv struct{ name, value string }
+
+func captureSet() (func(name, value string) error, *[]kv) {
+	var calls []kv
+	return func(name, value string) error {
+		calls = append(calls, kv{name, value})
+		return nil
+	}, &calls
+}
+
+func TestYAMLParser_HyphenatesUnderscoredKeys(t *testing.T) {
+	set, calls := captureSet()
+	require.NoError(t, config.YAMLParser(strings.NewReader("db_path: /foo\n"), set))
+	require.Equal(t, []kv{{"db-path", "/foo"}}, *calls)
+}
+
+func TestYAMLParser_PreservesUnderscoresInValues(t *testing.T) {
+	set, calls := captureSet()
+	require.NoError(t, config.YAMLParser(strings.NewReader("db_path: /path_with_underscore\n"), set))
+	require.Equal(t, []kv{{"db-path", "/path_with_underscore"}}, *calls)
+}
+
+func TestYAMLParser_NestedMapsStitchWithDot(t *testing.T) {
+	// ffyaml flattens nested maps by stitching segments with `.`. The
+	// rewriter only touches `_`, so a nested map surfaces here as
+	// `proxy.cache-dir`. (ff would reject this as an unknown flag in
+	// real use; the parser itself faithfully forwards the dotted form.)
+	set, calls := captureSet()
+	yaml := "proxy:\n  cache_dir: /x\n"
+	require.NoError(t, config.YAMLParser(strings.NewReader(yaml), set))
+	require.Equal(t, []kv{{"proxy.cache-dir", "/x"}}, *calls)
+}
+
+func TestYAMLParser_ListCallsSetPerElement(t *testing.T) {
+	set, calls := captureSet()
+	yaml := "allowed_hosts:\n  - a\n  - b\n"
+	require.NoError(t, config.YAMLParser(strings.NewReader(yaml), set))
+	require.Equal(t, []kv{
+		{"allowed-hosts", "a"},
+		{"allowed-hosts", "b"},
+	}, *calls)
+}
+
+func TestYAMLParser_PropagatesSetError(t *testing.T) {
+	boom := errors.New("boom")
+	err := config.YAMLParser(
+		strings.NewReader("db_path: /foo\n"),
+		func(name, value string) error { return boom },
+	)
+	require.ErrorIs(t, err, boom)
 }

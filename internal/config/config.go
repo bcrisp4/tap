@@ -78,7 +78,16 @@ func RegisterFlags(fs *ff.FlagSet, cfg *Config) {
 // converts YAML keys from underscore form (db_path) to the hyphenated
 // flag long-name form (--db-path) before resolving them. This matches
 // design.md §9, where the YAML key is the same as the env-var name in
-// lowercase (TAP_DB_PATH ⇄ db_path) while CLI flags use hyphens.
+// lowercase (TAP_DB_PATH ⇄ db_path) while CLI flags use hyphens. Only
+// the key is rewritten; values are forwarded verbatim, so underscores
+// inside a value (e.g. a path) are preserved.
+//
+// YAML keys must be flat: top-level scalars, lists, or maps-of-scalars
+// only. ffyaml stitches nested maps with `.` (so `proxy: { cache_dir:
+// /x }` arrives here as `proxy.cache-dir` after rewriting), and Tap
+// registers no flag for the dotted form, so nested maps surface as an
+// "unknown flag" error from ff. Stick to flat keys matching the
+// registered flag long-names with `-` ⇄ `_` translation.
 func YAMLParser(r io.Reader, set func(name, value string) error) error {
 	return ffyaml.Parse(r, func(name, value string) error {
 		return set(strings.ReplaceAll(name, "_", "-"), value)
