@@ -9,7 +9,8 @@
 	// components stay pure-presentation.
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { useFeeds, useEntries, useToggleRead, useToggleSaved } from '$api/queries';
+	import { useQueryClient } from '@tanstack/svelte-query';
+	import { useFeeds, useEntries, useToggleRead, useToggleSaved, keys } from '$api/queries';
 	import { putJSON } from '$api/client';
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import TopBar from '$lib/components/TopBar.svelte';
@@ -20,6 +21,7 @@
 	import MobileTabBar from '$lib/components/MobileTabBar.svelte';
 	import { bindKeyboard } from '$lib/keyboard.svelte';
 
+	const qc = useQueryClient();
 	const feeds = useFeeds();
 	const entries = useEntries({ status: 'unread' });
 	const toggleRead = useToggleRead();
@@ -72,10 +74,18 @@
 		}
 	});
 
-	function markAllRead() {
+	async function markAllRead() {
 		// Bulk mark: design.md §6 specifies PUT /entries/read.
 		// Empty body = "mark all unread entries (across all feeds) read".
-		void putJSON('/entries/read', {});
+		// Errors are caught locally so they don't surface as unhandled
+		// rejections; on success we invalidate the entries cache so the
+		// river refetches and the now-read entries drop off.
+		try {
+			await putJSON('/entries/read', {});
+			await qc.invalidateQueries({ queryKey: keys.entriesAll() });
+		} catch (err) {
+			console.error('mark-all-read failed', err);
+		}
 	}
 
 	function refresh() {
@@ -102,7 +112,7 @@
 			<RiverList
 				entries={visible}
 				feeds={feeds.data?.data ?? []}
-				selectedId={null}
+				{selectedId}
 				density="default"
 				showSummary={true}
 				onSelect={(id) => goto('/entry/' + id)}
