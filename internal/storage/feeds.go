@@ -199,9 +199,10 @@ func boolInt(b bool) int {
 }
 
 // CommitPollSuccess writes the new entries and updates the feed in a
-// single IMMEDIATE transaction. Duplicate (feed_id, hash) collisions
-// are silently dropped (race tolerance). Returns the recomputed
-// weekly_entry_count.
+// single IMMEDIATE transaction (the driver DSN sets _txlock=immediate
+// so every BeginTx starts with BEGIN IMMEDIATE). Duplicate (feed_id,
+// hash) collisions are silently dropped (race tolerance). Returns the
+// recomputed weekly_entry_count.
 func (s *Store) CommitPollSuccess(
 	ctx context.Context,
 	feedID int64,
