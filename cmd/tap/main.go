@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/peterbourgon/ff/v4"
 	"github.com/peterbourgon/ff/v4/ffhelp"
@@ -52,6 +54,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	serveFS := ff.NewFlagSet("serve").SetParent(rootFS)
 	config.RegisterFlags(serveFS, cfg)
 
+	var healthcheckURL string
+	healthcheckFS := ff.NewFlagSet("healthcheck").SetParent(rootFS)
+	healthcheckFS.StringVar(&healthcheckURL, 'u', "url",
+		"http://127.0.0.1:8080/healthz",
+		"URL to probe for the healthcheck (also TAP_URL)")
+
 	var rootCmd *ff.Command
 	serveCmd := &ff.Command{
 		Name:      "serve",
@@ -61,11 +69,22 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			return runServe(ctx, cfg, stderr)
 		},
 	}
+	healthcheckCmd := &ff.Command{
+		Name:      "healthcheck",
+		ShortHelp: "probe a running tap server (for Docker HEALTHCHECK)",
+		Flags:     healthcheckFS,
+		Exec: func(ctx context.Context, _ []string) error {
+			if err := healthcheckProbe(ctx, healthcheckURL); err != nil {
+				return fmt.Errorf("healthcheck: %w", err)
+			}
+			return nil
+		},
+	}
 	rootCmd = &ff.Command{
 		Name:        "tap",
 		ShortHelp:   "self-hosted feed reader",
 		Flags:       rootFS,
-		Subcommands: []*ff.Command{serveCmd},
+		Subcommands: []*ff.Command{serveCmd, healthcheckCmd},
 		Exec: func(_ context.Context, args []string) error {
 			if showVersion {
 				fmt.Fprintf(stdout, "tap %s\n", version.String())
@@ -101,6 +120,33 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// healthcheckProbe is the function the `tap healthcheck` subcommand
+// uses to verify a running server. It's a package-level var so tests
+// can stub it out without standing up a real HTTP server.
+var healthcheckProbe = defaultHealthcheckProbe
+
+// defaultHealthcheckProbe issues a single GET against url with a 5 s
+// timeout. Any non-2xx response or transport error returns a non-nil
+// error so the subcommand exits non-zero — Docker's HEALTHCHECK
+// directive treats that as "unhealthy".
+func defaultHealthcheckProbe(ctx context.Context, url string) error {
+	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("probe %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("probe %s: status %d", url, resp.StatusCode)
+	}
+	return nil
 }
 
 func runServe(ctx context.Context, cfg *config.Config, stderr io.Writer) error {

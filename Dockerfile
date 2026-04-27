@@ -58,5 +58,11 @@ ENV TAP_DB_PATH=/data/tap.db \
 VOLUME ["/data"]
 EXPOSE 8080
 
+# distroless/static has no shell, curl, or wget — the binary itself
+# carries a `tap healthcheck` subcommand that probes /healthz over the
+# loopback. Cheap (single GET, 5 s timeout) and zero extra surface.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+    CMD ["/tap", "healthcheck"]
+
 ENTRYPOINT ["/tap"]
 CMD ["serve"]
