@@ -24,6 +24,7 @@ type Config struct {
 	PollInterval time.Duration
 	PollWorkers  int
 	PollFactor   float64
+	HostWeight   int64
 
 	UserAgent            string
 	HTTPTimeout          time.Duration
@@ -54,6 +55,7 @@ func RegisterFlags(fs *ff.FlagSet, cfg *Config) {
 	fs.DurationVar(&cfg.PollInterval, 0, "poll-interval", 60*time.Second, "Dispatcher tick interval")
 	fs.IntVar(&cfg.PollWorkers, 0, "poll-workers", 4, "Worker pool size")
 	fs.Float64Var(&cfg.PollFactor, 0, "poll-factor", 1.0, "Adaptive polling multiplier (lower = poll more often)")
+	fs.Int64Var(&cfg.HostWeight, 0, "host-weight", 1, "Per-host concurrency cap shared by feed/article/proxy fetches")
 
 	fs.StringVar(&cfg.UserAgent, 0, "user-agent",
 		"Tap/0.1 (+https://github.com/bcrisp4/tap)",

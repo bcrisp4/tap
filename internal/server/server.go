@@ -12,10 +12,14 @@ import (
 	"time"
 )
 
-// Server wraps a configured *http.Server.
+// Server wraps a configured *http.Server. The mux is held as its own
+// field so other packages (the poller's media-proxy mount, the v1 API
+// in Plan 08) can attach handlers via Mount without re-asserting the
+// http.Handler interface.
 type Server struct {
 	logger *slog.Logger
 	srv    *http.Server
+	mux    *http.ServeMux
 }
 
 // New builds a Server bound to addr. The HTTP server isn't started
@@ -29,12 +33,22 @@ func New(addr string, logger *slog.Logger) (*Server, error) {
 
 	return &Server{
 		logger: logger,
+		mux:    mux,
 		srv: &http.Server{
 			Addr:              addr,
 			Handler:           mux,
 			ReadHeaderTimeout: 5 * time.Second,
 		},
 	}, nil
+}
+
+// Mount attaches handler at pattern. Plan 07 uses this to wire
+// /api/v1/proxy/; Plan 08 will mount the rest of the v1 API.
+//
+// Mount must be called before Run — once the server is serving,
+// http.ServeMux disallows handler additions.
+func (s *Server) Mount(pattern string, handler http.Handler) {
+	s.mux.Handle(pattern, handler)
 }
 
 // Run starts the listener and blocks until ctx is cancelled, then
