@@ -1,6 +1,7 @@
 package poller
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -19,11 +20,11 @@ func TestRunState_PollLifecycle(t *testing.T) {
 func TestRunState_RingBufferDropsOldest(t *testing.T) {
 	rs := NewRunState(2)
 	rs.PollStarted()
-	rs.PollFinished(errMsg("first"))
+	rs.PollFinished(errors.New("first"))
 	rs.PollStarted()
-	rs.PollFinished(errMsg("second"))
+	rs.PollFinished(errors.New("second"))
 	rs.PollStarted()
-	rs.PollFinished(errMsg("third"))
+	rs.PollFinished(errors.New("third"))
 
 	snap := rs.Snapshot()
 	require.Len(t, snap.RecentErrors, 2)
@@ -34,15 +35,9 @@ func TestRunState_RingBufferDropsOldest(t *testing.T) {
 func TestRunState_SnapshotIsCopy(t *testing.T) {
 	rs := NewRunState(4)
 	rs.PollStarted()
-	rs.PollFinished(errMsg("e"))
+	rs.PollFinished(errors.New("e"))
 	s1 := rs.Snapshot()
 	s1.RecentErrors[0] = "MUTATED"
 	s2 := rs.Snapshot()
 	require.Equal(t, "e", s2.RecentErrors[0], "Snapshot must return a defensive copy")
 }
-
-func errMsg(s string) error { return &simpleErr{s} }
-
-type simpleErr struct{ s string }
-
-func (e *simpleErr) Error() string { return e.s }
