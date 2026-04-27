@@ -8,6 +8,10 @@ IMAGE="${1:?usage: docker-smoke.sh <image>}"
 NAME="tap-smoke-$$"
 PORT="${TAP_SMOKE_PORT:-18080}"
 TMPDIR=$(mktemp -d)
+# distroless/static:nonroot runs as UID/GID 65532; bind-mounted host
+# dirs need to be writable by that uid. World-writable is fine for an
+# ephemeral tmpdir.
+chmod 0777 "$TMPDIR"
 trap 'docker rm -f "$NAME" >/dev/null 2>&1 || true; rm -rf "$TMPDIR"' EXIT
 
 docker run -d --name "$NAME" \
