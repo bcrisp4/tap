@@ -1,0 +1,15 @@
+/* Base layer — global resets only.
+   Design tokens land in Task 2 (web/src/lib/tokens/tap-tokens.css). */
+
+html,
+body {
+	margin: 0;
+	padding: 0;
+	height: 100%;
+}
+
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+}
