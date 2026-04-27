@@ -70,6 +70,17 @@ func TestSanitize_ResolvesRelativeHref(t *testing.T) {
 	require.Contains(t, out, `href="https://example.com/about"`)
 }
 
+func TestSanitize_PreservesAbsolutePathProxyURL(t *testing.T) {
+	// Regression: RewriteMedia emits absolute-path proxy URLs like
+	// "/api/v1/proxy/<token>". The pre-pass must NOT re-root those at
+	// the article's host.
+	in := `<img src="/api/v1/proxy/abcdef.0123456789abcdef">`
+	out, err := reader.Sanitize(in, defaultOpts())
+	require.NoError(t, err)
+	require.Contains(t, out, `src="/api/v1/proxy/abcdef.0123456789abcdef"`)
+	require.NotContains(t, out, "https://example.com/api/v1/proxy")
+}
+
 func TestSanitize_AllowedFormattingPreserved(t *testing.T) {
 	in := `<h2>Title</h2><p><strong>bold</strong> and <em>italic</em>.</p>` +
 		`<pre><code>x := 1</code></pre><blockquote>q</blockquote>`

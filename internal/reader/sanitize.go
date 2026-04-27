@@ -79,13 +79,21 @@ func tapPreSanitize(entryHTML string, opts SanitizeOptions) (string, error) {
 		}
 	})
 
-	// Resolve relative href / src.
-	for _, attr := range []string{"href", "src"} {
-		doc.Find("[" + attr + "]").Each(func(_ int, s *goquery.Selection) {
-			v, _ := s.Attr(attr)
-			s.SetAttr(attr, resolveURL(v, base))
-		})
-	}
+	// Resolve relative href / src against the article URL. Skip <img>
+	// and <source> src — those were already rewritten to absolute-path
+	// proxy URLs (e.g. /api/v1/proxy/<token>) by RewriteMedia and must
+	// not be re-rooted at the article's host.
+	doc.Find("[href]").Each(func(_ int, s *goquery.Selection) {
+		v, _ := s.Attr("href")
+		s.SetAttr("href", resolveURL(v, base))
+	})
+	doc.Find("[src]").Each(func(_ int, s *goquery.Selection) {
+		if tag := goquery.NodeName(s); tag == "img" || tag == "source" {
+			return
+		}
+		v, _ := s.Attr("src")
+		s.SetAttr("src", resolveURL(v, base))
+	})
 
 	return innerBodyHTML(doc), nil
 }
