@@ -70,8 +70,6 @@ func newBaseTransport() *http.Transport {
 }
 
 // Options holds per-request overrides. nil means "use defaults".
-// Defined here as a placeholder; Task 5 fills in the rest of the
-// fields.
 type Options struct {
 	UserAgent       string
 	Cookie          string
@@ -134,10 +132,12 @@ func (c *Client) cloneTransport(base *http.Transport, opts *Options) *http.Trans
 		t.ForceAttemptHTTP2 = false
 	}
 	if opts.AllowSelfSigned {
+		// base.Clone() above already deep-clones TLSClientConfig (or
+		// leaves it nil), so it's safe to mutate t.TLSClientConfig
+		// without affecting the shared base transport.
 		if t.TLSClientConfig == nil {
 			t.TLSClientConfig = &tls.Config{} //nolint:gosec
 		}
-		t.TLSClientConfig = t.TLSClientConfig.Clone()
 		t.TLSClientConfig.InsecureSkipVerify = true //nolint:gosec
 	}
 	return t
