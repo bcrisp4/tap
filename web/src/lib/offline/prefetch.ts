@@ -29,6 +29,13 @@ const PROXY_RE = /\/api\/v1\/proxy\/[A-Za-z0-9_\-=.]+/g;
 // adversarial article shouldn't be able to balloon the cache budget.
 const MAX_URLS_PER_ENTRY = 32;
 
+// Concurrency cap when fetching `/entries/{id}` details during a
+// prefetch. The list endpoint doesn't include `content`, so we have to
+// hit every entry — but firing all 200 in parallel saturates the
+// browser's connection pool and pressures the small Go server. A pool
+// of 6 matches Chrome's per-origin HTTP/1.1 default.
+const FETCH_CONCURRENCY = 6;
+
 // Extract proxy URLs from a single entry's rendered HTML. Exported so
 // the unit test can exercise it directly without a fetch round-trip.
 export function extractProxyURLs(html: string | null | undefined): string[] {
@@ -49,16 +56,19 @@ export async function prefetchRecent(limit = 200): Promise<void> {
 	const ids = list.data.map((e) => e.id);
 
 	const proxyURLs = new Set<string>();
-	await Promise.all(
-		ids.map(async (id) => {
+	let cursor = 0;
+	const workers = Array.from({ length: Math.min(FETCH_CONCURRENCY, ids.length) }, async () => {
+		while (cursor < ids.length) {
+			const id = ids[cursor++];
 			try {
 				const e = await getJSON<Entry>(`/entries/${id}`);
 				for (const u of extractProxyURLs(e.content)) proxyURLs.add(u);
 			} catch {
 				/* a single failure shouldn't kill the prefetch budget */
 			}
-		})
-	);
+		}
+	});
+	await Promise.all(workers);
 
 	if (proxyURLs.size === 0) return;
 	const reg = await navigator.serviceWorker.ready;

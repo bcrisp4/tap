@@ -28,13 +28,10 @@
 		return () => mq.removeEventListener('change', applyThemeClasses);
 	});
 
-	// Plan 12 — PWA / offline wiring.
-	//
-	// SvelteKit emits the compiled service worker into the static-adapter
-	// output at /service-worker.js. With adapter-static there's no SSR
-	// hook to inject auto-registration, so we register manually here.
-	// The bind + prefetch run on next paint so they don't block first
-	// render; reconnect refreshes the prefetch with a smaller budget.
+	// PWA / offline wiring. adapter-static doesn't auto-register the
+	// service worker (no SSR hook), so we do it manually. Initial
+	// prefetch is delayed so it doesn't compete with first paint;
+	// reconnect refreshes a smaller slice.
 	onMount(() => {
 		if ('serviceWorker' in navigator) {
 			navigator.serviceWorker.register('/service-worker.js').catch(() => undefined);

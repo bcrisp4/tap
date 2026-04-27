@@ -1,8 +1,9 @@
-// Bind TanStack Query's `onlineManager` to the browser's online /
-// offline events. While `onlineManager` defaults to listening on the
-// window itself, calling it explicitly here gives us a single place to
-// extend the wiring later (e.g. forcing online=false during e2e tests
-// or pausing replay for backoff windows).
+// Sync TanStack Query's `onlineManager` with the browser's connectivity
+// state. The manager auto-listens to `online` / `offline` window events
+// once a query subscribes, but it assumes `online = true` at construction
+// — so a page that loads while already offline would incorrectly proceed
+// as if connected. The initial `setOnline(navigator.onLine)` here closes
+// that gap.
 //
 // When the manager flips back to online, TanStack Query automatically
 // resumes any paused mutations from the in-memory + persisted mutation
@@ -14,8 +15,8 @@ import { onlineManager } from '@tanstack/svelte-query';
 export function bindOnlineManager(): () => void {
 	if (typeof window === 'undefined') return () => undefined;
 
+	onlineManager.setOnline(navigator.onLine);
 	const apply = () => onlineManager.setOnline(navigator.onLine);
-	apply();
 	window.addEventListener('online', apply);
 	window.addEventListener('offline', apply);
 	return () => {
