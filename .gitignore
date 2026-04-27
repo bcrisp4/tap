@@ -24,6 +24,10 @@ node_modules/
 # Staged SPA build for //go:embed (Makefile copies web/build here)
 /internal/web/build/
 
+# Playwright run artifacts
+/web/test-results/
+/web/playwright-report/
+
 # Editor / OS
 .DS_Store
 *~
