@@ -39,7 +39,15 @@ func Handler() http.Handler {
 	if err != nil {
 		panic(err)
 	}
-	return spaHandler{root: sub, fileServer: http.FileServer(http.FS(sub))}
+	indexHTML, err := fs.ReadFile(sub, "index.html")
+	if err != nil {
+		panic(err)
+	}
+	return spaHandler{
+		root:       sub,
+		fileServer: http.FileServer(http.FS(sub)),
+		indexHTML:  indexHTML,
+	}
 }
 
 func hasSPA() bool {
@@ -69,27 +77,27 @@ and <code>go build -tags embed_spa</code>) to ship the full app.</p>
 type spaHandler struct {
 	root       fs.FS
 	fileServer http.Handler
+	indexHTML  []byte
 }
 
-// ServeHTTP delegates to the embedded FS for real files; falls back to
-// index.html for any 404 so SvelteKit's client-side router can take
-// over.
+// ServeHTTP delegates to the embedded file server for real assets and
+// falls back to the cached index.html for unknown paths so SvelteKit's
+// client-side router can resolve them.
 func (s spaHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, "/api/") {
 		http.NotFound(w, r)
 		return
 	}
 	path := strings.TrimPrefix(r.URL.Path, "/")
-	if path == "" {
-		path = "index.html"
-	}
-	if _, err := fs.Stat(s.root, path); err != nil {
-		// Unknown path → serve index.html so the SPA router can
-		// resolve it client-side.
-		r2 := r.Clone(r.Context())
-		r2.URL.Path = "/"
-		s.fileServer.ServeHTTP(w, r2)
+	if path == "" || !exists(s.root, path) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write(s.indexHTML)
 		return
 	}
 	s.fileServer.ServeHTTP(w, r)
+}
+
+func exists(fsys fs.FS, name string) bool {
+	_, err := fs.Stat(fsys, name)
+	return err == nil
 }

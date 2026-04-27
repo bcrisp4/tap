@@ -3,7 +3,7 @@
 // pages.
 
 import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
-import { getList, getJSON, putJSON, postJSON, deleteResource } from './client';
+import { getList, getJSON, putJSON } from './client';
 import type { Entry, Feed, Category, SystemStatus } from './types';
 
 export const keys = {
@@ -28,11 +28,12 @@ export function useEntries(
 	return createQuery(() => ({
 		queryKey: keys.entries(params),
 		queryFn: () => {
-			const search = new URLSearchParams();
-			for (const [k, v] of Object.entries(params)) {
-				if (v !== undefined) search.set(k, String(v));
-			}
-			return getList<Entry>('/entries' + (search.toString() ? '?' + search.toString() : ''));
+			const qs = new URLSearchParams(
+				Object.entries(params)
+					.filter(([, v]) => v !== undefined)
+					.map(([k, v]) => [k, String(v)])
+			).toString();
+			return getList<Entry>('/entries' + (qs ? '?' + qs : ''));
 		}
 	}));
 }
@@ -89,5 +90,3 @@ export function useStatus() {
 		refetchInterval: 5_000
 	}));
 }
-
-export { postJSON, deleteResource };

@@ -9,7 +9,7 @@
 // proxies that prefix to the Go server, in production the SvelteKit
 // build is served by the Go binary directly.
 
-import type { ListResponse, Pagination } from './types';
+import type { ListResponse } from './types';
 
 export class ApiError extends Error {
 	constructor(
@@ -42,7 +42,7 @@ export async function getJSON<T>(path: string, init?: RequestInit): Promise<T> {
 	return parse<T>(res);
 }
 
-export async function getList<T>(path: string): Promise<{ data: T[]; pagination: Pagination }> {
+export async function getList<T>(path: string): Promise<ListResponse<T>> {
 	return await getJSON<ListResponse<T>>(path);
 }
 
