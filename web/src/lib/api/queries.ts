@@ -44,11 +44,26 @@ export function useEntries(
 	}));
 }
 
-export function useEntry(id: number) {
-	return createQuery(() => ({
-		queryKey: keys.entry(id),
-		queryFn: () => getJSON<Entry>(`/entries/${id}`)
-	}));
+// `id` may be passed as a plain number (one-shot lookup) or as a getter
+// returning a number. The getter form lets a route component re-key the
+// query as its `[id]` param changes — without it, the closure freezes
+// the initial id and navigating to a sibling entry would keep showing
+// the old article.
+//
+// We capture the id once per factory evaluation so the queryKey and
+// queryFn agree even if `getId()` would return a different number when
+// it's called again later — TanStack Query may invoke `queryFn` after
+// a microtask, and by then a rapid double-navigation could shift the
+// underlying rune.
+export function useEntry(id: number | (() => number)) {
+	const getId = typeof id === 'function' ? id : () => id;
+	return createQuery(() => {
+		const currentId = getId();
+		return {
+			queryKey: keys.entry(currentId),
+			queryFn: () => getJSON<Entry>(`/entries/${currentId}`)
+		};
+	});
 }
 
 export function useToggleRead() {
