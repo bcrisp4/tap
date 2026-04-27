@@ -1,0 +1,355 @@
+package poller
+
+import (
+	"context"
+	"io"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+
+	"golang.org/x/sync/errgroup"
+
+	"github.com/bcrisp4/tap/internal/feedparse"
+	"github.com/bcrisp4/tap/internal/httpclient"
+	"github.com/bcrisp4/tap/internal/limiter"
+	"github.com/bcrisp4/tap/internal/reader"
+	"github.com/bcrisp4/tap/internal/storage"
+)
+
+// maxLastErrorBytes caps last_error to keep the column small. The
+// underlying message often includes long URLs and stack traces.
+const maxLastErrorBytes = 500
+
+// pollUserID is the single-user id for v1; multi-user is out of scope.
+const pollUserID = 1
+
+// WorkerConfig wires the worker's deps. Pipeline is optional — when
+// nil (or feed.Crawler == false), content extraction is skipped.
+// RunState is optional; when set, the worker bumps it around each poll.
+type WorkerConfig struct {
+	Store      *storage.Store
+	Client     *httpclient.Client
+	Limiter    *limiter.HostLimiter
+	Pipeline   *reader.Pipeline
+	RunState   *RunState
+	PollFactor float64
+}
+
+// Worker handles one feed end-to-end. Construct once via NewWorker; the
+// type is immutable and safe to share across goroutines (its
+// dependencies are themselves concurrency-safe).
+type Worker struct {
+	cfg WorkerConfig
+}
+
+// NewWorker builds a Worker from the given config.
+func NewWorker(cfg WorkerConfig) *Worker { return &Worker{cfg: cfg} }
+
+// PollOne executes the full poll for feedID. Network/parse failures
+// are recorded on the feed via Store.CommitPollFailure and *not*
+// returned — that's the contract the dispatcher relies on so workers
+// stay alive on bad feeds.
+func (w *Worker) PollOne(ctx context.Context, feedID int64) error {
+	if w.cfg.RunState != nil {
+		w.cfg.RunState.PollStarted()
+	}
+	var pollErr error
+	defer func() {
+		if w.cfg.RunState != nil {
+			w.cfg.RunState.PollFinished(pollErr)
+		}
+	}()
+
+	feed, err := w.cfg.Store.GetFeed(ctx, pollUserID, feedID)
+	if err != nil {
+		pollErr = err
+		return nil
+	}
+
+	host := hostOf(feed.FeedURL)
+	if err := w.cfg.Limiter.Acquire(ctx, host); err != nil {
+		pollErr = err
+		return nil
+	}
+	defer w.cfg.Limiter.Release(host)
+
+	resp, fetchErr := w.fetchFeed(ctx, feed)
+	if fetchErr != nil {
+		pollErr = fetchErr
+		w.recordFailure(ctx, feed, fetchErr)
+		return nil
+	}
+	defer resp.Body.Close()
+
+	now := time.Now().Unix()
+
+	// 304 path: refresh validators + advance next_poll_at, no inserts.
+	if resp.StatusCode == http.StatusNotModified {
+		out := NextPollAt(PollOutcome{
+			Now: now, WeeklyEntries: feed.WeeklyEntryCount,
+			RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After")),
+			MaxAge:     parseMaxAge(resp.Header.Get("Cache-Control"), resp.Header.Get("Expires")),
+		}, w.cfg.PollFactor)
+		if err := w.cfg.Store.CommitPollNotModified(ctx, feed.ID,
+			resp.Header.Get("ETag"), resp.Header.Get("Last-Modified"), out.NextPollAt); err != nil {
+			pollErr = err
+		}
+		return nil
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		pollErr = err
+		w.recordFailure(ctx, feed, err)
+		return nil
+	}
+
+	parsed, err := feedparse.Parse(body, feed.FeedURL)
+	if err != nil {
+		pollErr = err
+		w.recordFailure(ctx, feed, err)
+		return nil
+	}
+
+	newEntries, err := w.filterAndExtract(ctx, feed, parsed.Entries)
+	if err != nil {
+		pollErr = err
+		w.recordFailure(ctx, feed, err)
+		return nil
+	}
+
+	// Compute next-poll using last-known weekly count plus the new
+	// arrivals; CommitPollSuccess will recompute the canonical value
+	// and persist it.
+	out := NextPollAt(PollOutcome{
+		Now:           now,
+		WeeklyEntries: feed.WeeklyEntryCount + len(newEntries),
+		RetryAfter:    parseRetryAfter(resp.Header.Get("Retry-After")),
+		MaxAge:        parseMaxAge(resp.Header.Get("Cache-Control"), resp.Header.Get("Expires")),
+	}, w.cfg.PollFactor)
+
+	if _, err := w.cfg.Store.CommitPollSuccess(ctx, feed.ID, newEntries,
+		resp.Header.Get("ETag"), resp.Header.Get("Last-Modified"),
+		out.ErrorCount, out.NextPollAt); err != nil {
+		pollErr = err
+	}
+	return nil
+}
+
+// fetchFeed performs the conditional GET against feed.FeedURL.
+func (w *Worker) fetchFeed(ctx context.Context, f *storage.Feed) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, f.FeedURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	if f.ETag != nil && *f.ETag != "" {
+		req.Header.Set("If-None-Match", *f.ETag)
+	}
+	if f.LastModified != nil && *f.LastModified != "" {
+		req.Header.Set("If-Modified-Since", *f.LastModified)
+	}
+	return w.cfg.Client.Do(req, optionsFromFeed(f))
+}
+
+// filterAndExtract drops entries already seen (by hash, with the real
+// feed_id mixed in) and entries that match a tombstone, then runs
+// content extraction for crawler=1 feeds. Reading-time is computed
+// here so the storage layer doesn't need to know about it.
+func (w *Worker) filterAndExtract(ctx context.Context, f *storage.Feed, parsed []*storage.Entry) ([]*storage.Entry, error) {
+	var fresh []*storage.Entry
+	for _, e := range parsed {
+		guid := guidFromEntry(e)
+		link := stringOr(e.URL)
+		pub := int64Or(e.PublishedAt)
+		e.Hash = feedparse.EntryHash(f.ID, guid, link, e.Title, pub)
+		e.FeedID = f.ID
+		e.UserID = f.UserID
+
+		exists, err := w.cfg.Store.EntryExists(ctx, f.ID, e.Hash)
+		if err != nil {
+			return nil, err
+		}
+		if exists {
+			continue
+		}
+		has, err := w.cfg.Store.HasTombstone(ctx, f.ID, e.Hash)
+		if err != nil {
+			return nil, err
+		}
+		if has {
+			continue
+		}
+		fresh = append(fresh, e)
+	}
+
+	if !f.Crawler || w.cfg.Pipeline == nil || len(fresh) == 0 {
+		// Still fill reading_time from the feed-supplied content/summary.
+		for _, e := range fresh {
+			e.ReadingTime = readingTimeFor(e)
+		}
+		return fresh, nil
+	}
+
+	g, gctx := errgroup.WithContext(ctx)
+	rules := stringOr(f.ScraperRules)
+	for _, e := range fresh {
+		if e.URL == nil || *e.URL == "" {
+			continue
+		}
+		g.Go(func() error {
+			content, ok := w.fetchAndExtract(gctx, f, *e.URL, rules)
+			if !ok {
+				e.ExtractionFailed = true
+				if e.Summary != nil && (e.Content == nil || *e.Content == "") {
+					sum := *e.Summary
+					e.Content = &sum
+				}
+				return nil
+			}
+			e.Content = &content
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+	for _, e := range fresh {
+		e.ReadingTime = readingTimeFor(e)
+	}
+	return fresh, nil
+}
+
+func (w *Worker) fetchAndExtract(ctx context.Context, f *storage.Feed, articleURL, rules string) (string, bool) {
+	host := hostOf(articleURL)
+	if err := w.cfg.Limiter.Acquire(ctx, host); err != nil {
+		return "", false
+	}
+	defer w.cfg.Limiter.Release(host)
+
+	resp, err := w.cfg.Client.Get(ctx, articleURL, optionsFromFeed(f))
+	if err != nil {
+		return "", false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		return "", false
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", false
+	}
+	out, err := w.cfg.Pipeline.Process(string(body), articleURL, rules)
+	if err != nil {
+		return "", false
+	}
+	return out, true
+}
+
+// recordFailure computes the backoff and asks the store to persist
+// the failure.
+func (w *Worker) recordFailure(ctx context.Context, f *storage.Feed, fetchErr error) {
+	now := time.Now().Unix()
+	out := NextPollAt(PollOutcome{
+		Now: now, Failed: true, ErrorCount: f.ErrorCount,
+	}, w.cfg.PollFactor)
+	msg := ""
+	if fetchErr != nil {
+		msg = fetchErr.Error()
+		if len(msg) > maxLastErrorBytes {
+			msg = msg[:maxLastErrorBytes]
+		}
+	}
+	_ = w.cfg.Store.CommitPollFailure(ctx, f.ID, out.ErrorCount, msg, out.NextPollAt)
+}
+
+// readingTimeFor picks the best text source (content > summary) and
+// runs feedparse.Minutes against it.
+func readingTimeFor(e *storage.Entry) int {
+	text := stringOr(e.Content)
+	if text == "" {
+		text = stringOr(e.Summary)
+	}
+	return feedparse.Minutes(text)
+}
+
+// optionsFromFeed plucks the per-feed override columns into the
+// httpclient.Options shape.
+func optionsFromFeed(f *storage.Feed) *httpclient.Options {
+	return &httpclient.Options{
+		UserAgent:       stringOr(f.UserAgent),
+		Cookie:          stringOr(f.Cookie),
+		Username:        stringOr(f.Username),
+		Password:        stringOr(f.Password),
+		ProxyURL:        stringOr(f.ProxyURL),
+		DisableHTTP2:    f.DisableHTTP2,
+		AllowSelfSigned: f.AllowSelfSignedCerts,
+	}
+}
+
+func hostOf(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Host == "" {
+		return "_unknown"
+	}
+	return strings.ToLower(u.Hostname())
+}
+
+func guidFromEntry(e *storage.Entry) string {
+	if e.URL != nil && *e.URL != "" {
+		return *e.URL
+	}
+	return e.Title
+}
+
+func parseRetryAfter(v string) time.Duration {
+	if v == "" {
+		return 0
+	}
+	if secs, err := strconv.Atoi(v); err == nil && secs > 0 {
+		return time.Duration(secs) * time.Second
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		if d := time.Until(t); d > 0 {
+			return d
+		}
+	}
+	return 0
+}
+
+func parseMaxAge(cc, expires string) time.Duration {
+	if cc != "" {
+		const k = "max-age="
+		for _, p := range strings.Split(cc, ",") {
+			p = strings.TrimSpace(strings.ToLower(p))
+			if strings.HasPrefix(p, k) {
+				if secs, err := strconv.Atoi(p[len(k):]); err == nil && secs > 0 {
+					return time.Duration(secs) * time.Second
+				}
+			}
+		}
+	}
+	if expires != "" {
+		if t, err := http.ParseTime(expires); err == nil {
+			if d := time.Until(t); d > 0 {
+				return d
+			}
+		}
+	}
+	return 0
+}
+
+func stringOr(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+
+func int64Or(p *int64) int64 {
+	if p == nil {
+		return 0
+	}
+	return *p
+}
