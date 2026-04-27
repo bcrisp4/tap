@@ -28,7 +28,7 @@ func WriteOK(w http.ResponseWriter, status int, body any) {
 // per design.md §6. A nil slice is normalised to `[]` so the SPA never
 // sees `"data":null`.
 func WriteList(w http.ResponseWriter, data any, limit, offset, total int) {
-	if data == nil || (reflect.ValueOf(data).Kind() == reflect.Slice && reflect.ValueOf(data).IsNil()) {
+	if isNilSlice(data) {
 		data = []struct{}{}
 	}
 	WriteOK(w, http.StatusOK, struct {
@@ -38,6 +38,17 @@ func WriteList(w http.ResponseWriter, data any, limit, offset, total int) {
 		Data:       data,
 		Pagination: paginationMeta{Limit: limit, Offset: offset, Total: total},
 	})
+}
+
+// isNilSlice reports whether data is nil or a typed nil slice. JSON-
+// encoding a nil slice emits null instead of [], which the SPA treats
+// as a parse error.
+func isNilSlice(data any) bool {
+	if data == nil {
+		return true
+	}
+	v := reflect.ValueOf(data)
+	return v.Kind() == reflect.Slice && v.IsNil()
 }
 
 type paginationMeta struct {
@@ -66,4 +77,16 @@ func writeErr(w http.ResponseWriter, err error) {
 	default:
 		WriteError(w, http.StatusInternalServerError, "internal", err.Error())
 	}
+}
+
+// decodeJSON pulls a JSON request body into dst. On failure it writes
+// a 400 bad_json envelope and returns false, so the caller can simply:
+//
+//	if !decodeJSON(w, r, &req) { return }
+func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
+	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
+		WriteError(w, http.StatusBadRequest, "bad_json", err.Error())
+		return false
+	}
+	return true
 }

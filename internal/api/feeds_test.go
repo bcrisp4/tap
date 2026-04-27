@@ -182,9 +182,9 @@ func TestFeeds_Discover(t *testing.T) {
 	require.Equal(t, "https://example.com/atom.xml", got.Candidates[1].HRef)
 }
 
-func TestFeeds_Discover_BadJSON(t *testing.T) {
+func TestFeeds_Discover_MissingURL(t *testing.T) {
 	f := newAPIFixture(t)
 	w := f.do(t, "POST", "/api/v1/feeds/discover", `{}`)
 	require.Equal(t, http.StatusBadRequest, w.Code)
-	require.Contains(t, w.Body.String(), `"code":"bad_json"`)
+	require.Contains(t, w.Body.String(), `"code":"missing_url"`)
 }

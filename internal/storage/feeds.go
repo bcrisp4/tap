@@ -122,6 +122,9 @@ func (s *Store) CreateFeed(ctx context.Context, f *Feed) (int64, error) {
 		f.WeeklyEntryCount, boolInt(f.Crawler), f.ScraperRules, boolInt(f.Disabled), boolInt(f.IgnoreEntryUpdates),
 		f.UserAgent, f.Cookie, f.Username, f.Password, f.ProxyURL, boolInt(f.DisableHTTP2), boolInt(f.AllowSelfSignedCerts),
 	)
+	if isUniqueConstraint(err) {
+		return 0, ErrConflict
+	}
 	if err != nil {
 		return 0, err
 	}
@@ -151,6 +154,20 @@ func (s *Store) UpdateFeed(ctx context.Context, f *Feed) error {
 
 func (s *Store) DeleteFeed(ctx context.Context, userID, id int64) error {
 	res, err := s.db.ExecContext(ctx, `DELETE FROM feeds WHERE id = ? AND user_id = ?`, id, userID)
+	if err != nil {
+		return err
+	}
+	return rowsOrNotFound(res)
+}
+
+// SetNextPollAt schedules the next poll for a feed without touching any
+// other column — used by POST /feeds/{id}/refresh, which only needs to
+// nudge the dispatcher. Avoids the GetFeed/UpdateFeed round-trip and
+// the corresponding clobber race against the poller.
+func (s *Store) SetNextPollAt(ctx context.Context, userID, id, nextPollAt int64) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE feeds SET next_poll_at = ?, updated_at = unixepoch()
+		 WHERE id = ? AND user_id = ?`, nextPollAt, id, userID)
 	if err != nil {
 		return err
 	}

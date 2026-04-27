@@ -2,13 +2,15 @@ package storage
 
 import "context"
 
-// Enclosure mirrors the enclosures table.
+// Enclosure mirrors the enclosures table. JSON tags align with the
+// schema column names so the API surface (design.md §6) can return
+// *Enclosure values directly.
 type Enclosure struct {
-	ID       int64
-	EntryID  int64
-	URL      string
-	MIMEType string
-	Size     int64
+	ID       int64  `json:"id"`
+	EntryID  int64  `json:"entry_id"`
+	URL      string `json:"url"`
+	MIMEType string `json:"mime_type"`
+	Size     int64  `json:"size"`
 }
 
 func (s *Store) InsertEnclosure(ctx context.Context, entryID int64, url, mime string, size int64) (int64, error) {

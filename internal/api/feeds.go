@@ -1,7 +1,8 @@
 package api
 
 import (
-	"encoding/json"
+	"bytes"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -45,8 +46,7 @@ type idResponse struct {
 
 func (h *feedHandlers) subscribe(w http.ResponseWriter, r *http.Request) {
 	var req subscribeReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, "bad_json", err.Error())
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	if req.FeedURL == "" {
@@ -67,12 +67,11 @@ func (h *feedHandlers) subscribe(w http.ResponseWriter, r *http.Request) {
 		NextPollAt:   &now,
 	}
 	id, err := h.store.CreateFeed(r.Context(), feed)
+	if errors.Is(err, storage.ErrConflict) {
+		WriteError(w, http.StatusConflict, "duplicate", "already subscribed to "+req.FeedURL)
+		return
+	}
 	if err != nil {
-		// UNIQUE(user_id, feed_url) → 409 Conflict.
-		if strings.Contains(strings.ToLower(err.Error()), "unique") {
-			WriteError(w, http.StatusConflict, "duplicate", "already subscribed to "+req.FeedURL)
-			return
-		}
 		writeErr(w, err)
 		return
 	}
@@ -80,9 +79,8 @@ func (h *feedHandlers) subscribe(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *feedHandlers) get(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathInt(r, "id")
+	id, ok := requirePathID(w, r, "feed")
 	if !ok {
-		WriteError(w, http.StatusBadRequest, "bad_id", "feed id must be integer")
 		return
 	}
 	feed, err := h.store.GetFeed(r.Context(), userID, id)
@@ -153,9 +151,8 @@ func (req *updateFeedReq) applyUpdate(feed *storage.Feed) {
 }
 
 func (h *feedHandlers) update(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathInt(r, "id")
+	id, ok := requirePathID(w, r, "feed")
 	if !ok {
-		WriteError(w, http.StatusBadRequest, "bad_id", "feed id must be integer")
 		return
 	}
 	feed, err := h.store.GetFeed(r.Context(), userID, id)
@@ -164,8 +161,7 @@ func (h *feedHandlers) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req updateFeedReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, "bad_json", err.Error())
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	req.applyUpdate(feed)
@@ -177,9 +173,8 @@ func (h *feedHandlers) update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *feedHandlers) delete(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathInt(r, "id")
+	id, ok := requirePathID(w, r, "feed")
 	if !ok {
-		WriteError(w, http.StatusBadRequest, "bad_id", "feed id must be integer")
 		return
 	}
 	if err := h.store.DeleteFeed(r.Context(), userID, id); err != nil {
@@ -193,19 +188,11 @@ func (h *feedHandlers) delete(w http.ResponseWriter, r *http.Request) {
 // on its next tick. Returns 202 Accepted: the actual fetch happens
 // asynchronously.
 func (h *feedHandlers) refresh(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathInt(r, "id")
+	id, ok := requirePathID(w, r, "feed")
 	if !ok {
-		WriteError(w, http.StatusBadRequest, "bad_id", "feed id must be integer")
 		return
 	}
-	now := time.Now().Unix()
-	feed, err := h.store.GetFeed(r.Context(), userID, id)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	feed.NextPollAt = &now
-	if err := h.store.UpdateFeed(r.Context(), feed); err != nil {
+	if err := h.store.SetNextPollAt(r.Context(), userID, id, time.Now().Unix()); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -228,8 +215,11 @@ type discoverResponse struct {
 
 func (h *feedHandlers) discover(w http.ResponseWriter, r *http.Request) {
 	var req discoverReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.URL == "" {
-		WriteError(w, http.StatusBadRequest, "bad_json", "url is required")
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.URL == "" {
+		WriteError(w, http.StatusBadRequest, "missing_url", "url is required")
 		return
 	}
 	resp, err := h.client.Get(r.Context(), req.URL, nil)
@@ -263,7 +253,7 @@ var feedLinkTypes = map[string]bool{
 func extractFeedLinks(htmlBody []byte, baseURL string) []discoverCandidate {
 	base, _ := url.Parse(baseURL)
 	out := []discoverCandidate{}
-	z := html.NewTokenizer(strings.NewReader(string(htmlBody)))
+	z := html.NewTokenizer(bytes.NewReader(htmlBody))
 	for {
 		tt := z.Next()
 		if tt == html.ErrorToken {
@@ -323,4 +313,14 @@ func pathInt(r *http.Request, name string) (int64, bool) {
 		return 0, false
 	}
 	return id, true
+}
+
+// requirePathID is the common preamble used by every handler keyed on
+// {id}: parse the path segment, or write 400 bad_id and return false.
+func requirePathID(w http.ResponseWriter, r *http.Request, resource string) (int64, bool) {
+	id, ok := pathInt(r, "id")
+	if !ok {
+		WriteError(w, http.StatusBadRequest, "bad_id", resource+" id must be integer")
+	}
+	return id, ok
 }

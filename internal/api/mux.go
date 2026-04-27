@@ -19,10 +19,10 @@ type Dependencies struct {
 }
 
 // Mux returns the ServeMux carrying every /api/v1/* route except the
-// proxy (mounted by the poller's media-proxy handler) and /healthz
-// (mounted by internal/server). Routes use Go 1.22's method-aware
-// pattern syntax; subsequent tasks register categories, entries,
-// search, OPML, and system endpoints alongside these feed routes.
+// proxy (mounted separately by the poller's media-proxy handler) and
+// /healthz (mounted by internal/server). Routes use Go 1.22's method-
+// aware pattern syntax; literal segments like /entries/read take
+// precedence over /entries/{id} via ServeMux's specificity rule.
 func Mux(deps Dependencies) *http.ServeMux {
 	feeds := &feedHandlers{store: deps.Store, client: deps.HTTPClient}
 	cats := &categoryHandlers{store: deps.Store}
@@ -33,7 +33,6 @@ func Mux(deps Dependencies) *http.ServeMux {
 
 	mux := http.NewServeMux()
 
-	// Feeds — discovery is a literal, register before the {id} routes.
 	mux.HandleFunc("GET /api/v1/feeds", feeds.list)
 	mux.HandleFunc("POST /api/v1/feeds", feeds.subscribe)
 	mux.HandleFunc("POST /api/v1/feeds/discover", feeds.discover)
@@ -47,8 +46,6 @@ func Mux(deps Dependencies) *http.ServeMux {
 	mux.HandleFunc("PUT /api/v1/categories/{id}", cats.rename)
 	mux.HandleFunc("DELETE /api/v1/categories/{id}", cats.delete)
 
-	// Entries — `PUT /entries/read` is more specific than `PUT
-	// /entries/{id}`, so ServeMux dispatches it to bulkRead.
 	mux.HandleFunc("GET /api/v1/entries", entries.list)
 	mux.HandleFunc("PUT /api/v1/entries/read", entries.bulkRead)
 	mux.HandleFunc("GET /api/v1/entries/{id}", entries.get)

@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -25,16 +24,20 @@ func (h *entryHandlers) list(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	// Strip content from list payloads (design.md §6: full content is
-	// fetched via /entries/{id}). Cloning is cheap: Entry is a value
-	// type with pointer fields we set to nil.
-	stripped := make([]*storage.Entry, len(entries))
+	WriteList(w, stripContent(entries), filter.Limit, filter.Offset, total)
+}
+
+// stripContent clones the slice and clears the Content field on each
+// entry. Design.md §6 keeps list payloads small by excluding the full
+// article body; the SPA fetches it via /entries/{id} when needed.
+func stripContent(entries []*storage.Entry) []*storage.Entry {
+	out := make([]*storage.Entry, len(entries))
 	for i, e := range entries {
 		c := *e
 		c.Content = nil
-		stripped[i] = &c
+		out[i] = &c
 	}
-	WriteList(w, stripped, filter.Limit, filter.Offset, total)
+	return out
 }
 
 // parseEntriesFilter pulls the query params documented in design.md §6
@@ -97,9 +100,8 @@ type entryWithEnclosures struct {
 }
 
 func (h *entryHandlers) get(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathInt(r, "id")
+	id, ok := requirePathID(w, r, "entry")
 	if !ok {
-		WriteError(w, http.StatusBadRequest, "bad_id", "entry id must be integer")
 		return
 	}
 	e, err := h.store.GetEntry(r.Context(), userID, id)
@@ -124,14 +126,12 @@ type entryStateReq struct {
 }
 
 func (h *entryHandlers) put(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathInt(r, "id")
+	id, ok := requirePathID(w, r, "entry")
 	if !ok {
-		WriteError(w, http.StatusBadRequest, "bad_id", "entry id must be integer")
 		return
 	}
 	var req entryStateReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, "bad_json", err.Error())
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	if err := h.store.UpdateEntryState(r.Context(), userID, id, req.Read, req.Saved); err != nil {
@@ -153,8 +153,7 @@ type bulkReq struct {
 
 func (h *entryHandlers) bulkRead(w http.ResponseWriter, r *http.Request) {
 	var req bulkReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, "bad_json", err.Error())
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	scope := storage.BulkScope{FeedID: req.FeedID, CategoryID: req.CategoryID}

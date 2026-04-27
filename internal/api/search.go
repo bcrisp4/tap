@@ -35,13 +35,6 @@ func (h *searchHandlers) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// design.md §6: list payloads exclude content. Match the /entries
-	// shape so the SPA can hand search hits to the same renderer.
-	stripped := make([]*storage.Entry, len(results))
-	for i, e := range results {
-		c := *e
-		c.Content = nil
-		stripped[i] = &c
-	}
+	stripped := stripContent(results)
 	WriteList(w, stripped, limit, offset, len(stripped))
 }

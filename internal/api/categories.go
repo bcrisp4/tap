@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"github.com/bcrisp4/tap/internal/storage"
@@ -24,10 +23,24 @@ type categoryReq struct {
 	Name string `json:"name"`
 }
 
-func (h *categoryHandlers) create(w http.ResponseWriter, r *http.Request) {
+// decodeCategoryReq decodes the body and enforces that name is set.
+// Empty name shares the bad_json code so the test surface is uniform
+// (a missing-field check is a body-validation error like a parse fail).
+func decodeCategoryReq(w http.ResponseWriter, r *http.Request) (categoryReq, bool) {
 	var req categoryReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" {
+	if !decodeJSON(w, r, &req) {
+		return req, false
+	}
+	if req.Name == "" {
 		WriteError(w, http.StatusBadRequest, "bad_json", "name is required")
+		return req, false
+	}
+	return req, true
+}
+
+func (h *categoryHandlers) create(w http.ResponseWriter, r *http.Request) {
+	req, ok := decodeCategoryReq(w, r)
+	if !ok {
 		return
 	}
 	id, err := h.store.CreateCategory(r.Context(), userID, req.Name)
@@ -39,14 +52,12 @@ func (h *categoryHandlers) create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *categoryHandlers) rename(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathInt(r, "id")
+	id, ok := requirePathID(w, r, "category")
 	if !ok {
-		WriteError(w, http.StatusBadRequest, "bad_id", "category id must be integer")
 		return
 	}
-	var req categoryReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" {
-		WriteError(w, http.StatusBadRequest, "bad_json", "name is required")
+	req, ok := decodeCategoryReq(w, r)
+	if !ok {
 		return
 	}
 	if err := h.store.RenameCategory(r.Context(), userID, id, req.Name); err != nil {
@@ -57,9 +68,8 @@ func (h *categoryHandlers) rename(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *categoryHandlers) delete(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathInt(r, "id")
+	id, ok := requirePathID(w, r, "category")
 	if !ok {
-		WriteError(w, http.StatusBadRequest, "bad_id", "category id must be integer")
 		return
 	}
 	if err := h.store.DeleteCategory(r.Context(), userID, id); err != nil {
