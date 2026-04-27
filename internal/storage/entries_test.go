@@ -119,5 +119,24 @@ func TestEntries_BulkMarkReadFeed(t *testing.T) {
 	require.Len(t, unread, 0)
 }
 
+func TestEntries_EntryExists(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	feedID := mustFeed(t, s)
+
+	exists, err := s.EntryExists(ctx, feedID, "missing")
+	require.NoError(t, err)
+	require.False(t, exists)
+
+	_, err = s.InsertEntry(ctx, &storage.Entry{
+		FeedID: feedID, UserID: 1, Hash: "h", Title: "T",
+	})
+	require.NoError(t, err)
+
+	exists, err = s.EntryExists(ctx, feedID, "h")
+	require.NoError(t, err)
+	require.True(t, exists)
+}
+
 func strPtr(s string) *string { return &s }
 func int64Ptr(i int64) *int64 { return &i }

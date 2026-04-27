@@ -187,6 +187,16 @@ func (s *Store) UpdateEntryState(ctx context.Context, userID, id int64, read, sa
 	return rowsOrNotFound(res)
 }
 
+// EntryExists reports whether an entry with (feed_id, hash) is in
+// the entries table. Used by the poller's dedup probe before insert.
+func (s *Store) EntryExists(ctx context.Context, feedID int64, hash string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM entries WHERE feed_id = ? AND hash = ?`,
+		feedID, hash).Scan(&n)
+	return n > 0, err
+}
+
 // BulkMarkRead marks every matching entry read. Idempotent.
 func (s *Store) BulkMarkRead(ctx context.Context, userID int64, scope BulkScope) error {
 	q := `UPDATE entries SET read = 1, read_at = unixepoch(), changed_at = unixepoch()

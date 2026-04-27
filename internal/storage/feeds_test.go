@@ -113,3 +113,85 @@ func TestFeeds_ListDueIgnoresDisabledOrBroken(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []int64{good}, got)
 }
+
+func TestFeeds_CommitPollSuccess_InsertsAndUpdates(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	feedID, err := s.CreateFeed(ctx, &storage.Feed{
+		UserID: 1, Title: "F", FeedURL: "https://f/", PollInterval: 3600,
+	})
+	require.NoError(t, err)
+
+	entries := []*storage.Entry{
+		{FeedID: feedID, UserID: 1, Hash: "a", Title: "A"},
+		{FeedID: feedID, UserID: 1, Hash: "b", Title: "B"},
+	}
+	weekly, err := s.CommitPollSuccess(ctx, feedID, entries, `"v1"`, "Sat, 26 Apr 2026 08:00:00 GMT", 0, 999_999_000)
+	require.NoError(t, err)
+	require.Equal(t, 2, weekly)
+
+	got, _ := s.GetFeed(ctx, 1, feedID)
+	require.NotNil(t, got.ETag)
+	require.Equal(t, `"v1"`, *got.ETag)
+	require.NotNil(t, got.LastModified)
+	require.Equal(t, 0, got.ErrorCount)
+	require.Nil(t, got.LastError)
+	require.Equal(t, int64(999_999_000), *got.NextPollAt)
+	require.Equal(t, 2, got.WeeklyEntryCount)
+
+	all, _ := s.ListEntries(ctx, 1, storage.EntriesFilter{Limit: 10})
+	require.Len(t, all, 2)
+}
+
+func TestFeeds_CommitPollSuccess_DuplicateHashSilentlySkipped(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	feedID, _ := s.CreateFeed(ctx, &storage.Feed{
+		UserID: 1, Title: "F", FeedURL: "https://f/", PollInterval: 3600,
+	})
+	// First insert.
+	_, err := s.CommitPollSuccess(ctx, feedID,
+		[]*storage.Entry{{FeedID: feedID, UserID: 1, Hash: "h", Title: "T1"}},
+		"", "", 0, 1)
+	require.NoError(t, err)
+	// Second commit with the same hash + an additional new one;
+	// the duplicate must be silently ignored, not fail the whole tx.
+	_, err = s.CommitPollSuccess(ctx, feedID,
+		[]*storage.Entry{
+			{FeedID: feedID, UserID: 1, Hash: "h", Title: "T1-dup"},
+			{FeedID: feedID, UserID: 1, Hash: "i", Title: "T2"},
+		}, "", "", 0, 2)
+	require.NoError(t, err)
+
+	all, _ := s.ListEntries(ctx, 1, storage.EntriesFilter{Limit: 10})
+	require.Len(t, all, 2, "duplicate hash must not double-insert")
+}
+
+func TestFeeds_CommitPollNotModified(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	feedID, _ := s.CreateFeed(ctx, &storage.Feed{
+		UserID: 1, Title: "F", FeedURL: "https://f/", PollInterval: 3600,
+		ErrorCount: 3, LastError: strPtr("earlier failure"),
+	})
+	require.NoError(t, s.CommitPollNotModified(ctx, feedID, `"v1"`, "", 1234567))
+	got, _ := s.GetFeed(ctx, 1, feedID)
+	require.Equal(t, 0, got.ErrorCount)
+	require.Nil(t, got.LastError)
+	require.Equal(t, int64(1234567), *got.NextPollAt)
+	require.NotNil(t, got.ETag)
+}
+
+func TestFeeds_CommitPollFailure(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	feedID, _ := s.CreateFeed(ctx, &storage.Feed{
+		UserID: 1, Title: "F", FeedURL: "https://f/", PollInterval: 3600,
+	})
+	require.NoError(t, s.CommitPollFailure(ctx, feedID, 1, "dial tcp: timeout", 5000))
+	got, _ := s.GetFeed(ctx, 1, feedID)
+	require.Equal(t, 1, got.ErrorCount)
+	require.NotNil(t, got.LastError)
+	require.Equal(t, "dial tcp: timeout", *got.LastError)
+	require.Equal(t, int64(5000), *got.NextPollAt)
+}

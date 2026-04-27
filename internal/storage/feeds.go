@@ -194,3 +194,117 @@ func boolInt(b bool) int {
 	}
 	return 0
 }
+
+// CommitPollSuccess writes the new entries and updates the feed in a
+// single IMMEDIATE transaction. Duplicate (feed_id, hash) collisions
+// are silently dropped (race tolerance). Returns the recomputed
+// weekly_entry_count.
+func (s *Store) CommitPollSuccess(
+	ctx context.Context,
+	feedID int64,
+	entries []*Entry,
+	etag, lastModified string,
+	errCount int,
+	nextPollAt int64,
+) (int, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	for _, e := range entries {
+		_, err := tx.ExecContext(ctx,
+			`INSERT INTO entries(feed_id, user_id, hash, title, url, comments_url,
+				author, summary, content, published_at, reading_time, extraction_failed)
+			 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			e.FeedID, e.UserID, e.Hash, e.Title, e.URL, e.CommentsURL,
+			e.Author, e.Summary, e.Content, e.PublishedAt, e.ReadingTime,
+			boolInt(e.ExtractionFailed),
+		)
+		if err != nil && !isUniqueConstraint(err) {
+			return 0, err
+		}
+	}
+
+	var weekly int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT count(*) FROM entries
+		 WHERE feed_id = ? AND created_at > unixepoch() - 7*86400`, feedID).
+		Scan(&weekly); err != nil {
+		return 0, err
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE feeds SET
+			etag = NULLIF(?, ''),
+			last_modified = NULLIF(?, ''),
+			last_polled_at = unixepoch(),
+			next_poll_at = ?,
+			error_count = ?,
+			last_error = NULL,
+			weekly_entry_count = ?,
+			updated_at = unixepoch()
+		 WHERE id = ?`,
+		etag, lastModified, nextPollAt, errCount, weekly, feedID); err != nil {
+		return 0, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return weekly, nil
+}
+
+// CommitPollNotModified handles the 304 case: feed timestamps + reset
+// error_count, no entry inserts.
+func (s *Store) CommitPollNotModified(
+	ctx context.Context,
+	feedID int64,
+	etag, lastModified string,
+	nextPollAt int64,
+) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE feeds SET
+			etag = COALESCE(NULLIF(?, ''), etag),
+			last_modified = COALESCE(NULLIF(?, ''), last_modified),
+			last_polled_at = unixepoch(),
+			next_poll_at = ?,
+			error_count = 0,
+			last_error = NULL,
+			updated_at = unixepoch()
+		 WHERE id = ?`,
+		etag, lastModified, nextPollAt, feedID)
+	return err
+}
+
+// CommitPollFailure records the failure: increment error_count, store
+// last_error, push next_poll_at out per the adaptive backoff (the
+// caller computes the timestamp).
+func (s *Store) CommitPollFailure(
+	ctx context.Context,
+	feedID int64,
+	errCount int,
+	lastError string,
+	nextPollAt int64,
+) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE feeds SET
+			error_count = ?,
+			last_error = NULLIF(?, ''),
+			last_polled_at = unixepoch(),
+			next_poll_at = ?,
+			updated_at = unixepoch()
+		 WHERE id = ?`,
+		errCount, lastError, nextPollAt, feedID)
+	return err
+}
+
+// isUniqueConstraint reports whether err is a SQLite UNIQUE
+// constraint violation. Cross-driver: matches both modernc and mattn.
+func isUniqueConstraint(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "unique")
+}
