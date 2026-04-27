@@ -16,7 +16,14 @@ type ProxyEncoder func(sourceURL string) string
 // <picture><source srcset> in entryHTML to point at the Tap media
 // proxy. Relative URLs are resolved against articleURL. data: URIs
 // and absolute non-http(s) schemes are passed through untouched.
+//
+// A nil encode is treated as the identity (no rewriting), matching
+// NewPipeline's default and avoiding a nil-deref for callers that
+// don't need media rewriting.
 func RewriteMedia(entryHTML, articleURL string, encode ProxyEncoder) (string, error) {
+	if encode == nil {
+		encode = func(u string) string { return u }
+	}
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(entryHTML))
 	if err != nil {
 		return "", err

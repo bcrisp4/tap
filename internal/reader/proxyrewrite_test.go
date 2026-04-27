@@ -52,6 +52,14 @@ func TestRewriteMedia_LeavesIframeAlone(t *testing.T) {
 	require.NotContains(t, out, "/p/")
 }
 
+func TestRewriteMedia_NilEncoderIsIdentity(t *testing.T) {
+	// A nil ProxyEncoder must not panic; URLs pass through (identity).
+	in := `<img src="https://example.com/x.png">`
+	out, err := reader.RewriteMedia(in, "https://example.com/", nil)
+	require.NoError(t, err)
+	require.Contains(t, out, `src="https://example.com/x.png"`)
+}
+
 func TestRewriteMedia_DataURISkipped(t *testing.T) {
 	in := `<img src="data:image/png;base64,abc">`
 	out, err := reader.RewriteMedia(in, "https://x", stubEncode)
