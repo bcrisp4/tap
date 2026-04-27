@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/bcrisp4/tap/internal/httpclient"
 	"github.com/bcrisp4/tap/internal/poller"
@@ -28,6 +29,7 @@ func Mux(deps Dependencies) *http.ServeMux {
 	entries := &entryHandlers{store: deps.Store}
 	search := &searchHandlers{store: deps.Store}
 	opml := &opmlHandlers{store: deps.Store}
+	system := &systemHandlers{state: deps.RunState, startedAt: time.Now()}
 
 	mux := http.NewServeMux()
 
@@ -56,6 +58,8 @@ func Mux(deps Dependencies) *http.ServeMux {
 
 	mux.HandleFunc("POST /api/v1/opml/import", opml.importHandler)
 	mux.HandleFunc("GET /api/v1/opml/export", opml.exportHandler)
+
+	mux.HandleFunc("GET /api/v1/system/status", system.status)
 
 	return mux
 }
