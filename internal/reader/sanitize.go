@@ -3,6 +3,7 @@ package reader
 import (
 	"net/url"
 	"strings"
+	"sync"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/microcosm-cc/bluemonday"
@@ -35,9 +36,13 @@ func Sanitize(entryHTML string, opts SanitizeOptions) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	policy := tapPolicy()
-	return policy.Sanitize(pre), nil
+	return cachedPolicy().Sanitize(pre), nil
 }
+
+// cachedPolicy returns the package-shared bluemonday policy. Per
+// bluemonday's docs the policy is built once per program and is safe
+// to reuse across goroutines for Sanitize calls.
+var cachedPolicy = sync.OnceValue(tapPolicy)
 
 // tapPreSanitize runs Tap-specific transforms bluemonday can't
 // natively express:
