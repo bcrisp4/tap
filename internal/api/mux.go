@@ -27,6 +27,7 @@ func Mux(deps Dependencies) *http.ServeMux {
 	cats := &categoryHandlers{store: deps.Store}
 	entries := &entryHandlers{store: deps.Store}
 	search := &searchHandlers{store: deps.Store}
+	opml := &opmlHandlers{store: deps.Store}
 
 	mux := http.NewServeMux()
 
@@ -52,6 +53,9 @@ func Mux(deps Dependencies) *http.ServeMux {
 	mux.HandleFunc("PUT /api/v1/entries/{id}", entries.put)
 
 	mux.HandleFunc("GET /api/v1/search", search.handle)
+
+	mux.HandleFunc("POST /api/v1/opml/import", opml.importHandler)
+	mux.HandleFunc("GET /api/v1/opml/export", opml.exportHandler)
 
 	return mux
 }
