@@ -15,14 +15,18 @@ const BASE = process.env.TAP_E2E_BASE ?? 'http://127.0.0.1:5173';
 
 test.beforeEach(async () => {
 	const ctx = await request.newContext({ baseURL: BASE });
-	// Best-effort subscribe of a small public feed so the poller has
-	// something to fetch. The endpoint is idempotent (409 on repeat),
-	// which we deliberately swallow.
-	await ctx
-		.post('/api/v1/feeds', {
+	try {
+		// Best-effort subscribe of a small public feed so the poller has
+		// something to fetch. The endpoint is idempotent (409 on repeat),
+		// which we deliberately accept alongside 2xx so re-runs against
+		// the same DB don't fail this hook.
+		const res = await ctx.post('/api/v1/feeds', {
 			data: { feed_url: 'https://jvns.ca/atom.xml', title: 'jvns.ca (e2e)' }
-		})
-		.catch(() => undefined);
+		});
+		expect(res.ok() || res.status() === 409).toBeTruthy();
+	} finally {
+		await ctx.dispose();
+	}
 });
 
 test('unread view renders the river container and wordmark', async ({ page }) => {
@@ -55,6 +59,19 @@ test('m toggles read on the selected entry', async ({ page }) => {
 	await page.goto('/');
 	const rows = page.locator('.entry');
 	await expect(rows.first()).toBeVisible({ timeout: 20_000 });
+
+	// Capture an element handle to the originally-selected row. After
+	// `m`, the entry leaves the unread filter and the locator at index 0
+	// would silently start pointing at a different row, so we assert on
+	// the captured handle's connectedness instead — that's the actual
+	// behaviour we care about (the marked entry drops off the river).
+	const firstRowHandle = await rows.first().elementHandle();
+	expect(firstRowHandle).not.toBeNull();
+
 	await page.keyboard.press('m');
-	await expect(rows.first()).toHaveClass(/is-read/);
+	await expect
+		.poll(async () => await firstRowHandle!.evaluate((el) => el.isConnected), {
+			timeout: 5_000
+		})
+		.toBe(false);
 });
