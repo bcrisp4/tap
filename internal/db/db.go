@@ -15,7 +15,10 @@ import (
 func Open(path string) (*sql.DB, error) {
 	// modernc registers as "sqlite". Use a DSN that enables a few
 	// useful query parameters; they're applied at connection time.
-	dsn := fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)", path)
+	// _txlock=immediate makes every BeginTx start with BEGIN IMMEDIATE
+	// (per design.md §5: poll commits use a single IMMEDIATE tx). Safe
+	// under our single-writer SetMaxOpenConns(1) configuration.
+	dsn := fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_txlock=immediate", path)
 	d, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)

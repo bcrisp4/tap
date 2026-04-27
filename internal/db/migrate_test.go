@@ -35,5 +35,30 @@ func TestMigrate_Idempotent(t *testing.T) {
 
 	var n int
 	require.NoError(t, d.QueryRow("SELECT count(*) FROM schema_version").Scan(&n))
-	require.Equal(t, 1, n, "baseline must not be recorded twice")
+	require.Equal(t, 2, n, "every migration recorded exactly once")
+}
+
+func TestMigrate_InitialSchemaTablesExist(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tap.db")
+	d, err := db.Open(path)
+	require.NoError(t, err)
+	defer d.Close()
+	require.NoError(t, db.Migrate(context.Background(), d))
+
+	want := []string{
+		"users", "categories", "icons", "feeds", "entries",
+		"entry_tombstones", "enclosures", "entries_fts", "config",
+	}
+	for _, name := range want {
+		var n int
+		require.NoError(t,
+			d.QueryRow("SELECT count(*) FROM sqlite_master WHERE name = ?", name).Scan(&n),
+			"missing table %q", name)
+		require.Equal(t, 1, n, "table %q must exist", name)
+	}
+
+	// Default user seeded.
+	var username string
+	require.NoError(t, d.QueryRow("SELECT username FROM users WHERE id = 1").Scan(&username))
+	require.Equal(t, "default", username)
 }
