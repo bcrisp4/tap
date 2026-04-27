@@ -56,6 +56,12 @@ type BulkScope struct {
 const entrySelectCols = `id, feed_id, user_id, hash, title, url, comments_url, author, summary, content,
 		published_at, reading_time, read, read_at, saved, saved_at, extraction_failed, created_at, changed_at`
 
+// qualifiedEntryCols is entrySelectCols with `e.` prefixes — used when
+// the entries table is aliased to disambiguate with entries_fts (which
+// shares the `title` column name in JOIN queries).
+const qualifiedEntryCols = `e.id, e.feed_id, e.user_id, e.hash, e.title, e.url, e.comments_url, e.author, e.summary, e.content,
+		e.published_at, e.reading_time, e.read, e.read_at, e.saved, e.saved_at, e.extraction_failed, e.created_at, e.changed_at`
+
 func scanEntry(row interface{ Scan(...any) error }) (*Entry, error) {
 	e := &Entry{}
 	var read, saved, extf int
@@ -219,6 +225,40 @@ func (s *Store) EntryExists(ctx context.Context, feedID int64, hash string) (boo
 		`SELECT count(*) FROM entries WHERE feed_id = ? AND hash = ?`,
 		feedID, hash).Scan(&n)
 	return n > 0, err
+}
+
+// SearchEntries runs an FTS5 BM25-ranked search over the entries_fts
+// virtual table and returns the matching entries scoped to userID.
+// Errors from the FTS5 layer surface as ErrBadQuery (joined with the
+// underlying error) so the API can map them to HTTP 400 instead of 500.
+//
+// The aliased SELECT (`e.*` style) avoids ambiguity with entries_fts,
+// which exposes columns of the same name on the indexed entries.
+func (s *Store) SearchEntries(ctx context.Context, userID int64, query string, limit, offset int) ([]*Entry, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+qualifiedEntryCols+`
+		 FROM entries e
+		 JOIN entries_fts ON entries_fts.rowid = e.id
+		 WHERE entries_fts MATCH ?
+		   AND e.user_id = ?
+		 ORDER BY entries_fts.rank
+		 LIMIT ? OFFSET ?`, query, userID, limit, offset)
+	if err != nil {
+		return nil, errors.Join(ErrBadQuery, err)
+	}
+	defer rows.Close()
+	var out []*Entry
+	for rows.Next() {
+		e, err := scanEntry(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
 }
 
 // BulkMarkRead marks every matching entry read. Idempotent.

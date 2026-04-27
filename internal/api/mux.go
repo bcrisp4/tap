@@ -26,6 +26,7 @@ func Mux(deps Dependencies) *http.ServeMux {
 	feeds := &feedHandlers{store: deps.Store, client: deps.HTTPClient}
 	cats := &categoryHandlers{store: deps.Store}
 	entries := &entryHandlers{store: deps.Store}
+	search := &searchHandlers{store: deps.Store}
 
 	mux := http.NewServeMux()
 
@@ -49,6 +50,8 @@ func Mux(deps Dependencies) *http.ServeMux {
 	mux.HandleFunc("PUT /api/v1/entries/read", entries.bulkRead)
 	mux.HandleFunc("GET /api/v1/entries/{id}", entries.get)
 	mux.HandleFunc("PUT /api/v1/entries/{id}", entries.put)
+
+	mux.HandleFunc("GET /api/v1/search", search.handle)
 
 	return mux
 }
