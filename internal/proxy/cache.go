@@ -49,6 +49,12 @@ func (c *Cache) urlPath(url string) string {
 
 // Get returns the cached entry for url, ok=false if missing.
 //
+// A missing or unparseable .meta sidecar is treated as a cache miss
+// (and the orphaned body is removed) so we never serve a response with
+// an empty Content-Type. Both files are written best-effort by Put,
+// without an fsync, so a crash between the two writes can leave a body
+// without meta — refetching from origin is the safe recovery.
+//
 // Reading touches the body's mtime so age-based eviction tracks
 // last-access rather than last-write.
 func (c *Cache) Get(url string) (Entry, bool, error) {
@@ -61,14 +67,21 @@ func (c *Cache) Get(url string) (Entry, bool, error) {
 		return Entry{}, false, err
 	}
 	metaRaw, err := os.ReadFile(bodyPath + ".meta")
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			// Body without meta — likely an interrupted write. Drop both
+			// and force a refetch.
+			_ = os.Remove(bodyPath)
+			return Entry{}, false, nil
+		}
 		return Entry{}, false, err
 	}
 	var m metaJSON
-	if len(metaRaw) > 0 {
-		if err := json.Unmarshal(metaRaw, &m); err != nil {
-			return Entry{}, false, err
-		}
+	if err := json.Unmarshal(metaRaw, &m); err != nil {
+		// Corrupt sidecar — same recovery as a missing one.
+		_ = os.Remove(bodyPath)
+		_ = os.Remove(bodyPath + ".meta")
+		return Entry{}, false, nil
 	}
 	now := nowFn()
 	_ = os.Chtimes(bodyPath, now, now)
@@ -138,7 +151,12 @@ func (c *Cache) Evict(maxBytes int64) error {
 		if total <= maxBytes {
 			break
 		}
-		_ = os.Remove(f.path)
+		// Decrement only on successful body removal so a permission /
+		// race / EROFS error doesn't trick us into "stopping early"
+		// when the cache is still over the cap.
+		if err := os.Remove(f.path); err != nil {
+			continue
+		}
 		_ = os.Remove(f.path + ".meta")
 		total -= f.size
 	}

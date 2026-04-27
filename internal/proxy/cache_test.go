@@ -75,6 +75,41 @@ func TestCache_PutOverwrites(t *testing.T) {
 	require.Equal(t, []byte("v2"), got.Body)
 }
 
+func TestCache_GetTreatsMissingMetaAsMiss(t *testing.T) {
+	dir := t.TempDir()
+	c := NewCache(dir)
+	url := "https://x/orphan"
+	require.NoError(t, c.Put(url, []byte("body"), "image/png", `"v1"`))
+
+	// Simulate a crash between body and meta writes.
+	bodyPath := c.urlPath(url)
+	require.NoError(t, os.Remove(bodyPath+".meta"))
+
+	got, ok, err := c.Get(url)
+	require.NoError(t, err)
+	require.False(t, ok, "missing meta must be a miss, not a hit with empty headers")
+	require.Empty(t, got.ContentType)
+
+	// Orphan body should also be cleaned up, so a subsequent Put
+	// starts from a clean slate.
+	_, statErr := os.Stat(bodyPath)
+	require.True(t, os.IsNotExist(statErr), "orphan body must be removed")
+}
+
+func TestCache_GetTreatsCorruptMetaAsMiss(t *testing.T) {
+	dir := t.TempDir()
+	c := NewCache(dir)
+	url := "https://x/corrupt"
+	require.NoError(t, c.Put(url, []byte("body"), "image/png", `"v1"`))
+
+	// Corrupt the sidecar.
+	require.NoError(t, os.WriteFile(c.urlPath(url)+".meta", []byte("not-json"), 0o644))
+
+	_, ok, err := c.Get(url)
+	require.NoError(t, err)
+	require.False(t, ok, "corrupt meta must be a miss")
+}
+
 func TestCache_PathSplittingNoCollisions(t *testing.T) {
 	dir := t.TempDir()
 	c := NewCache(dir)
