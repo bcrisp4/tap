@@ -52,15 +52,7 @@ func Parse(body []byte, feedURL string) (*Result, error) {
 	}
 	for _, item := range feed.Items {
 		e := normaliseItem(item, base)
-		// FeedID is zero here — the caller fills it in. We pass 0 to
-		// EntryHash for now; the caller is expected to recompute the
-		// hash with the real feed_id at insert time.
-		guid := item.GUID
-		link := stringOr(e.URL)
-		title := e.Title
-		pub := int64Or(e.PublishedAt)
-		e.Hash = EntryHash(0, guid, link, title, pub)
-		// Reading-time uses content if present, falling back to summary.
+		e.Hash = EntryHash(0, item.GUID, stringOr(e.URL), e.Title, int64Or(e.PublishedAt))
 		text := stringOr(e.Content)
 		if text == "" {
 			text = stringOr(e.Summary)
