@@ -83,23 +83,70 @@ func rewriteOne(raw string, base *url.URL, encode ProxyEncoder) string {
 	return encode(u.String())
 }
 
-// rewriteSrcset splits a srcset on commas, rewrites each URL, and
-// preserves the descriptor verbatim. Whitespace inside descriptors is
-// kept; surrounding whitespace is trimmed.
+// rewriteSrcset splits a srcset into candidates, rewrites each URL,
+// and preserves any width/density descriptor unchanged.
+//
+// data: URIs may contain commas in their payload; splitting naively on
+// "," would corrupt them. To handle that without pulling in a full
+// WHATWG parser, candidates beginning with "data:" are treated as a
+// single unit up to the first whitespace (their descriptor terminator)
+// and only commas outside the data: payload act as separators.
 func rewriteSrcset(raw string, base *url.URL, encode ProxyEncoder) string {
-	parts := strings.Split(raw, ",")
-	for i, p := range parts {
-		p = strings.TrimSpace(p)
-		if p == "" {
+	candidates := splitSrcsetCandidates(raw)
+	for i, c := range candidates {
+		c = strings.TrimSpace(c)
+		if c == "" {
 			continue
 		}
-		// First whitespace splits the URL from the descriptor.
-		fields := strings.Fields(p)
-		if len(fields) == 0 {
+		urlPart, descriptor := splitURLAndDescriptor(c)
+		if urlPart == "" {
 			continue
 		}
-		fields[0] = rewriteOne(fields[0], base, encode)
-		parts[i] = strings.Join(fields, " ")
+		candidates[i] = rewriteOne(urlPart, base, encode) + descriptor
 	}
-	return strings.Join(parts, ", ")
+	return strings.Join(candidates, ", ")
+}
+
+// splitSrcsetCandidates splits a srcset on commas, except commas that
+// appear inside the payload of a "data:" URI (i.e. before the first
+// whitespace following the "data:" prefix).
+func splitSrcsetCandidates(raw string) []string {
+	var out []string
+	i := 0
+	for i < len(raw) {
+		// Skip leading whitespace and commas between candidates.
+		for i < len(raw) && (raw[i] == ' ' || raw[i] == '\t' || raw[i] == '\n' || raw[i] == '\r' || raw[i] == ',') {
+			i++
+		}
+		if i >= len(raw) {
+			break
+		}
+		start := i
+		isData := strings.HasPrefix(strings.ToLower(raw[i:]), "data:")
+		if isData {
+			// Consume the data: URI up to the first whitespace
+			// (descriptor terminator), then continue normally.
+			for i < len(raw) && raw[i] != ' ' && raw[i] != '\t' && raw[i] != '\n' && raw[i] != '\r' {
+				i++
+			}
+		}
+		// Consume up to the next top-level comma.
+		for i < len(raw) && raw[i] != ',' {
+			i++
+		}
+		out = append(out, raw[start:i])
+	}
+	return out
+}
+
+// splitURLAndDescriptor returns (url, descriptor) where descriptor
+// includes its leading whitespace so it round-trips byte-for-byte.
+func splitURLAndDescriptor(c string) (string, string) {
+	for i := 0; i < len(c); i++ {
+		switch c[i] {
+		case ' ', '\t', '\n', '\r':
+			return c[:i], c[i:]
+		}
+	}
+	return c, ""
 }

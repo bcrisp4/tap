@@ -52,6 +52,20 @@ func TestRewriteMedia_LeavesIframeAlone(t *testing.T) {
 	require.NotContains(t, out, "/p/")
 }
 
+func TestRewriteMedia_SrcsetWithDataURICandidate(t *testing.T) {
+	// Regression: a data: URI's base64 payload can contain commas, and
+	// a naive comma-split would corrupt the candidate. The data: URI
+	// must pass through unrewritten and intact.
+	in := `<img srcset="data:image/png;base64,iVBORw0KGgoAAAA= 1x, /b.png 2x">`
+	out, err := reader.RewriteMedia(in, "https://example.com/", stubEncode)
+	require.NoError(t, err)
+	// data: URI preserved (not split, not rewritten).
+	require.Contains(t, out, "data:image/png;base64,iVBORw0KGgoAAAA= 1x")
+	require.NotContains(t, out, "/p/data:")
+	// Sibling candidate still gets rewritten.
+	require.Contains(t, out, "/p/https://example.com/b.png 2x")
+}
+
 func TestRewriteMedia_NilEncoderIsIdentity(t *testing.T) {
 	// A nil ProxyEncoder must not panic; URLs pass through (identity).
 	in := `<img src="https://example.com/x.png">`
