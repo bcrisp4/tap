@@ -142,7 +142,13 @@ func defaultHealthcheckProbe(ctx context.Context, url string) error {
 	if err != nil {
 		return fmt.Errorf("probe %s: %w", url, err)
 	}
-	defer resp.Body.Close()
+	// Drain before close so the underlying TCP/keep-alive connection can
+	// be reused; matters when the same probe runs repeatedly under
+	// Docker's HEALTHCHECK loop.
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("probe %s: status %d", url, resp.StatusCode)
 	}

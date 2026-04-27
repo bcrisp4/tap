@@ -16,7 +16,7 @@ trap 'docker rm -f "$NAME" >/dev/null 2>&1 || true; rm -rf "$TMPDIR"' EXIT
 
 docker run -d --name "$NAME" \
 	-v "$TMPDIR:/data" \
-	-p "$PORT:8080" \
+	-p "127.0.0.1:${PORT}:8080" \
 	-e TAP_POLL_INTERVAL=2s \
 	"$IMAGE" >/dev/null
 
@@ -36,11 +36,19 @@ curl -fsS -XPOST "http://127.0.0.1:${PORT}/api/v1/feeds" \
 	-d '{"feed_url":"https://jvns.ca/atom.xml","title":"jvns.ca"}' >/dev/null
 echo "✓ subscribed"
 
-# Wait up to 30 s for the poll to populate entries.
+# Wait up to 30 s for the poll to populate entries. `jq -er` exits
+# non-zero on missing/null so we get a clear failure if the response
+# shape ever drifts; the case-glob then guards the integer comparison
+# from any stray non-numeric output.
 TOTAL=0
 for _ in {1..15}; do
-	TOTAL=$(curl -fsS "http://127.0.0.1:${PORT}/api/v1/entries?limit=1" | jq -r '.pagination.total')
-	if [ "$TOTAL" -gt 0 ]; then break; fi
+	if RAW=$(curl -fsS "http://127.0.0.1:${PORT}/api/v1/entries?limit=1" \
+		| jq -er '.pagination.total'); then
+		case "$RAW" in
+			''|*[!0-9]*) ;;
+			*) TOTAL="$RAW"; [ "$TOTAL" -gt 0 ] && break ;;
+		esac
+	fi
 	sleep 2
 done
 [ "$TOTAL" -gt 0 ] || { echo "✗ poll did not produce entries"; exit 1; }
