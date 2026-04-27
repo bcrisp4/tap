@@ -5,6 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"strings"
+
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // Feed mirrors the feeds table. Optional columns use *T for
@@ -301,10 +304,15 @@ func (s *Store) CommitPollFailure(
 }
 
 // isUniqueConstraint reports whether err is a SQLite UNIQUE
-// constraint violation. Cross-driver: matches both modernc and mattn.
+// constraint violation. Uses modernc's typed error code so we don't
+// rely on error-message wording.
 func isUniqueConstraint(err error) bool {
 	if err == nil {
 		return false
 	}
-	return strings.Contains(strings.ToLower(err.Error()), "unique")
+	var se *sqlite.Error
+	if errors.As(err, &se) {
+		return se.Code() == sqlite3.SQLITE_CONSTRAINT_UNIQUE
+	}
+	return false
 }
