@@ -37,6 +37,12 @@ func TestSSRF_BlocksLoopbackAndPrivate(t *testing.T) {
 	}
 }
 
+func TestSSRF_BlocksZonedIPv6LinkLocal(t *testing.T) {
+	cb := newSSRFControl(SSRFConfig{})
+	require.Error(t, cb("tcp", "[fe80::1%eth0]:80", nil),
+		"zoned IPv6 link-local must still be blocked, not misclassified as non-IP")
+}
+
 func TestSSRF_AllowsPublic(t *testing.T) {
 	cb := newSSRFControl(SSRFConfig{})
 	for _, addr := range []string{"8.8.8.8:443", "1.1.1.1:80", "[2606:4700::1111]:443"} {

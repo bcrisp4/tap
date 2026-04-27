@@ -26,9 +26,12 @@ func newBrotliTransport(wrapped http.RoundTripper) http.RoundTripper {
 }
 
 func (t *brotliTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// Per the http.RoundTripper contract, RoundTrip must not mutate
+	// the supplied request — clone before touching headers.
 	// Setting Accept-Encoding manually disables stdlib's auto-gzip,
 	// so we must include both.
 	if req.Header.Get("Accept-Encoding") == "" {
+		req = req.Clone(req.Context())
 		req.Header.Set("Accept-Encoding", "br, gzip")
 	}
 	resp, err := t.wrapped.RoundTrip(req)

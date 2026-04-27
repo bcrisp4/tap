@@ -24,7 +24,8 @@ func TestClient_GetSuccess(t *testing.T) {
 	resp, err := c.Get(context.Background(), srv.URL, nil)
 	require.NoError(t, err)
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
 	require.Equal(t, "ok", string(body))
 }
 

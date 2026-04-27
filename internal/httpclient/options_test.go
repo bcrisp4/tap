@@ -47,7 +47,8 @@ func TestOptions_DefaultUAUsedWhenEmpty(t *testing.T) {
 		AllowPrivate: true,
 		UserAgent:    "Tap/test",
 	})
-	resp, _ := c.Get(context.Background(), srv.URL, nil)
+	resp, err := c.Get(context.Background(), srv.URL, nil)
+	require.NoError(t, err)
 	resp.Body.Close()
 	require.Equal(t, "Tap/test", seen)
 }

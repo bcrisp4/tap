@@ -82,7 +82,13 @@ func newSSRFControl(cfg SSRFConfig) func(network, addr string, c syscall.RawConn
 		if err != nil {
 			return fmt.Errorf("ssrf: split host/port %q: %w", addr, err)
 		}
-		ip := net.ParseIP(host)
+		// Strip an IPv6 zone identifier (e.g. "fe80::1%eth0") before
+		// parsing — net.ParseIP returns nil for zoned literals.
+		parseHost := host
+		if i := strings.IndexByte(parseHost, '%'); i >= 0 {
+			parseHost = parseHost[:i]
+		}
+		ip := net.ParseIP(parseHost)
 		if ip == nil {
 			return fmt.Errorf("ssrf: not an IP literal %q (DNS rebinding?)", host)
 		}
