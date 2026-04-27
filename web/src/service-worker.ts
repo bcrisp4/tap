@@ -142,21 +142,35 @@ self.addEventListener('message', (event: ExtendableMessageEvent) => {
 	}
 });
 
+// Concurrency cap when filling the proxy cache. Worst-case the page
+// hands us limit (200) × MAX_URLS_PER_ENTRY (32) = 6400 URLs, and
+// firing them all at once would saturate the per-origin connection
+// pool and pressure the small Go server. A pool of 6 matches Chrome's
+// HTTP/1.1 default. Same shape as prefetchRecent's worker pool.
+const PREFETCH_CONCURRENCY = 6;
+
 async function prefetchProxy(urls: string[]): Promise<void> {
+	if (urls.length === 0) return;
 	const cache = await caches.open(PROXY_CACHE);
-	await Promise.all(
-		urls.map(async (u) => {
-			try {
-				// Skip if already cached — saves bandwidth on reconnect
-				// when the same N most-recent entries are re-prefetched.
-				if (await cache.match(u)) return;
-				const res = await fetch(u, { cache: 'reload' });
-				if (res.ok) await cache.put(u, res.clone());
-			} catch {
-				/* ignore */
+	let cursor = 0;
+	const workers = Array.from(
+		{ length: Math.min(PREFETCH_CONCURRENCY, urls.length) },
+		async () => {
+			while (cursor < urls.length) {
+				const u = urls[cursor++];
+				try {
+					// Skip if already cached — saves bandwidth on reconnect
+					// when the same N most-recent entries are re-prefetched.
+					if (await cache.match(u)) continue;
+					const res = await fetch(u, { cache: 'reload' });
+					if (res.ok) await cache.put(u, res.clone());
+				} catch {
+					/* a single failure shouldn't kill the whole batch */
+				}
 			}
-		})
+		}
 	);
+	await Promise.all(workers);
 }
 
 export {};

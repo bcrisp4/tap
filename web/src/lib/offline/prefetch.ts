@@ -22,7 +22,11 @@ import { getJSON, getList } from '$api/client';
 // Tap's proxy URL shape: /api/v1/proxy/<base64url-token>. The
 // character set is conservative on purpose — we want to skip anything
 // the server would reject as malformed without paying for a fetch.
-const PROXY_RE = /\/api\/v1\/proxy\/[A-Za-z0-9_\-=.]+/g;
+// The lookahead requires an HTML/text boundary after the token so that
+// a stray character (e.g. `/api/v1/proxy/should~not`) doesn't get
+// truncated into a valid-looking but bogus URL — that would cost a
+// pointless fetch on every prefetch run.
+const PROXY_RE = /\/api\/v1\/proxy\/[A-Za-z0-9_\-=.]+(?=["'\s>]|$)/g;
 
 // Cap the number of proxy URLs we collect per entry. The reader rarely
 // needs more than a handful of images cached for offline use, and an
