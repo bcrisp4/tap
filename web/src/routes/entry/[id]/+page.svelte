@@ -64,7 +64,12 @@
 	function onKey(ev: KeyboardEvent) {
 		// Ignore shortcuts while typing in form controls.
 		const target = ev.target as HTMLElement | null;
-		if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+		if (
+			target &&
+			(target.tagName === 'INPUT' ||
+				target.tagName === 'TEXTAREA' ||
+				target.isContentEditable)
+		) {
 			return;
 		}
 		if (ev.key === 'Escape') {
@@ -76,10 +81,10 @@
 		if (!e) return;
 		if (ev.key === 'm') {
 			ev.preventDefault();
-			toggleRead.mutate({ id: e.id, read: !e.read });
+			toggleReadHere();
 		} else if (ev.key === 's') {
 			ev.preventDefault();
-			toggleSaved.mutate({ id: e.id, saved: !e.saved });
+			toggleSavedHere();
 		} else if (ev.key === 'v' && e.url) {
 			ev.preventDefault();
 			window.open(e.url, '_blank', 'noopener');
