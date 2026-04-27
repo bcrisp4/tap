@@ -107,34 +107,36 @@ func rewriteSrcset(raw string, base *url.URL, encode ProxyEncoder) string {
 	return strings.Join(candidates, ", ")
 }
 
+const srcsetWhitespace = " \t\n\r"
+
 // splitSrcsetCandidates splits a srcset on commas, except commas that
 // appear inside the payload of a "data:" URI (i.e. before the first
 // whitespace following the "data:" prefix).
 func splitSrcsetCandidates(raw string) []string {
 	var out []string
-	i := 0
-	for i < len(raw) {
+	for i := 0; i < len(raw); {
 		// Skip leading whitespace and commas between candidates.
-		for i < len(raw) && (raw[i] == ' ' || raw[i] == '\t' || raw[i] == '\n' || raw[i] == '\r' || raw[i] == ',') {
-			i++
+		j := i
+		for j < len(raw) && (raw[j] == ',' || strings.IndexByte(srcsetWhitespace, raw[j]) >= 0) {
+			j++
 		}
-		if i >= len(raw) {
+		if j >= len(raw) {
 			break
 		}
-		start := i
-		isData := strings.HasPrefix(strings.ToLower(raw[i:]), "data:")
-		if isData {
-			// Consume the data: URI up to the first whitespace
-			// (descriptor terminator), then continue normally.
-			for i < len(raw) && raw[i] != ' ' && raw[i] != '\t' && raw[i] != '\n' && raw[i] != '\r' {
-				i++
+		start := j
+		// data: URIs may contain commas; skip past the URI to the
+		// first whitespace (descriptor terminator) before scanning
+		// for the next comma separator.
+		if len(raw)-j >= 5 && strings.EqualFold(raw[j:j+5], "data:") {
+			for j < len(raw) && strings.IndexByte(srcsetWhitespace, raw[j]) < 0 {
+				j++
 			}
 		}
-		// Consume up to the next top-level comma.
-		for i < len(raw) && raw[i] != ',' {
-			i++
+		for j < len(raw) && raw[j] != ',' {
+			j++
 		}
-		out = append(out, raw[start:i])
+		out = append(out, raw[start:j])
+		i = j
 	}
 	return out
 }
@@ -142,11 +144,8 @@ func splitSrcsetCandidates(raw string) []string {
 // splitURLAndDescriptor returns (url, descriptor) where descriptor
 // includes its leading whitespace so it round-trips byte-for-byte.
 func splitURLAndDescriptor(c string) (string, string) {
-	for i := 0; i < len(c); i++ {
-		switch c[i] {
-		case ' ', '\t', '\n', '\r':
-			return c[:i], c[i:]
-		}
+	if i := strings.IndexAny(c, srcsetWhitespace); i >= 0 {
+		return c[:i], c[i:]
 	}
 	return c, ""
 }
