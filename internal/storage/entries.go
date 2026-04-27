@@ -150,8 +150,9 @@ func (s *Store) ListEntries(ctx context.Context, userID int64, f EntriesFilter) 
 }
 
 // UpdateEntryState toggles read and/or saved. Nil leaves the field
-// alone. Sets read_at / saved_at to unixepoch() when transitioning to
-// true; clears them on transition to false.
+// alone. Sets read_at / saved_at to unixepoch() only on the 0->1
+// transition (preserving the original timestamp on idempotent calls);
+// clears them on transition to true->false.
 func (s *Store) UpdateEntryState(ctx context.Context, userID, id int64, read, saved *bool) error {
 	if read == nil && saved == nil {
 		return nil
@@ -162,7 +163,8 @@ func (s *Store) UpdateEntryState(ctx context.Context, userID, id int64, read, sa
 		parts = append(parts, "read = ?")
 		args = append(args, boolInt(*read))
 		if *read {
-			parts = append(parts, "read_at = unixepoch()")
+			// Preserve existing read_at on idempotent re-mark.
+			parts = append(parts, "read_at = CASE WHEN read = 0 THEN unixepoch() ELSE read_at END")
 		} else {
 			parts = append(parts, "read_at = NULL")
 		}
@@ -171,7 +173,7 @@ func (s *Store) UpdateEntryState(ctx context.Context, userID, id int64, read, sa
 		parts = append(parts, "saved = ?")
 		args = append(args, boolInt(*saved))
 		if *saved {
-			parts = append(parts, "saved_at = unixepoch()")
+			parts = append(parts, "saved_at = CASE WHEN saved = 0 THEN unixepoch() ELSE saved_at END")
 		} else {
 			parts = append(parts, "saved_at = NULL")
 		}

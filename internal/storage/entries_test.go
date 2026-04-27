@@ -3,6 +3,7 @@ package storage_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -101,6 +102,42 @@ func TestEntries_UpdateStateMarksRead(t *testing.T) {
 	require.True(t, got.Read, "earlier read state preserved")
 	require.True(t, got.Saved)
 	require.NotNil(t, got.SavedAt)
+}
+
+func TestEntries_UpdateStateIdempotentPreservesTimestamp(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	feedID := mustFeed(t, s)
+	id, err := s.InsertEntry(ctx, &storage.Entry{FeedID: feedID, UserID: 1, Hash: "h", Title: "T"})
+	require.NoError(t, err)
+
+	read := true
+	require.NoError(t, s.UpdateEntryState(ctx, 1, id, &read, nil))
+	first, err := s.GetEntry(ctx, 1, id)
+	require.NoError(t, err)
+	require.NotNil(t, first.ReadAt)
+	originalReadAt := *first.ReadAt
+
+	// Sleep past unixepoch() granularity so a mistaken overwrite would be visible.
+	time.Sleep(1100 * time.Millisecond)
+	require.NoError(t, s.UpdateEntryState(ctx, 1, id, &read, nil))
+	again, err := s.GetEntry(ctx, 1, id)
+	require.NoError(t, err)
+	require.NotNil(t, again.ReadAt)
+	require.Equal(t, originalReadAt, *again.ReadAt, "re-marking read must not bump read_at")
+
+	// Toggle to false, then back to true; read_at must update on the new 0->1.
+	unread := false
+	require.NoError(t, s.UpdateEntryState(ctx, 1, id, &unread, nil))
+	cleared, err := s.GetEntry(ctx, 1, id)
+	require.NoError(t, err)
+	require.Nil(t, cleared.ReadAt)
+
+	require.NoError(t, s.UpdateEntryState(ctx, 1, id, &read, nil))
+	relit, err := s.GetEntry(ctx, 1, id)
+	require.NoError(t, err)
+	require.NotNil(t, relit.ReadAt)
+	require.GreaterOrEqual(t, *relit.ReadAt, originalReadAt)
 }
 
 func TestEntries_BulkMarkReadFeed(t *testing.T) {
