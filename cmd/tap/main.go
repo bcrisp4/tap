@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/peterbourgon/ff/v4"
@@ -16,8 +17,13 @@ import (
 
 	"github.com/bcrisp4/tap/internal/config"
 	"github.com/bcrisp4/tap/internal/db"
+	"github.com/bcrisp4/tap/internal/httpclient"
 	"github.com/bcrisp4/tap/internal/log"
+	"github.com/bcrisp4/tap/internal/poller"
+	"github.com/bcrisp4/tap/internal/proxy"
+	"github.com/bcrisp4/tap/internal/reader"
 	"github.com/bcrisp4/tap/internal/server"
+	"github.com/bcrisp4/tap/internal/storage"
 	"github.com/bcrisp4/tap/internal/version"
 )
 
@@ -111,15 +117,66 @@ func runServe(ctx context.Context, cfg *config.Config, stderr io.Writer) error {
 		return fmt.Errorf("migrate: %w", err)
 	}
 
+	store := storage.New(sqliteDB)
+
+	allow, err := httpclient.ParseAllowedHosts(strings.Join(cfg.AllowedHosts, ","))
+	if err != nil {
+		return fmt.Errorf("parse allowed hosts: %w", err)
+	}
+	httpCli := httpclient.NewClient(httpclient.Config{
+		Timeout:      cfg.HTTPTimeout,
+		MaxBodyBytes: cfg.HTTPMaxBodyBytes,
+		AllowPrivate: cfg.AllowPrivateNetworks,
+		Allowlist:    allow,
+		UserAgent:    cfg.UserAgent,
+	})
+
+	secret, err := proxy.EnsureSecret(ctx, store)
+	if err != nil {
+		return fmt.Errorf("ensure proxy secret: %w", err)
+	}
+	prox := proxy.New(proxy.Config{
+		Secret:        secret,
+		Client:        httpCli,
+		Cache:         proxy.NewCache(cfg.ProxyCacheDir),
+		MaxBodyBytes:  cfg.ProxyMaxBodyBytes,
+		MaxCacheBytes: cfg.ProxyCacheMaxBytes,
+	})
+
+	pipeline := reader.NewPipeline(reader.PipelineConfig{
+		Encode:          prox.Encoder(),
+		IframeAllowlist: cfg.IframeAllowlist,
+	})
+
+	pol := poller.New(poller.Config{
+		Store:            store,
+		Client:           httpCli,
+		Pipeline:         pipeline,
+		Interval:         cfg.PollInterval,
+		Workers:          cfg.PollWorkers,
+		PollFactor:       cfg.PollFactor,
+		ArchiveDays:      cfg.ArchiveDays,
+		ProxyCacheDir:    cfg.ProxyCacheDir,
+		ProxyCacheMaxAge: cfg.ProxyCacheMaxAge,
+		HostWeight:       cfg.HostWeight,
+	})
+	// Plan 07 builds and owns the per-host limiter inside the poller;
+	// when the media proxy is retrofitted to take one (design §6
+	// follow-up), pass `pol.HostLimiter()` into proxy.Config.
+
 	srv, err := server.New(cfg.Listen, logger)
 	if err != nil {
 		return fmt.Errorf("init server: %w", err)
 	}
+	srv.Mount("/api/v1/proxy/", prox)
 
 	logger.Info("tap starting",
 		"version", version.String(),
 		"listen", cfg.Listen,
 		"db_path", cfg.DBPath,
+		"workers", cfg.PollWorkers,
 	)
+
+	go pol.Start(ctx)
 	return srv.Run(ctx)
 }
