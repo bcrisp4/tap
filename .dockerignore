@@ -1,0 +1,28 @@
+# Build output
+/tap
+/dist/
+/web/.svelte-kit/
+/web/build/
+/web/node_modules/
+/web/playwright-report/
+/web/test-results/
+/internal/web/build/
+
+# Local state / artefacts
+/tap-cache/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+/.remember/
+
+# Worktrees and per-project plan working notes
+/.claude/worktrees/
+/docs/superpowers/plans/
+
+# Editor / OS
+.git/
+.gitignore
+.DS_Store
+.vscode/
+.idea/
