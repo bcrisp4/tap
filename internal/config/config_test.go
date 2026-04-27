@@ -143,7 +143,6 @@ func TestYAMLParser_ListErrors(t *testing.T) {
 	require.Equal(t, []kv{{"allowed-hosts", "a"}}, *calls)
 }
 
-
 func TestYAMLParser_ListErrorsThroughFFParse(t *testing.T) {
 	// End-to-end: a YAML config file containing a list for a scalar
 	// flag must abort ff.Parse instead of silently keeping the last
