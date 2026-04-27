@@ -7,27 +7,28 @@ import (
 	"strings"
 )
 
-// Entry mirrors the entries table.
+// Entry mirrors the entries table. JSON tags align with design.md §6
+// so API handlers can return *Entry values directly.
 type Entry struct {
-	ID               int64
-	FeedID           int64
-	UserID           int64
-	Hash             string
-	Title            string
-	URL              *string
-	CommentsURL      *string
-	Author           *string
-	Summary          *string
-	Content          *string
-	PublishedAt      *int64
-	ReadingTime      int
-	Read             bool
-	ReadAt           *int64
-	Saved            bool
-	SavedAt          *int64
-	ExtractionFailed bool
-	CreatedAt        int64
-	ChangedAt        int64
+	ID               int64   `json:"id"`
+	FeedID           int64   `json:"feed_id"`
+	UserID           int64   `json:"user_id"`
+	Hash             string  `json:"hash"`
+	Title            string  `json:"title"`
+	URL              *string `json:"url"`
+	CommentsURL      *string `json:"comments_url"`
+	Author           *string `json:"author"`
+	Summary          *string `json:"summary"`
+	Content          *string `json:"content,omitempty"`
+	PublishedAt      *int64  `json:"published_at"`
+	ReadingTime      int     `json:"reading_time"`
+	Read             bool    `json:"read"`
+	ReadAt           *int64  `json:"read_at"`
+	Saved            bool    `json:"saved"`
+	SavedAt          *int64  `json:"saved_at"`
+	ExtractionFailed bool    `json:"extraction_failed"`
+	CreatedAt        int64   `json:"created_at"`
+	ChangedAt        int64   `json:"changed_at"`
 }
 
 // EntriesFilter mirrors the §6 list query params (subset for Plan 02).
@@ -97,7 +98,56 @@ func (s *Store) InsertEntry(ctx context.Context, e *Entry) (int64, error) {
 }
 
 func (s *Store) ListEntries(ctx context.Context, userID int64, f EntriesFilter) ([]*Entry, error) {
-	q := `SELECT ` + entrySelectCols + ` FROM entries WHERE user_id = ?`
+	where, args := entriesWhere(userID, f)
+
+	sort := "published_at"
+	if f.Sort == "created_at" {
+		sort = "created_at"
+	}
+	order := "DESC"
+	if strings.EqualFold(f.Order, "asc") {
+		order = "ASC"
+	}
+
+	if f.Limit <= 0 {
+		f.Limit = 50
+	}
+	args = append(args, f.Limit, f.Offset)
+
+	q := `SELECT ` + entrySelectCols + ` FROM entries ` + where +
+		` ORDER BY ` + sort + ` ` + order + ` LIMIT ? OFFSET ?`
+
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Entry
+	for rows.Next() {
+		e, err := scanEntry(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// CountEntries returns the total number of entries matching the
+// filter, ignoring Limit/Offset. Used by the API to fill the
+// pagination.total field.
+func (s *Store) CountEntries(ctx context.Context, userID int64, f EntriesFilter) (int, error) {
+	where, args := entriesWhere(userID, f)
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM entries `+where, args...).Scan(&n)
+	return n, err
+}
+
+// entriesWhere builds the shared WHERE clause used by ListEntries and
+// CountEntries. The clause leads with `WHERE user_id = ?` so callers
+// can append ORDER BY / LIMIT directly.
+func entriesWhere(userID int64, f EntriesFilter) (string, []any) {
+	q := `WHERE user_id = ?`
 	args := []any{userID}
 
 	switch f.Status {
@@ -118,37 +168,7 @@ func (s *Store) ListEntries(ctx context.Context, userID int64, f EntriesFilter) 
 		q += " AND feed_id IN (SELECT id FROM feeds WHERE category_id = ?)"
 		args = append(args, *f.CategoryID)
 	}
-
-	sort := "published_at"
-	if f.Sort == "created_at" {
-		sort = "created_at"
-	}
-	order := "DESC"
-	if strings.EqualFold(f.Order, "asc") {
-		order = "ASC"
-	}
-	q += " ORDER BY " + sort + " " + order
-
-	if f.Limit <= 0 {
-		f.Limit = 50
-	}
-	q += " LIMIT ? OFFSET ?"
-	args = append(args, f.Limit, f.Offset)
-
-	rows, err := s.db.QueryContext(ctx, q, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []*Entry
-	for rows.Next() {
-		e, err := scanEntry(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, e)
-	}
-	return out, rows.Err()
+	return q, args
 }
 
 // UpdateEntryState toggles read and/or saved. Nil leaves the field

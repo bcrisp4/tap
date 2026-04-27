@@ -25,6 +25,7 @@ type Dependencies struct {
 func Mux(deps Dependencies) *http.ServeMux {
 	feeds := &feedHandlers{store: deps.Store, client: deps.HTTPClient}
 	cats := &categoryHandlers{store: deps.Store}
+	entries := &entryHandlers{store: deps.Store}
 
 	mux := http.NewServeMux()
 
@@ -41,6 +42,13 @@ func Mux(deps Dependencies) *http.ServeMux {
 	mux.HandleFunc("POST /api/v1/categories", cats.create)
 	mux.HandleFunc("PUT /api/v1/categories/{id}", cats.rename)
 	mux.HandleFunc("DELETE /api/v1/categories/{id}", cats.delete)
+
+	// Entries — `PUT /entries/read` is more specific than `PUT
+	// /entries/{id}`, so ServeMux dispatches it to bulkRead.
+	mux.HandleFunc("GET /api/v1/entries", entries.list)
+	mux.HandleFunc("PUT /api/v1/entries/read", entries.bulkRead)
+	mux.HandleFunc("GET /api/v1/entries/{id}", entries.get)
+	mux.HandleFunc("PUT /api/v1/entries/{id}", entries.put)
 
 	return mux
 }
