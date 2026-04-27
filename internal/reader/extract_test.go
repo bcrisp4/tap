@@ -20,16 +20,16 @@ func loadFixture(t *testing.T, name string) string {
 
 func TestExtract_ReadabilityFallback(t *testing.T) {
 	html := loadFixture(t, "article.html")
-	got, err := reader.Extract(html, "https://jvns.ca/blog/2026/04/26/bugs/", "")
+	got, err := reader.Extract(html, "https://example.test/blog/2026/04/26/synthetic/", "")
 	require.NoError(t, err)
 	require.NotEmpty(t, got)
 
 	// Article body retained.
-	require.Contains(t, got, "feels impossible")
-	require.Contains(t, got, "ps aux | grep tap")
+	require.Contains(t, got, "Readability heuristics")
+	require.Contains(t, got, "go test ./internal/reader/...")
 	// Chrome stripped.
 	require.NotContains(t, got, "Subscribe")
-	require.NotContains(t, got, "© 2026")
+	require.NotContains(t, got, "Tap project test fixture")
 }
 
 func TestExtract_ScraperRulesWin(t *testing.T) {
