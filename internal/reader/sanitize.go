@@ -70,11 +70,28 @@ func tapPreSanitize(entryHTML string, opts SanitizeOptions) (string, error) {
 	doc.Find("iframe").Each(func(_ int, s *goquery.Selection) {
 		src, _ := s.Attr("src")
 		u, err := url.Parse(src)
-		if err != nil || !u.IsAbs() {
+		if err != nil {
 			s.Remove()
 			return
 		}
-		if !hostInAllowSet(u.Host, allowed) {
+		// Treat scheme-relative URLs ("//host/path") — common in embed
+		// markup — as absolute by inheriting the article's scheme (or
+		// defaulting to https).
+		if u.Scheme == "" && u.Host != "" {
+			if base != nil && base.Scheme != "" {
+				u.Scheme = base.Scheme
+			} else {
+				u.Scheme = "https"
+			}
+		}
+		if !u.IsAbs() {
+			s.Remove()
+			return
+		}
+		// Hostname() strips any port and IPv6 brackets; trim a trailing
+		// dot so "youtube.com." matches "youtube.com".
+		host := strings.TrimSuffix(u.Hostname(), ".")
+		if !hostInAllowSet(host, allowed) {
 			s.Remove()
 		}
 	})

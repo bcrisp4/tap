@@ -41,6 +41,28 @@ func TestSanitize_DropsForbiddenIframeHost(t *testing.T) {
 	require.Contains(t, out, "youtube.com")
 }
 
+func TestSanitize_AllowsAllowlistedIframeWithPortOrTrailingDot(t *testing.T) {
+	// u.Host includes the port and any trailing dot, both of which
+	// would fail a literal allowlist match — use Hostname() and trim.
+	in := `<iframe src="https://www.youtube.com:443/embed/abc"></iframe>` +
+		`<iframe src="https://www.youtube.com./embed/def"></iframe>`
+	out, err := reader.Sanitize(in, defaultOpts())
+	require.NoError(t, err)
+	require.Contains(t, out, "/embed/abc")
+	require.Contains(t, out, "/embed/def")
+}
+
+func TestSanitize_AllowsSchemeRelativeIframe(t *testing.T) {
+	// Scheme-relative iframe URLs ("//host/path") are common in embed
+	// markup and url.Parse treats them as non-absolute. The pre-pass
+	// must inherit the article's scheme (or default https) so the
+	// host check still runs.
+	in := `<iframe src="//www.youtube.com/embed/scheme-rel"></iframe>`
+	out, err := reader.Sanitize(in, defaultOpts())
+	require.NoError(t, err)
+	require.Contains(t, out, "/embed/scheme-rel")
+}
+
 func TestSanitize_StripsTrackingPixel(t *testing.T) {
 	in := `<img src="https://t.example/px" width="1" height="1"><img src="https://x/y.png">`
 	out, err := reader.Sanitize(in, defaultOpts())
