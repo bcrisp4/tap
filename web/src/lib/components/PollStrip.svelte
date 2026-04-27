@@ -38,21 +38,9 @@
 		height: 6px;
 		border-radius: 50%;
 		background: var(--accent);
+		/* `tap-pulse` keyframes are declared once in
+		   $lib/tokens/tap-tokens.css. */
 		animation: tap-pulse 2.4s ease-in-out infinite;
 		flex-shrink: 0;
-	}
-	/* tap-pulse keyframes ship globally from tokens/tap-tokens.css; we
-	   re-declare here so the component is self-contained for shadow-DOM
-	   embedders / future SSR migrations. */
-	@keyframes tap-pulse {
-		0%,
-		100% {
-			opacity: 1;
-			transform: scale(1);
-		}
-		50% {
-			opacity: 0.35;
-			transform: scale(0.8);
-		}
 	}
 </style>
