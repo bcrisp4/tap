@@ -3,20 +3,18 @@
 package config
 
 import (
-	"fmt"
-	"io"
-	"strings"
 	"time"
 
 	"github.com/peterbourgon/ff/v4"
-	"github.com/peterbourgon/ff/v4/ffyaml"
 )
 
 // Config holds every TAP_* knob from design.md §9.
 //
-// YAML keys use the underscore form of the flag long-name (`--db-path` ⇄
-// `db_path`); [YAMLParser] handles that translation. No struct tags
-// required.
+// YAML keys match the flag long-name exactly (`--db-path` ⇄ `db-path`);
+// ff/v4 resolves config-file keys against registered long-names with no
+// translation needed. All `[]string` knobs accept either a repeated CLI
+// flag (`--allowed-hosts=a --allowed-hosts=b`) or a YAML list
+// (`allowed-hosts: [a, b]`).
 type Config struct {
 	DBPath    string
 	Listen    string
@@ -31,8 +29,8 @@ type Config struct {
 	HTTPTimeout          time.Duration
 	HTTPMaxBodyBytes     int64
 	AllowPrivateNetworks bool
-	AllowedHosts         string
-	IframeAllowlist      string
+	AllowedHosts         []string
+	IframeAllowlist      []string
 
 	ArchiveDays int
 
@@ -46,7 +44,7 @@ type Config struct {
 // RegisterFlags attaches every config knob as a flag on fs and binds
 // the result to cfg's fields. The flag long-name is the lower-hyphen
 // form of the field's TAP_* env-var name (TAP_DB_PATH ⇄ --db-path); the
-// YAML key is the same name with underscores (db_path).
+// YAML key is the same long-name (db-path).
 func RegisterFlags(fs *ff.FlagSet, cfg *Config) {
 	fs.StringVar(&cfg.DBPath, 'd', "db-path", "./tap.db", "SQLite database file path")
 	fs.StringVar(&cfg.Listen, 'l', "listen", "127.0.0.1:8080", "HTTP listen address")
@@ -63,8 +61,8 @@ func RegisterFlags(fs *ff.FlagSet, cfg *Config) {
 	fs.DurationVar(&cfg.HTTPTimeout, 0, "http-timeout", 20*time.Second, "Outbound request timeout")
 	fs.Int64Var(&cfg.HTTPMaxBodyBytes, 0, "http-max-body-bytes", 10*1024*1024, "Max response body for feed/article fetches")
 	fs.BoolVarDefault(&cfg.AllowPrivateNetworks, 0, "allow-private-networks", false, "Disable the SSRF private-network block")
-	fs.StringVar(&cfg.AllowedHosts, 0, "allowed-hosts", "", "Comma-separated host suffixes / CIDR blocks bypassing SSRF check")
-	fs.StringVar(&cfg.IframeAllowlist, 0, "iframe-allowlist", "", "Override iframe src host allowlist (comma-separated)")
+	fs.StringListVar(&cfg.AllowedHosts, 0, "allowed-hosts", "Host suffixes / CIDR blocks bypassing SSRF check (repeat flag or YAML list)")
+	fs.StringListVar(&cfg.IframeAllowlist, 0, "iframe-allowlist", "Override iframe src host allowlist (repeat flag or YAML list)")
 
 	fs.IntVar(&cfg.ArchiveDays, 0, "archive-days", 60, "Read & unsaved entries older than this are archived")
 
@@ -73,40 +71,4 @@ func RegisterFlags(fs *ff.FlagSet, cfg *Config) {
 	fs.DurationVar(&cfg.ProxyCacheMaxAge, 0, "proxy-cache-max-age", 30*24*time.Hour, "Cache files older than this are deleted by the daily sweep")
 	fs.DurationVar(&cfg.ProxyTimeout, 0, "proxy-timeout", 10*time.Second, "Origin-fetch timeout for proxy requests")
 	fs.Int64Var(&cfg.ProxyMaxBodyBytes, 0, "proxy-max-body-bytes", 10*1024*1024, "Max body for proxy origin fetches")
-}
-
-// YAMLParser is a [ff.ConfigFileParseFunc] that wraps [ffyaml.Parse] and
-// converts YAML keys from underscore form (db_path) to the hyphenated
-// flag long-name form (--db-path) before resolving them. This matches
-// design.md §9, where the YAML key is the same as the env-var name in
-// lowercase (TAP_DB_PATH ⇄ db_path) while CLI flags use hyphens. Only
-// the key is rewritten; values are forwarded verbatim, so underscores
-// inside a value (e.g. a path) are preserved.
-//
-// YAML keys must be flat: top-level scalars, lists, or maps-of-scalars
-// only. ffyaml stitches nested maps with `.` (so `proxy: { cache_dir:
-// /x }` arrives here as `proxy.cache-dir` after rewriting), and Tap
-// registers no flag for the dotted form, so nested maps surface as an
-// "unknown flag" error from ff. Stick to flat keys matching the
-// registered flag long-names with `-` ⇄ `_` translation.
-//
-// Tap registers only scalar flags, so YAML lists are not supported:
-// ffyaml emits one set call per element and the second call would
-// silently overwrite the first on a StringVar binding. To make this
-// fail loudly, YAMLParser tracks which keys it has already forwarded
-// and returns an error on the second occurrence, telling the user to
-// use a comma-separated string for list-shaped values like
-// allowed_hosts.
-func YAMLParser(r io.Reader, set func(name, value string) error) error {
-	seen := make(map[string]struct{})
-	return ffyaml.Parse(r, func(name, value string) error {
-		flag := strings.ReplaceAll(name, "_", "-")
-		if _, dup := seen[flag]; dup {
-			return fmt.Errorf("config: YAML key %q appears multiple times "+
-				"(Tap config flags are scalar; for list-shaped values like "+
-				"allowed_hosts use a comma-separated string)", name)
-		}
-		seen[flag] = struct{}{}
-		return set(flag, value)
-	})
 }

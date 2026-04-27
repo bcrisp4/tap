@@ -12,6 +12,7 @@ import (
 
 	"github.com/peterbourgon/ff/v4"
 	"github.com/peterbourgon/ff/v4/ffhelp"
+	"github.com/peterbourgon/ff/v4/ffyaml"
 
 	"github.com/bcrisp4/tap/internal/config"
 	"github.com/bcrisp4/tap/internal/db"
@@ -75,7 +76,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	parseErr := rootCmd.Parse(args[1:],
 		ff.WithEnvVarPrefix("TAP"),
 		ff.WithConfigFileFlag("config"),
-		ff.WithConfigFileParser(config.YAMLParser),
+		ff.WithConfigFileParser(ffyaml.Parse),
 		ff.WithConfigAllowMissingFile(),
 	)
 	switch {
