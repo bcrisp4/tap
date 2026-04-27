@@ -48,4 +48,34 @@ describe('client', () => {
 			code: 'http_error'
 		});
 	});
+
+	it('surfaces non-JSON error bodies as ApiError, not SyntaxError', async () => {
+		// e.g. an upstream nginx returning an HTML 502 page.
+		vi.stubGlobal(
+			'fetch',
+			async () =>
+				new Response('<html><body>Bad Gateway</body></html>', {
+					status: 502,
+					statusText: 'Bad Gateway',
+					headers: { 'Content-Type': 'text/html' }
+				})
+		);
+		await expect(getJSON('/x')).rejects.toMatchObject({
+			name: 'ApiError',
+			status: 502,
+			code: 'http_error'
+		});
+	});
+
+	it('flags non-JSON 200 responses as bad_response', async () => {
+		vi.stubGlobal(
+			'fetch',
+			async () => new Response('not json', { status: 200, headers: { 'Content-Type': 'text/plain' } })
+		);
+		await expect(getJSON('/x')).rejects.toMatchObject({
+			name: 'ApiError',
+			status: 200,
+			code: 'bad_response'
+		});
+	});
 });

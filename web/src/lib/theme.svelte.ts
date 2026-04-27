@@ -7,14 +7,29 @@
 // other values pin the chosen palette. Selections persist in
 // localStorage so the same theme is restored on reload.
 
-type Theme = 'system' | 'light' | 'sepia' | 'dark';
-type Font = 'serif' | 'sans';
+const THEMES = ['system', 'light', 'sepia', 'dark'] as const;
+const FONTS = ['serif', 'sans'] as const;
+
+export type Theme = (typeof THEMES)[number];
+export type Font = (typeof FONTS)[number];
+
+function isTheme(v: unknown): v is Theme {
+	return typeof v === 'string' && (THEMES as readonly string[]).includes(v);
+}
+function isFont(v: unknown): v is Font {
+	return typeof v === 'string' && (FONTS as readonly string[]).includes(v);
+}
 
 function loadInitial(): { theme: Theme; font: Font } {
 	if (typeof window === 'undefined') return { theme: 'system', font: 'serif' };
-	const t = (localStorage.getItem('tap.theme') as Theme) ?? 'system';
-	const f = (localStorage.getItem('tap.font') as Font) ?? 'serif';
-	return { theme: t, font: f };
+	// Validate against allow-lists — localStorage is user-controlled
+	// and can hold arbitrary strings (DevTools, prior versions, etc.).
+	const t = localStorage.getItem('tap.theme');
+	const f = localStorage.getItem('tap.font');
+	return {
+		theme: isTheme(t) ? t : 'system',
+		font: isFont(f) ? f : 'serif'
+	};
 }
 
 function preferred(): 'light' | 'dark' {
@@ -26,10 +41,6 @@ class ThemeStore {
 	#initial = loadInitial();
 	theme = $state<Theme>(this.#initial.theme);
 	font = $state<Font>(this.#initial.font);
-
-	resolved = $derived<'light' | 'sepia' | 'dark'>(
-		this.theme === 'system' ? preferred() : this.theme
-	);
 
 	setTheme(t: Theme) {
 		this.theme = t;
@@ -44,10 +55,19 @@ class ThemeStore {
 
 export const theme = new ThemeStore();
 
+// Resolve the active palette on demand. Reading prefers-color-scheme
+// here (rather than caching it in $derived) means the matchMedia
+// `change` listener's call to applyThemeClasses() always picks up the
+// latest OS preference — $derived would cache the value until a Svelte
+// dep changed.
+export function resolvedTheme(): 'light' | 'sepia' | 'dark' {
+	return theme.theme === 'system' ? preferred() : theme.theme;
+}
+
 export function applyThemeClasses() {
 	if (typeof document === 'undefined') return;
 	const c = document.body.classList;
 	for (const t of ['theme-light', 'theme-sepia', 'theme-dark']) c.remove(t);
-	c.add('theme-' + theme.resolved);
+	c.add('theme-' + resolvedTheme());
 	document.documentElement.dataset.tapFont = theme.font;
 }

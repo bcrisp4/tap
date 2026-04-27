@@ -26,9 +26,22 @@ const BASE = '/api/v1';
 
 async function parse<T>(res: Response): Promise<T> {
 	const text = await res.text();
-	const body = text ? JSON.parse(text) : null;
+	// Tolerate non-JSON bodies (reverse-proxy HTML 502 pages, plaintext
+	// errors, etc.) — surface them as ApiError instead of letting the
+	// SyntaxError escape and bypass typed error handling.
+	let body: unknown = null;
+	if (text) {
+		try {
+			body = JSON.parse(text);
+		} catch {
+			if (!res.ok) {
+				throw new ApiError(res.status, 'http_error', res.statusText || 'request failed');
+			}
+			throw new ApiError(res.status, 'bad_response', 'invalid JSON in response');
+		}
+	}
 	if (!res.ok) {
-		const err = body?.error;
+		const err = (body as { error?: { code?: string; message?: string } } | null)?.error;
 		throw new ApiError(res.status, err?.code ?? 'http_error', err?.message ?? res.statusText);
 	}
 	return body as T;
