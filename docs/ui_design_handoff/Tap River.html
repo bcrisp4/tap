@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Tap — River</title>
+<link rel="stylesheet" href="styles.css" />
+<style>
+  html, body, #root { height: 100%; }
+  body {
+    margin: 0;
+    font-family: "Inter Tight", system-ui, sans-serif;
+    background: #ececea;
+    color: #1a1a1a;
+  }
+  /* Canvas page background — neutral newsprint */
+  .canvas-bg { background: #ececea; }
+  /* Frame caption */
+  .cap {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 11px;
+    color: #6e6e6a;
+    letter-spacing: 0.04em;
+  }
+  /* Theme chip swatches */
+  .sw-light { background: #fafaf7; border-color: #d8d8d2 !important; }
+  .sw-dark  { background: #0d0d0e; border-color: #2c2c2e !important; }
+  .sw-sepia { background: #f4ecd8; border-color: #d9cca8 !important; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script src="data.js"></script>
+<script type="text/babel" src="design-canvas.jsx"></script>
+<script type="text/babel" src="ios-frame.jsx"></script>
+<script type="text/babel" src="browser-window.jsx"></script>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+<script type="text/babel" src="tap-components.jsx"></script>
+<script type="text/babel" src="tap-reader.jsx"></script>
+
+<script type="text/babel" data-presets="env,react">
+const { useState } = React;
+
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "density": "default",
+  "fontMode": "serif",
+  "showSummary": true,
+  "junctionBullets": true
+}/*EDITMODE-END*/;
+
+function ThemeChip({ theme }) {
+  const label = theme.toUpperCase();
+  return (
+    <span className="theme-chip">
+      <span className={`sw sw-${theme}`}></span>
+      {label}
+    </span>
+  );
+}
+
+function DesktopFrame({ theme, density, fontMode, showSummary }) {
+  return (
+    <ChromeWindow
+      url={`tap.local/`}
+      width={1180}
+      height={760}
+      tabs={[{ title: "Tap — Unread" }, { title: "lobste.rs" }]}
+      activeIndex={0}
+    >
+      <div style={{ width: '100%', height: '100%' }}>
+        <DesktopRiver
+          entries={window.TAP_ENTRIES}
+          feeds={window.TAP_FEEDS}
+          theme={theme}
+          density={density}
+          fontMode={fontMode}
+          showSummary={showSummary}
+        />
+      </div>
+    </ChromeWindow>
+  );
+}
+
+function MobileFrame({ theme, fontMode }) {
+  return (
+    <IOSDevice width={390} height={830} dark={theme === 'dark'}>
+      <MobileRiver
+        entries={window.TAP_ENTRIES}
+        feeds={window.TAP_FEEDS}
+        theme={theme}
+        fontMode={fontMode}
+      />
+    </IOSDevice>
+  );
+}
+
+function ReaderDesktopFrame({ theme, fontMode }) {
+  return (
+    <ChromeWindow
+      url={`tap.local/entry/101`}
+      width={1280}
+      height={820}
+      tabs={[{ title: "Reasons why bugs might feel “impossible” · Tap" }]}
+      activeIndex={0}
+    >
+      <div style={{ width: '100%', height: '100%' }}>
+        <DesktopReader
+          entries={window.TAP_ENTRIES}
+          feeds={window.TAP_FEEDS}
+          entryId={101}
+          theme={theme}
+          fontMode={fontMode}
+        />
+      </div>
+    </ChromeWindow>
+  );
+}
+
+function ReaderMobileFrame({ theme, fontMode }) {
+  return (
+    <IOSDevice width={390} height={830} dark={theme === 'dark'}>
+      <MobileReader
+        entries={window.TAP_ENTRIES}
+        feeds={window.TAP_FEEDS}
+        entryId={101}
+        theme={theme}
+        fontMode={fontMode}
+      />
+    </IOSDevice>
+  );
+}
+
+function App() {
+  const [tweaks, setTweak] = useTweaks(TWEAK_DEFAULTS);
+  const { density, fontMode, showSummary } = tweaks;
+
+  return (
+    <div className="canvas-bg" style={{ width: '100%', height: '100%' }}>
+      <DesignCanvas
+        title="Tap — RSS reader"
+        subtitle={
+          <span>
+            Unread view across three themes, desktop &amp; mobile.
+            <span style={{ marginLeft: 12, color: '#9b9b95', fontFamily: 'JetBrains Mono, monospace', fontSize: 11 }}>
+              j/k navigate · m mark · s save (in any desktop frame)
+            </span>
+          </span>
+        }
+      >
+      <DCSection
+          id="desktop"
+          title="Desktop · Unread"
+          subtitle="Self-hosted SPA in a browser tab. Three themes."
+        >
+          <DCArtboard id="d-light" label="A · Light" width={1180} height={760}>
+            <DesktopFrame theme="light" density={density} fontMode={fontMode} showSummary={showSummary} />
+          </DCArtboard>
+          <DCArtboard id="d-sepia" label="B · Sepia (reading mode)" width={1180} height={760}>
+            <DesktopFrame theme="sepia" density={density} fontMode={fontMode} showSummary={showSummary} />
+          </DCArtboard>
+          <DCArtboard id="d-dark" label="C · Dark" width={1180} height={760}>
+            <DesktopFrame theme="dark" density={density} fontMode={fontMode} showSummary={showSummary} />
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection
+          id="mobile"
+          title="Mobile · iOS PWA"
+          subtitle="Home-screen install. Same content, denser chrome."
+        >
+          <DCArtboard id="m-light" label="A · Light" width={420} height={870}>
+            <MobileFrame theme="light" fontMode={fontMode} />
+          </DCArtboard>
+          <DCArtboard id="m-sepia" label="B · Sepia" width={420} height={870}>
+            <MobileFrame theme="sepia" fontMode={fontMode} />
+          </DCArtboard>
+          <DCArtboard id="m-dark" label="C · Dark" width={420} height={870}>
+            <MobileFrame theme="dark" fontMode={fontMode} />
+          </DCArtboard>
+        </DCSection>
+
+      <DCSection
+          id="reader-desktop"
+          title="Desktop · Article reader"
+          subtitle="Two-column reader: list rail + article. Comfortable measure, serif body."
+        >
+          <DCArtboard id="r-d-light" label="A · Light" width={1280} height={820}>
+            <ReaderDesktopFrame theme="light" fontMode={fontMode} />
+          </DCArtboard>
+          <DCArtboard id="r-d-sepia" label="B · Sepia (reading mode)" width={1280} height={820}>
+            <ReaderDesktopFrame theme="sepia" fontMode={fontMode} />
+          </DCArtboard>
+          <DCArtboard id="r-d-dark" label="C · Dark" width={1280} height={820}>
+            <ReaderDesktopFrame theme="dark" fontMode={fontMode} />
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection
+          id="reader-mobile"
+          title="Mobile · Article reader"
+          subtitle="Single column, swipe to mark/save, large touch targets."
+        >
+          <DCArtboard id="r-m-light" label="A · Light" width={420} height={870}>
+            <ReaderMobileFrame theme="light" fontMode={fontMode} />
+          </DCArtboard>
+          <DCArtboard id="r-m-sepia" label="B · Sepia" width={420} height={870}>
+            <ReaderMobileFrame theme="sepia" fontMode={fontMode} />
+          </DCArtboard>
+          <DCArtboard id="r-m-dark" label="C · Dark" width={420} height={870}>
+            <ReaderMobileFrame theme="dark" fontMode={fontMode} />
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection
+          id="brand"
+          title="Brand notes"
+          subtitle="The junction dot is the load-bearing detail."
+        >
+          <DCArtboard id="brand-marks" label="Marks" width={760} height={420}>
+            <div className="tap theme-light" style={{
+              width: '100%', height: '100%', padding: 48,
+              display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 32,
+            }}>
+              {/* Wordmark */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 18, justifyContent: 'center' }}>
+                <div className="mono" style={{ fontSize: 10, letterSpacing: '0.12em', color: 'var(--ink-3)', textTransform: 'uppercase' }}>Wordmark</div>
+                <div style={{ fontFamily: 'var(--sans)', fontWeight: 600, fontSize: 64, letterSpacing: '-0.04em', display: 'flex', alignItems: 'baseline', gap: 2 }}>
+                  tap<span style={{ display: 'inline-block', width: 16, height: 16, borderRadius: '50%', background: 'var(--accent)', transform: 'translateY(-4px)', marginLeft: 4 }}></span>
+                </div>
+                <div className="sans" style={{ fontSize: 13, color: 'var(--ink-2)', maxWidth: 280, lineHeight: 1.5 }}>
+                  The period reads as a schematic junction dot. Klein Blue, used once.
+                </div>
+              </div>
+              {/* T-junction primary mark */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 18, justifyContent: 'center', alignItems: 'flex-start' }}>
+                <div className="mono" style={{ fontSize: 10, letterSpacing: '0.12em', color: 'var(--ink-3)', textTransform: 'uppercase' }}>Primary mark · favicon</div>
+                <svg width="120" height="120" viewBox="0 0 120 120">
+                  <line x1="20" y1="40" x2="100" y2="40" stroke="#1a1a1a" strokeWidth="6" strokeLinecap="round" />
+                  <line x1="60" y1="40" x2="60" y2="100" stroke="#1a1a1a" strokeWidth="6" strokeLinecap="round" />
+                  <circle cx="60" cy="40" r="9" fill="#002FA7" />
+                </svg>
+                <div className="sans" style={{ fontSize: 13, color: 'var(--ink-2)', maxWidth: 280, lineHeight: 1.5 }}>
+                  T-junction. Doubles as the letter T. Junction dot in Klein Blue.
+                </div>
+              </div>
+            </div>
+          </DCArtboard>
+
+          <DCArtboard id="brand-palette" label="Palette" width={760} height={420}>
+            <div style={{ width: '100%', height: '100%', padding: 48, background: '#fafaf7', fontFamily: 'Inter Tight, sans-serif' }}>
+              <div className="mono" style={{ fontSize: 10, letterSpacing: '0.12em', color: '#8a8a86', textTransform: 'uppercase', marginBottom: 18 }}>Palette · Klein Blue is precious</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
+                {[
+                  { name: 'Light',  bg: '#fafaf7', ink: '#1a1a1a', accent: '#002FA7', sub: 'Default. Off-white paper, ink black.' },
+                  { name: 'Sepia',  bg: '#f4ecd8', ink: '#3b2e1a', accent: '#002FA7', sub: 'Warm cream. The dedicated reader.' },
+                  { name: 'Dark',   bg: '#0d0d0e', ink: '#ededea', accent: '#5a7fdc', sub: 'Near-black. Klein desaturated for AA.' },
+                ].map((p) => (
+                  <div key={p.name} style={{ background: p.bg, color: p.ink, padding: 18, border: '1px solid rgba(0,0,0,0.08)', borderRadius: 4, height: 240, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                    <div>
+                      <div style={{ fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase', opacity: 0.55, fontFamily: 'JetBrains Mono, monospace' }}>{p.name}</div>
+                      <div style={{ fontFamily: 'Source Serif 4, serif', fontSize: 22, fontWeight: 500, marginTop: 8, lineHeight: 1.2 }}>The lazy fox jumps quietly.</div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'JetBrains Mono, monospace', fontSize: 10 }}>
+                      <span style={{ width: 10, height: 10, borderRadius: '50%', background: p.accent }}></span>
+                      <span style={{ opacity: 0.7 }}>{p.accent.toUpperCase()}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </DCArtboard>
+        </DCSection>
+      </DesignCanvas>
+
+      <TweaksPanel title="Tweaks">
+        <TweakSection title="List">
+          <TweakRadio
+            label="Density"
+            value={density}
+            options={[
+              { value: 'compact', label: 'Compact' },
+              { value: 'default', label: 'Default' },
+              { value: 'comfortable', label: 'Comfortable' },
+            ]}
+            onChange={(v) => setTweak('density', v)}
+          />
+          <TweakToggle
+            label="Show summaries"
+            value={showSummary}
+            onChange={(v) => setTweak('showSummary', v)}
+          />
+        </TweakSection>
+        <TweakSection title="Reading">
+          <TweakRadio
+            label="Font"
+            value={fontMode}
+            options={[
+              { value: 'serif', label: 'Serif' },
+              { value: 'sans', label: 'Sans' },
+            ]}
+            onChange={(v) => setTweak('fontMode', v)}
+          />
+        </TweakSection>
+      </TweaksPanel>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
