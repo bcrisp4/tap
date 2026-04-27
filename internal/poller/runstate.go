@@ -49,11 +49,28 @@ func (r *RunState) PollFinished(err error) {
 	defer r.mu.Unlock()
 	r.active--
 	r.lastAt = time.Now().Unix()
-	if err != nil {
-		r.errs = append(r.errs, err.Error())
-		if len(r.errs) > r.cap {
-			r.errs = r.errs[len(r.errs)-r.cap:]
-		}
+	r.appendErrLocked(err)
+}
+
+// RecordError appends an out-of-band error (archival sweep, etc.) to
+// the ring buffer without touching the active-poll counter or
+// LastPollAt. Nil is a no-op.
+func (r *RunState) RecordError(err error) {
+	if err == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.appendErrLocked(err)
+}
+
+func (r *RunState) appendErrLocked(err error) {
+	if err == nil {
+		return
+	}
+	r.errs = append(r.errs, err.Error())
+	if len(r.errs) > r.cap {
+		r.errs = r.errs[len(r.errs)-r.cap:]
 	}
 }
 

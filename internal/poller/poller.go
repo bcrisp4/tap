@@ -80,6 +80,7 @@ func (p *Poller) Start(ctx context.Context) {
 		Interval: p.cfg.Interval,
 		Workers:  p.cfg.Workers,
 		ListDue:  p.cfg.Store.ListDueFeeds,
+		State:    p.state,
 	})
 
 	var wg sync.WaitGroup
@@ -98,8 +99,12 @@ func (p *Poller) runArchival(ctx context.Context) {
 		if p.cfg.ProxyCacheDir != "" && p.cfg.ProxyCacheMaxAge > 0 {
 			ps = &ProxyCacheSweep{Dir: p.cfg.ProxyCacheDir, MaxAge: p.cfg.ProxyCacheMaxAge}
 		}
-		_ = ArchiveOnce(ctx, p.cfg.Store,
-			time.Duration(p.cfg.ArchiveDays)*24*time.Hour, ps)
+		// Surface archival failures via RunState so /system/status
+		// (Plan 08) shows them; otherwise a broken sweep is invisible.
+		if err := ArchiveOnce(ctx, p.cfg.Store,
+			time.Duration(p.cfg.ArchiveDays)*24*time.Hour, ps); err != nil {
+			p.state.RecordError(err)
+		}
 	}
 
 	doSweep() // run once at boot

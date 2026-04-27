@@ -2,6 +2,8 @@ package poller
 
 import (
 	"context"
+	"fmt"
+	"runtime/debug"
 	"sync"
 	"time"
 )
@@ -31,6 +33,9 @@ type DispatcherConfig struct {
 	Interval time.Duration
 	Workers  int
 	ListDue  listDueFn
+	// State is optional; when set, panics in PollOne are recorded as
+	// recent errors so /system/status surfaces them.
+	State *RunState
 }
 
 // Dispatcher drives the worker pool by polling the DB on each tick.
@@ -61,8 +66,7 @@ func (d *Dispatcher) run(ctx context.Context) {
 		go func() {
 			defer wg.Done()
 			for id := range d.ch {
-				_ = d.cfg.Worker.PollOne(ctx, id)
-				d.in.Clear(id)
+				d.runOne(ctx, id)
 			}
 		}()
 	}
@@ -82,6 +86,22 @@ func (d *Dispatcher) run(ctx context.Context) {
 			d.dispatch(ctx)
 		}
 	}
+}
+
+// runOne executes a single poll and always clears the in-flight
+// marker, even on panic. A panic in Worker.PollOne would otherwise
+// abort the whole process and strand the feed in the in-flight set
+// until restart.
+func (d *Dispatcher) runOne(ctx context.Context, id int64) {
+	defer d.in.Clear(id)
+	defer func() {
+		if r := recover(); r != nil {
+			if d.cfg.State != nil {
+				d.cfg.State.RecordError(fmt.Errorf("poller panic on feed %d: %v\n%s", id, r, debug.Stack()))
+			}
+		}
+	}()
+	_ = d.cfg.Worker.PollOne(ctx, id)
 }
 
 // dispatch claims due feeds and sends them to the worker pool. We mark

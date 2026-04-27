@@ -121,6 +121,42 @@ func TestWorker_FailureIncrementsErrorCount(t *testing.T) {
 	require.NotNil(t, f.NextPollAt)
 }
 
+func TestWorker_RetryAfterHonouredOnNon2xx(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tap.db")
+	d, err := db.Open(path)
+	require.NoError(t, err)
+	require.NoError(t, db.Migrate(context.Background(), d))
+	t.Cleanup(func() { d.Close() })
+	store := storage.New(d)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "120")
+		http.Error(w, "rate limited", http.StatusTooManyRequests)
+	}))
+	t.Cleanup(srv.Close)
+
+	worker := poller.NewWorker(poller.WorkerConfig{
+		Store:      store,
+		Client:     httpclient.NewClient(httpclient.Config{Timeout: 2 * time.Second, MaxBodyBytes: 1 << 20, AllowPrivate: true}),
+		Limiter:    limiter.NewHostLimiter(1),
+		PollFactor: 1.0,
+	})
+
+	feedID, err := store.CreateFeed(context.Background(), &storage.Feed{
+		UserID: 1, Title: "rl", FeedURL: srv.URL, PollInterval: 3600,
+	})
+	require.NoError(t, err)
+
+	before := time.Now().Unix()
+	require.NoError(t, worker.PollOne(context.Background(), feedID))
+
+	f, _ := store.GetFeed(context.Background(), 1, feedID)
+	require.Equal(t, 1, f.ErrorCount, "non-2xx must increment error_count even with Retry-After")
+	require.NotNil(t, f.NextPollAt)
+	delta := *f.NextPollAt - before
+	require.InDelta(t, 120, delta, 5, "next_poll_at must use Retry-After (≈120s), not exponential backoff (1h)")
+}
+
 func TestWorker_TombstonedHashNotReinserted(t *testing.T) {
 	store, w, _ := setupWorkerTest(t)
 	ctx := context.Background()

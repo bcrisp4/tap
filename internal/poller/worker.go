@@ -2,6 +2,7 @@ package poller
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -24,6 +25,13 @@ const maxLastErrorBytes = 500
 
 // pollUserID is the single-user id for v1; multi-user is out of scope.
 const pollUserID = 1
+
+// extractionConcurrency caps in-flight article fetches per feed-poll.
+// The per-host limiter only serialises by host, so a feed whose
+// entries link to N distinct hosts could otherwise spawn N concurrent
+// fetches at once. Eight is enough to mask network latency without
+// flooding the local outbound pool.
+const extractionConcurrency = 8
 
 // WorkerConfig wires the worker's deps. Pipeline is optional — when
 // nil (or feed.Crawler == false), content extraction is skipped.
@@ -78,19 +86,21 @@ func (w *Worker) PollOne(ctx context.Context, feedID int64) error {
 	resp, fetchErr := w.fetchFeed(ctx, feed)
 	if fetchErr != nil {
 		pollErr = fetchErr
-		w.recordFailure(ctx, feed, fetchErr)
+		w.recordFailure(ctx, feed, fetchErr, 0)
 		return nil
 	}
 	defer resp.Body.Close()
 
+	retryAfter := parseRetryAfter(resp.Header.Get("Retry-After"))
+	maxAge := parseMaxAge(resp.Header.Get("Cache-Control"), resp.Header.Get("Expires"))
 	now := time.Now().Unix()
 
 	// 304 path: refresh validators + advance next_poll_at, no inserts.
 	if resp.StatusCode == http.StatusNotModified {
 		out := NextPollAt(PollOutcome{
 			Now: now, WeeklyEntries: feed.WeeklyEntryCount,
-			RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After")),
-			MaxAge:     parseMaxAge(resp.Header.Get("Cache-Control"), resp.Header.Get("Expires")),
+			RetryAfter: retryAfter,
+			MaxAge:     maxAge,
 		}, w.cfg.PollFactor)
 		if err := w.cfg.Store.CommitPollNotModified(ctx, feed.ID,
 			resp.Header.Get("ETag"), resp.Header.Get("Last-Modified"), out.NextPollAt); err != nil {
@@ -99,24 +109,34 @@ func (w *Worker) PollOne(ctx context.Context, feedID int64) error {
 		return nil
 	}
 
+	// Any non-2xx (e.g. 429 / 5xx) is a poll failure. Honour
+	// Retry-After here too — design.md §5 rule 1 wins over the
+	// exponential backoff from rule 2.
+	if resp.StatusCode/100 != 2 {
+		err := fmt.Errorf("origin returned %d", resp.StatusCode)
+		pollErr = err
+		w.recordFailure(ctx, feed, err, retryAfter)
+		return nil
+	}
+
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		pollErr = err
-		w.recordFailure(ctx, feed, err)
+		w.recordFailure(ctx, feed, err, retryAfter)
 		return nil
 	}
 
 	parsed, err := feedparse.Parse(body, feed.FeedURL)
 	if err != nil {
 		pollErr = err
-		w.recordFailure(ctx, feed, err)
+		w.recordFailure(ctx, feed, err, retryAfter)
 		return nil
 	}
 
 	newEntries, err := w.filterAndExtract(ctx, feed, parsed.Entries)
 	if err != nil {
 		pollErr = err
-		w.recordFailure(ctx, feed, err)
+		w.recordFailure(ctx, feed, err, retryAfter)
 		return nil
 	}
 
@@ -126,8 +146,8 @@ func (w *Worker) PollOne(ctx context.Context, feedID int64) error {
 	out := NextPollAt(PollOutcome{
 		Now:           now,
 		WeeklyEntries: feed.WeeklyEntryCount + len(newEntries),
-		RetryAfter:    parseRetryAfter(resp.Header.Get("Retry-After")),
-		MaxAge:        parseMaxAge(resp.Header.Get("Cache-Control"), resp.Header.Get("Expires")),
+		RetryAfter:    retryAfter,
+		MaxAge:        maxAge,
 	}, w.cfg.PollFactor)
 
 	if _, err := w.cfg.Store.CommitPollSuccess(ctx, feed.ID, newEntries,
@@ -193,6 +213,7 @@ func (w *Worker) filterAndExtract(ctx context.Context, f *storage.Feed, parsed [
 	}
 
 	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(extractionConcurrency)
 	rules := stringOr(f.ScraperRules)
 	for _, e := range fresh {
 		if e.URL == nil || *e.URL == "" {
@@ -248,11 +269,12 @@ func (w *Worker) fetchAndExtract(ctx context.Context, f *storage.Feed, articleUR
 }
 
 // recordFailure computes the backoff and asks the store to persist
-// the failure.
-func (w *Worker) recordFailure(ctx context.Context, f *storage.Feed, fetchErr error) {
+// the failure. retryAfter is honoured per design.md §5 rule 1: when
+// set, it overrides the exponential failure backoff.
+func (w *Worker) recordFailure(ctx context.Context, f *storage.Feed, fetchErr error, retryAfter time.Duration) {
 	now := time.Now().Unix()
 	out := NextPollAt(PollOutcome{
-		Now: now, Failed: true, ErrorCount: f.ErrorCount,
+		Now: now, Failed: true, ErrorCount: f.ErrorCount, RetryAfter: retryAfter,
 	}, w.cfg.PollFactor)
 	msg := ""
 	if fetchErr != nil {
@@ -261,7 +283,15 @@ func (w *Worker) recordFailure(ctx context.Context, f *storage.Feed, fetchErr er
 			msg = msg[:maxLastErrorBytes]
 		}
 	}
-	_ = w.cfg.Store.CommitPollFailure(ctx, f.ID, out.ErrorCount, msg, out.NextPollAt)
+	// On a Retry-After response the adaptive formula resets ErrorCount
+	// to zero, but the underlying request still didn't yield entries —
+	// preserve the existing count by adding 1 in that case so the
+	// exponential branch still applies on the next failure.
+	errCount := out.ErrorCount
+	if retryAfter > 0 {
+		errCount = f.ErrorCount + 1
+	}
+	_ = w.cfg.Store.CommitPollFailure(ctx, f.ID, errCount, msg, out.NextPollAt)
 }
 
 // readingTimeFor picks the best text source (content > summary) and

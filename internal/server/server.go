@@ -45,8 +45,10 @@ func New(addr string, logger *slog.Logger) (*Server, error) {
 // Mount attaches handler at pattern. Plan 07 uses this to wire
 // /api/v1/proxy/; Plan 08 will mount the rest of the v1 API.
 //
-// Mount must be called before Run — once the server is serving,
-// http.ServeMux disallows handler additions.
+// Handlers are typically mounted before Run so the routing table is
+// fully assembled before traffic arrives. http.ServeMux is itself
+// safe for concurrent registration, so a late Mount won't race, but
+// callers should still prefer mounting at startup.
 func (s *Server) Mount(pattern string, handler http.Handler) {
 	s.mux.Handle(pattern, handler)
 }
