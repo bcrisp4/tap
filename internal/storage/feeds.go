@@ -40,13 +40,21 @@ type Feed struct {
 	Disabled           bool `json:"disabled"`
 	IgnoreEntryUpdates bool `json:"ignore_entry_updates"`
 
-	UserAgent            *string `json:"user_agent"`
-	Cookie               *string `json:"cookie"`
-	Username             *string `json:"username"`
-	Password             *string `json:"password"`
-	ProxyURL             *string `json:"proxy_url"`
-	DisableHTTP2         bool    `json:"disable_http2"`
-	AllowSelfSignedCerts bool    `json:"allow_self_signed_certs"`
+	UserAgent *string `json:"user_agent"`
+
+	// Credential-bearing fields are redacted from JSON output
+	// (json:"-"). v1 has no auth on the API surface, so a network
+	// peer that can hit GET /feeds/{id} could otherwise read every
+	// stored cookie / basic-auth credential / proxy URL. Writes use
+	// dedicated request DTOs (api.subscribeReq / api.updateFeedReq),
+	// which do honour these fields, so the round-trip stays usable.
+	Cookie   *string `json:"-"`
+	Username *string `json:"-"`
+	Password *string `json:"-"`
+	ProxyURL *string `json:"-"`
+
+	DisableHTTP2         bool `json:"disable_http2"`
+	AllowSelfSignedCerts bool `json:"allow_self_signed_certs"`
 
 	CreatedAt int64 `json:"created_at"`
 	UpdatedAt int64 `json:"updated_at"`

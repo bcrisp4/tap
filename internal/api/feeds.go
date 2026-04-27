@@ -228,6 +228,10 @@ func (h *feedHandlers) discover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		WriteError(w, http.StatusBadGateway, "fetch_failed", resp.Status)
+		return
+	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		WriteError(w, http.StatusBadGateway, "read_failed", err.Error())

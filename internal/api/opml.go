@@ -2,12 +2,19 @@ package api
 
 import (
 	"encoding/xml"
+	"errors"
 	"io"
 	"net/http"
 	"time"
 
 	"github.com/bcrisp4/tap/internal/storage"
 )
+
+// maxOPMLBodyBytes caps inbound OPML payloads. A typical subscription
+// list is well under 100KB; 4MiB leaves headroom for power users with
+// thousands of feeds while keeping a runaway client from exhausting
+// memory.
+const maxOPMLBodyBytes int64 = 4 << 20
 
 // opmlOutline is one <outline> node. Container outlines (categories)
 // have Children; feed outlines have XMLURL.
@@ -40,12 +47,13 @@ type opmlHandlers struct {
 // importHandler accepts an OPML 2.0 document and walks the outline
 // tree. Container outlines (no xmlUrl) become categories; feed outlines
 // inherit the surrounding category. Duplicate feed URLs (UNIQUE in
-// the schema) are silently skipped — the response counts only inserts
-// that succeeded.
+// the schema) are silently skipped via storage.ErrConflict so a
+// re-import is idempotent; any other CreateFeed error aborts the
+// import with 500 so failures aren't masked by a partial 201.
 func (h *opmlHandlers) importHandler(w http.ResponseWriter, r *http.Request) {
-	body, err := io.ReadAll(r.Body)
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxOPMLBodyBytes))
 	if err != nil {
-		WriteError(w, http.StatusBadRequest, "read_failed", err.Error())
+		WriteError(w, http.StatusRequestEntityTooLarge, "body_too_large", err.Error())
 		return
 	}
 	var doc opmlDoc
@@ -54,17 +62,36 @@ func (h *opmlHandlers) importHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	imported, err := h.importOutlines(r, doc.Body.Outlines)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	WriteOK(w, http.StatusCreated, struct {
+		Imported int `json:"imported"`
+	}{Imported: imported})
+}
+
+// importOutlines walks the outline forest and returns the count of
+// successfully-inserted feeds. Duplicate URLs (ErrConflict) are
+// silently skipped; every other error short-circuits the walk.
+func (h *opmlHandlers) importOutlines(r *http.Request, outlines []opmlOutline) (int, error) {
 	imported := 0
 	now := time.Now().Unix()
 
-	var walk func(o opmlOutline, categoryID *int64)
-	walk = func(o opmlOutline, categoryID *int64) {
+	var walk func(o opmlOutline, categoryID *int64) error
+	walk = func(o opmlOutline, categoryID *int64) error {
 		if o.XMLURL != "" {
-			feed := opmlFeedToStorage(o, categoryID, now)
-			if _, err := h.store.CreateFeed(r.Context(), feed); err == nil {
-				imported++
+			_, err := h.store.CreateFeed(r.Context(), opmlFeedToStorage(o, categoryID, now))
+			if errors.Is(err, storage.ErrConflict) {
+				return nil
 			}
-			return
+			if err != nil {
+				return err
+			}
+			imported++
+			return nil
 		}
 		// Container outline → category. Empty-text containers
 		// (sometimes seen in exporters that lump uncategorised feeds
@@ -72,21 +99,24 @@ func (h *opmlHandlers) importHandler(w http.ResponseWriter, r *http.Request) {
 		newCatID := categoryID
 		if o.Text != "" {
 			id, err := h.store.CreateCategory(r.Context(), userID, o.Text)
-			if err == nil {
-				newCatID = &id
+			if err != nil {
+				return err
 			}
+			newCatID = &id
 		}
 		for _, child := range o.Children {
-			walk(child, newCatID)
+			if err := walk(child, newCatID); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	for _, o := range outlines {
+		if err := walk(o, nil); err != nil {
+			return imported, err
 		}
 	}
-	for _, o := range doc.Body.Outlines {
-		walk(o, nil)
-	}
-
-	WriteOK(w, http.StatusCreated, struct {
-		Imported int `json:"imported"`
-	}{Imported: imported})
+	return imported, nil
 }
 
 // opmlFeedToStorage converts a feed-shaped <outline> into a

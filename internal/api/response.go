@@ -79,12 +79,19 @@ func writeErr(w http.ResponseWriter, err error) {
 	}
 }
 
-// decodeJSON pulls a JSON request body into dst. On failure it writes
-// a 400 bad_json envelope and returns false, so the caller can simply:
+// maxJSONBodyBytes caps inbound JSON payloads. JSON request bodies on
+// /api/v1 are tiny (<1KB even for a fully-populated feed update); 1MiB
+// is generous and keeps a runaway client from exhausting memory.
+const maxJSONBodyBytes int64 = 1 << 20
+
+// decodeJSON pulls a JSON request body into dst, bounded by
+// maxJSONBodyBytes. On failure it writes a 400 bad_json envelope and
+// returns false, so the caller can simply:
 //
 //	if !decodeJSON(w, r, &req) { return }
 func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
-	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
+	body := http.MaxBytesReader(w, r.Body, maxJSONBodyBytes)
+	if err := json.NewDecoder(body).Decode(dst); err != nil {
 		WriteError(w, http.StatusBadRequest, "bad_json", err.Error())
 		return false
 	}

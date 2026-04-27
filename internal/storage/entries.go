@@ -5,6 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"strings"
+
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // Entry mirrors the entries table. JSON tags align with design.md §6
@@ -229,8 +232,9 @@ func (s *Store) EntryExists(ctx context.Context, feedID int64, hash string) (boo
 
 // SearchEntries runs an FTS5 BM25-ranked search over the entries_fts
 // virtual table and returns the matching entries scoped to userID.
-// Errors from the FTS5 layer surface as ErrBadQuery (joined with the
-// underlying error) so the API can map them to HTTP 400 instead of 500.
+// FTS5 MATCH parse failures surface as ErrBadQuery so the API can map
+// them to HTTP 400; transient errors (context cancellation, deadlock,
+// disk I/O) surface verbatim and become HTTP 500.
 //
 // The aliased SELECT (`e.*` style) avoids ambiguity with entries_fts,
 // which exposes columns of the same name on the indexed entries.
@@ -247,7 +251,7 @@ func (s *Store) SearchEntries(ctx context.Context, userID int64, query string, l
 		 ORDER BY entries_fts.rank
 		 LIMIT ? OFFSET ?`, query, userID, limit, offset)
 	if err != nil {
-		return nil, errors.Join(ErrBadQuery, err)
+		return nil, classifyFTSError(err)
 	}
 	defer rows.Close()
 	var out []*Entry
@@ -259,6 +263,39 @@ func (s *Store) SearchEntries(ctx context.Context, userID int64, query string, l
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// CountSearchEntries returns the total number of FTS5 matches for
+// query (ignoring limit/offset) so the API can fill pagination.total
+// accurately. Same error-classification rules as SearchEntries.
+func (s *Store) CountSearchEntries(ctx context.Context, userID int64, query string) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT count(*)
+		 FROM entries e
+		 JOIN entries_fts ON entries_fts.rowid = e.id
+		 WHERE entries_fts MATCH ?
+		   AND e.user_id = ?`, query, userID).Scan(&n)
+	if err != nil {
+		return 0, classifyFTSError(err)
+	}
+	return n, nil
+}
+
+// classifyFTSError wraps SQLite errors from the FTS5 layer in
+// ErrBadQuery only when the underlying SQLite error code is the
+// generic SQLITE_ERROR (1) — that's what FTS5 returns for a malformed
+// MATCH expression. Everything else (cancellations, busy retries,
+// disk I/O) propagates as-is so the API can map it correctly.
+func classifyFTSError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var se *sqlite.Error
+	if errors.As(err, &se) && se.Code() == sqlite3.SQLITE_ERROR {
+		return errors.Join(ErrBadQuery, err)
+	}
+	return err
 }
 
 // BulkMarkRead marks every matching entry read. Idempotent.

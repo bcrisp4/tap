@@ -46,6 +46,35 @@ func TestSearch_MissingQuery(t *testing.T) {
 	require.Contains(t, w.Body.String(), `"code":"missing_query"`)
 }
 
+func TestSearch_PaginationTotalCountsAllMatches(t *testing.T) {
+	// Regression: previously total = len(page) which broke pagination
+	// for queries with more matches than `limit`.
+	f := newAPIFixture(t)
+	feedID, _ := f.store.CreateFeed(context.Background(), &storage.Feed{
+		UserID: 1, Title: "T", FeedURL: "https://t/", PollInterval: 3600,
+	})
+	for i, h := range []string{"a", "b", "c", "d", "e"} {
+		body := "kingfisher result " + h
+		_, err := f.store.InsertEntry(context.Background(), &storage.Entry{
+			FeedID: feedID, UserID: 1, Hash: h,
+			Title: "post " + h, Content: &body,
+		})
+		require.NoError(t, err)
+		_ = i
+	}
+
+	w := f.do(t, "GET", "/api/v1/search?q=kingfisher&limit=2", "")
+	require.Equal(t, http.StatusOK, w.Code)
+	var got struct {
+		Data       []map[string]any `json:"data"`
+		Pagination map[string]int   `json:"pagination"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+	require.Len(t, got.Data, 2)
+	require.Equal(t, 5, got.Pagination["total"])
+	require.Equal(t, 2, got.Pagination["limit"])
+}
+
 func TestSearch_StripsContentFromList(t *testing.T) {
 	f := newAPIFixture(t)
 	feedID, _ := f.store.CreateFeed(context.Background(), &storage.Feed{

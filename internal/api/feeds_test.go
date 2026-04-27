@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"testing"
 	"time"
@@ -85,6 +86,29 @@ func TestFeeds_GetMissing404(t *testing.T) {
 	w := f.do(t, "GET", "/api/v1/feeds/9999", "")
 	require.Equal(t, http.StatusNotFound, w.Code)
 	require.Contains(t, w.Body.String(), `"code":"not_found"`)
+}
+
+func TestFeeds_Get_RedactsCredentials(t *testing.T) {
+	// Storage stores cookie/username/password/proxy_url for
+	// authenticated feeds, but the API must never echo them back —
+	// v1 has no auth on /api/v1, so any reader could exfiltrate them.
+	f := newAPIFixture(t)
+	pw, ck, un, px := "secret-pw", "session=abc", "alice", "http://proxy/"
+	id, err := f.store.CreateFeed(context.Background(), &storage.Feed{
+		UserID: 1, Title: "T", FeedURL: "https://t/", PollInterval: 3600,
+		Password: &pw, Cookie: &ck, Username: &un, ProxyURL: &px,
+	})
+	require.NoError(t, err)
+
+	w := f.do(t, "GET", "/api/v1/feeds/"+strconv.FormatInt(id, 10), "")
+	require.Equal(t, http.StatusOK, w.Code)
+	body := w.Body.String()
+	require.NotContains(t, body, pw)
+	require.NotContains(t, body, ck)
+	require.NotContains(t, body, un)
+	require.NotContains(t, body, px)
+	require.NotContains(t, body, `"password"`)
+	require.NotContains(t, body, `"cookie"`)
 }
 
 func TestFeeds_Update(t *testing.T) {
@@ -187,4 +211,17 @@ func TestFeeds_Discover_MissingURL(t *testing.T) {
 	w := f.do(t, "POST", "/api/v1/feeds/discover", `{}`)
 	require.Equal(t, http.StatusBadRequest, w.Code)
 	require.Contains(t, w.Body.String(), `"code":"missing_url"`)
+}
+
+func TestFeeds_Discover_FailsOnUpstreamError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "nope", http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+
+	f := newAPIFixture(t)
+	w := f.do(t, "POST", "/api/v1/feeds/discover",
+		`{"url":"`+srv.URL+`"}`)
+	require.Equal(t, http.StatusBadGateway, w.Code)
+	require.Contains(t, w.Body.String(), `"code":"fetch_failed"`)
 }

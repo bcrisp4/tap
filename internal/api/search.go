@@ -34,7 +34,11 @@ func (h *searchHandlers) handle(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	total, err := h.store.CountSearchEntries(r.Context(), userID, query)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 
-	stripped := stripContent(results)
-	WriteList(w, stripped, limit, offset, len(stripped))
+	WriteList(w, stripContent(results), limit, offset, total)
 }
