@@ -25,7 +25,13 @@ const SHELL_CACHE = 'tap-shell-' + version;
 const API_CACHE = 'tap-api';
 const PROXY_CACHE = 'tap-proxy';
 
-const SHELL = [...build, ...files];
+// $service-worker exposes hashed JS/CSS chunks (`build`) and static
+// assets under `static/` (`files`), but adapter-static does NOT include
+// the SPA fallback index.html in either array. We add it explicitly so
+// the worker can serve it for any navigation while offline — without
+// it, the shell handler hits the network-fail path and returns 503.
+const FALLBACK_INDEX = '/';
+const SHELL = [...build, ...files, FALLBACK_INDEX];
 
 self.addEventListener('install', (event) => {
 	event.waitUntil(caches.open(SHELL_CACHE).then((c) => c.addAll(SHELL)));
@@ -95,14 +101,32 @@ async function staleWhileRevalidate(req: Request, cacheName: string): Promise<Re
 
 async function shellHandler(req: Request): Promise<Response> {
 	const cache = await caches.open(SHELL_CACHE);
+	// Hashed asset URLs match an exact cache entry; navigation requests
+	// (req.mode === 'navigate') always resolve to index.html so the SPA
+	// shell can boot and the client-side router takes over.
+	if (req.mode === 'navigate') {
+		const fallback = await cache.match(FALLBACK_INDEX);
+		if (fallback) {
+			// Try the network first so a deployed update lands without a
+			// hard reload — fall back to the cached shell on failure.
+			try {
+				const fresh = await fetch(req);
+				if (fresh.ok) {
+					cache.put(FALLBACK_INDEX, fresh.clone()).catch(() => undefined);
+					return fresh;
+				}
+			} catch {
+				/* fall through to cached fallback */
+			}
+			return fallback;
+		}
+	}
 	const cached = await cache.match(req);
 	if (cached) return cached;
 	try {
 		return await fetch(req);
 	} catch {
-		// SPA navigation fallback when fully offline — serve index so
-		// the client-side router can take over.
-		const indexCached = await cache.match('/');
+		const indexCached = await cache.match(FALLBACK_INDEX);
 		if (indexCached) return indexCached;
 		return new Response('offline', { status: 503 });
 	}

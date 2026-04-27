@@ -100,9 +100,11 @@ test.describe('service worker (production build only)', () => {
 		const rows = page.locator('.entry');
 		await expect(rows.first()).toBeVisible({ timeout: 20_000 });
 
-		// Click into an entry while online so its detail JSON + any
-		// proxy media land in the SW caches.
-		await rows.first().click();
+		// Open into the reader while online so the entry's detail JSON +
+		// any proxy media land in the SW caches. On desktop the river's
+		// row click only selects; the keyboard `o` shortcut is what
+		// navigates (see +page.svelte's bindKeyboard wiring).
+		await page.keyboard.press('o');
 		await expect(page.getByTestId('reader-body')).toBeVisible({ timeout: 15_000 });
 		await page.waitForTimeout(1_500);
 
