@@ -21,7 +21,14 @@
 	<div class="crumb"><b>{title}</b></div>
 	<span class="count mono">{unread} of {total}</span>
 	<div class="spacer"></div>
-	<button type="button" class="icon-btn" title="Search (/)" aria-label="Search">
+	<button
+		type="button"
+		class="icon-btn"
+		title="Search (lands in Plan 14)"
+		aria-label="Search"
+		disabled
+		aria-disabled="true"
+	>
 		<svg
 			width="14"
 			height="14"
@@ -61,7 +68,7 @@
 	<button
 		type="button"
 		class="icon-btn"
-		title="Mark all read (Shift+M)"
+		title="Mark all read"
 		aria-label="Mark all read"
 		onclick={onMarkAllRead}
 	>
@@ -125,5 +132,13 @@
 	.icon-btn:hover {
 		background: var(--bg-soft);
 		color: var(--ink);
+	}
+	.icon-btn:disabled {
+		color: var(--ink-4);
+		cursor: not-allowed;
+	}
+	.icon-btn:disabled:hover {
+		background: transparent;
+		color: var(--ink-4);
 	}
 </style>
