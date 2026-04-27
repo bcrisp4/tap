@@ -28,14 +28,19 @@
 	// `userSelectedId` is the explicit user choice (null until they
 	// click or press j/k). `selectedId` is what the UI actually
 	// displays — it falls through to the first visible entry while
-	// the user hasn't picked one. This split keeps the default-pick
-	// rule pure-derived (no `$effect` writing to state) while still
-	// letting the keyboard handlers reset to "follow the head of the
-	// list" by writing null.
+	// the user hasn't picked one OR when the previously-picked entry
+	// no longer matches anything in the current list (e.g. they just
+	// pressed `m` and the entry dropped off the unread filter). This
+	// split keeps the default-pick rule pure-derived rather than
+	// living inside an `$effect` that writes state.
 	let userSelectedId = $state<number | null>(null);
 	const visible = $derived(entries.data?.data ?? []);
 	const total = $derived(entries.data?.pagination.total ?? 0);
-	const selectedId = $derived(userSelectedId ?? visible[0]?.id ?? null);
+	const selectedId = $derived(
+		userSelectedId !== null && visible.some((e) => e.id === userSelectedId)
+			? userSelectedId
+			: (visible[0]?.id ?? null)
+	);
 
 	function indexOfSelected(): number {
 		return visible.findIndex((e) => e.id === selectedId);

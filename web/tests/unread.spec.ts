@@ -4,8 +4,12 @@ import { test, expect, request } from '@playwright/test';
 // binary. They expect the API to live at the same origin (production
 // embed) or via the Vite proxy when TAP_E2E_BASE is unset.
 //
-// `setExtraHTTPHeaders` would only affect Playwright's own page —
-// the seed feed is added directly via the API instead.
+// The seed feed is subscribed via the API directly so the test
+// doesn't depend on the SPA's own forms (which land in a later plan).
+
+// `@types/node` isn't a dependency (the rest of the SPA uses Vite
+// shims) — declare the slice of Node's global we actually consume.
+declare const process: { env: Record<string, string | undefined> };
 
 const BASE = process.env.TAP_E2E_BASE ?? 'http://127.0.0.1:5173';
 
