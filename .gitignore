@@ -1,2 +1,36 @@
+# Binaries
+/tap
+/dist/
+*.exe
+*.test
+*.out
+
+# SQLite
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Tap runtime
+/tap-cache/
+
+# Node / SvelteKit
+node_modules/
+/web/.svelte-kit/
+/web/build/
+/web/.env
+/web/.env.local
+
+# Editor / OS
+.DS_Store
+*~
+.vscode/
+.idea/
+
+# Plans (per-project; do not commit)
+/docs/superpowers/plans/
+
+# Tooling state
+/.remember/
 /.claude/worktrees/
 /.claude/settings.local.json
