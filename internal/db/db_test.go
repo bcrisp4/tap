@@ -22,6 +22,10 @@ func TestOpen_FileDB_AppliesPragmas(t *testing.T) {
 	var jm string
 	require.NoError(t, d.QueryRow("PRAGMA journal_mode").Scan(&jm))
 	require.Equal(t, "wal", jm, "journal_mode must be WAL")
+
+	var bt int
+	require.NoError(t, d.QueryRow("PRAGMA busy_timeout").Scan(&bt))
+	require.Equal(t, 5000, bt, "busy_timeout must be 5000ms")
 }
 
 func TestOpen_BadPathErrors(t *testing.T) {

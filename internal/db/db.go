@@ -27,7 +27,11 @@ func Open(path string) (*sql.DB, error) {
 	}
 	// Defensive: re-issue the pragmas in case the DSN syntax differs
 	// across modernc versions.
-	for _, p := range []string{"PRAGMA foreign_keys = ON", "PRAGMA journal_mode = WAL"} {
+	for _, p := range []string{
+		"PRAGMA foreign_keys = ON",
+		"PRAGMA journal_mode = WAL",
+		"PRAGMA busy_timeout = 5000",
+	} {
 		if _, err := d.Exec(p); err != nil {
 			d.Close()
 			return nil, fmt.Errorf("apply pragma %q: %w", p, err)
