@@ -12,6 +12,14 @@ import (
 // does not exist. Wrap it with errors.Is at call sites.
 var ErrNotFound = errors.New("storage: not found")
 
+// ErrBadQuery signals that a user-supplied query (e.g. an FTS5 MATCH
+// expression) failed to parse. Callers map it to HTTP 400.
+var ErrBadQuery = errors.New("storage: bad query")
+
+// ErrConflict signals a UNIQUE-constraint collision (e.g. subscribing
+// to the same feed_url twice). Callers map it to HTTP 409.
+var ErrConflict = errors.New("storage: conflict")
+
 // Store is the entrypoint for all repository operations.
 type Store struct {
 	db *sql.DB

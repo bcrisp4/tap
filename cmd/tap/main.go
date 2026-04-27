@@ -15,6 +15,7 @@ import (
 	"github.com/peterbourgon/ff/v4/ffhelp"
 	"github.com/peterbourgon/ff/v4/ffyaml"
 
+	"github.com/bcrisp4/tap/internal/api"
 	"github.com/bcrisp4/tap/internal/config"
 	"github.com/bcrisp4/tap/internal/db"
 	"github.com/bcrisp4/tap/internal/httpclient"
@@ -169,6 +170,15 @@ func runServe(ctx context.Context, cfg *config.Config, stderr io.Writer) error {
 		return fmt.Errorf("init server: %w", err)
 	}
 	srv.Mount("/api/v1/proxy/", prox)
+	// api.Mux registers full /api/v1/* patterns internally, so we
+	// mount it at the root: ServeMux's longest-prefix rule lets the
+	// proxy mount at /api/v1/proxy/ keep precedence over the API
+	// mux's GET/POST/... patterns at /api/v1/*.
+	srv.Mount("/api/v1/", api.Mux(api.Dependencies{
+		Store:      store,
+		HTTPClient: httpCli,
+		RunState:   pol.State(),
+	}))
 
 	logger.Info("tap starting",
 		"version", version.String(),

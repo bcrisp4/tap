@@ -5,29 +5,33 @@ import (
 	"database/sql"
 	"errors"
 	"strings"
+
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
-// Entry mirrors the entries table.
+// Entry mirrors the entries table. JSON tags align with design.md §6
+// so API handlers can return *Entry values directly.
 type Entry struct {
-	ID               int64
-	FeedID           int64
-	UserID           int64
-	Hash             string
-	Title            string
-	URL              *string
-	CommentsURL      *string
-	Author           *string
-	Summary          *string
-	Content          *string
-	PublishedAt      *int64
-	ReadingTime      int
-	Read             bool
-	ReadAt           *int64
-	Saved            bool
-	SavedAt          *int64
-	ExtractionFailed bool
-	CreatedAt        int64
-	ChangedAt        int64
+	ID               int64   `json:"id"`
+	FeedID           int64   `json:"feed_id"`
+	UserID           int64   `json:"user_id"`
+	Hash             string  `json:"hash"`
+	Title            string  `json:"title"`
+	URL              *string `json:"url"`
+	CommentsURL      *string `json:"comments_url"`
+	Author           *string `json:"author"`
+	Summary          *string `json:"summary"`
+	Content          *string `json:"content,omitempty"`
+	PublishedAt      *int64  `json:"published_at"`
+	ReadingTime      int     `json:"reading_time"`
+	Read             bool    `json:"read"`
+	ReadAt           *int64  `json:"read_at"`
+	Saved            bool    `json:"saved"`
+	SavedAt          *int64  `json:"saved_at"`
+	ExtractionFailed bool    `json:"extraction_failed"`
+	CreatedAt        int64   `json:"created_at"`
+	ChangedAt        int64   `json:"changed_at"`
 }
 
 // EntriesFilter mirrors the §6 list query params (subset for Plan 02).
@@ -54,6 +58,12 @@ type BulkScope struct {
 
 const entrySelectCols = `id, feed_id, user_id, hash, title, url, comments_url, author, summary, content,
 		published_at, reading_time, read, read_at, saved, saved_at, extraction_failed, created_at, changed_at`
+
+// qualifiedEntryCols is entrySelectCols with `e.` prefixes — used when
+// the entries table is aliased to disambiguate with entries_fts (which
+// shares the `title` column name in JOIN queries).
+const qualifiedEntryCols = `e.id, e.feed_id, e.user_id, e.hash, e.title, e.url, e.comments_url, e.author, e.summary, e.content,
+		e.published_at, e.reading_time, e.read, e.read_at, e.saved, e.saved_at, e.extraction_failed, e.created_at, e.changed_at`
 
 func scanEntry(row interface{ Scan(...any) error }) (*Entry, error) {
 	e := &Entry{}
@@ -97,7 +107,56 @@ func (s *Store) InsertEntry(ctx context.Context, e *Entry) (int64, error) {
 }
 
 func (s *Store) ListEntries(ctx context.Context, userID int64, f EntriesFilter) ([]*Entry, error) {
-	q := `SELECT ` + entrySelectCols + ` FROM entries WHERE user_id = ?`
+	where, args := entriesWhere(userID, f)
+
+	sort := "published_at"
+	if f.Sort == "created_at" {
+		sort = "created_at"
+	}
+	order := "DESC"
+	if strings.EqualFold(f.Order, "asc") {
+		order = "ASC"
+	}
+
+	if f.Limit <= 0 {
+		f.Limit = 50
+	}
+	args = append(args, f.Limit, f.Offset)
+
+	q := `SELECT ` + entrySelectCols + ` FROM entries ` + where +
+		` ORDER BY ` + sort + ` ` + order + ` LIMIT ? OFFSET ?`
+
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Entry
+	for rows.Next() {
+		e, err := scanEntry(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// CountEntries returns the total number of entries matching the
+// filter, ignoring Limit/Offset. Used by the API to fill the
+// pagination.total field.
+func (s *Store) CountEntries(ctx context.Context, userID int64, f EntriesFilter) (int, error) {
+	where, args := entriesWhere(userID, f)
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM entries `+where, args...).Scan(&n)
+	return n, err
+}
+
+// entriesWhere builds the shared WHERE clause used by ListEntries and
+// CountEntries. The clause leads with `WHERE user_id = ?` so callers
+// can append ORDER BY / LIMIT directly.
+func entriesWhere(userID int64, f EntriesFilter) (string, []any) {
+	q := `WHERE user_id = ?`
 	args := []any{userID}
 
 	switch f.Status {
@@ -118,37 +177,7 @@ func (s *Store) ListEntries(ctx context.Context, userID int64, f EntriesFilter) 
 		q += " AND feed_id IN (SELECT id FROM feeds WHERE category_id = ?)"
 		args = append(args, *f.CategoryID)
 	}
-
-	sort := "published_at"
-	if f.Sort == "created_at" {
-		sort = "created_at"
-	}
-	order := "DESC"
-	if strings.EqualFold(f.Order, "asc") {
-		order = "ASC"
-	}
-	q += " ORDER BY " + sort + " " + order
-
-	if f.Limit <= 0 {
-		f.Limit = 50
-	}
-	q += " LIMIT ? OFFSET ?"
-	args = append(args, f.Limit, f.Offset)
-
-	rows, err := s.db.QueryContext(ctx, q, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []*Entry
-	for rows.Next() {
-		e, err := scanEntry(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, e)
-	}
-	return out, rows.Err()
+	return q, args
 }
 
 // UpdateEntryState toggles read and/or saved. Nil leaves the field
@@ -199,6 +228,74 @@ func (s *Store) EntryExists(ctx context.Context, feedID int64, hash string) (boo
 		`SELECT count(*) FROM entries WHERE feed_id = ? AND hash = ?`,
 		feedID, hash).Scan(&n)
 	return n > 0, err
+}
+
+// SearchEntries runs an FTS5 BM25-ranked search over the entries_fts
+// virtual table and returns the matching entries scoped to userID.
+// FTS5 MATCH parse failures surface as ErrBadQuery so the API can map
+// them to HTTP 400; transient errors (context cancellation, deadlock,
+// disk I/O) surface verbatim and become HTTP 500.
+//
+// The aliased SELECT (`e.*` style) avoids ambiguity with entries_fts,
+// which exposes columns of the same name on the indexed entries.
+func (s *Store) SearchEntries(ctx context.Context, userID int64, query string, limit, offset int) ([]*Entry, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+qualifiedEntryCols+`
+		 FROM entries e
+		 JOIN entries_fts ON entries_fts.rowid = e.id
+		 WHERE entries_fts MATCH ?
+		   AND e.user_id = ?
+		 ORDER BY entries_fts.rank
+		 LIMIT ? OFFSET ?`, query, userID, limit, offset)
+	if err != nil {
+		return nil, classifyFTSError(err)
+	}
+	defer rows.Close()
+	var out []*Entry
+	for rows.Next() {
+		e, err := scanEntry(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// CountSearchEntries returns the total number of FTS5 matches for
+// query (ignoring limit/offset) so the API can fill pagination.total
+// accurately. Same error-classification rules as SearchEntries.
+func (s *Store) CountSearchEntries(ctx context.Context, userID int64, query string) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT count(*)
+		 FROM entries e
+		 JOIN entries_fts ON entries_fts.rowid = e.id
+		 WHERE entries_fts MATCH ?
+		   AND e.user_id = ?`, query, userID).Scan(&n)
+	if err != nil {
+		return 0, classifyFTSError(err)
+	}
+	return n, nil
+}
+
+// classifyFTSError wraps SQLite errors from the FTS5 layer in
+// ErrBadQuery only when the underlying SQLite error code is the
+// generic SQLITE_ERROR (1) — that's what FTS5 returns for a malformed
+// MATCH expression. Everything else (cancellations, busy retries,
+// disk I/O) propagates as-is so the API can map it correctly.
+func classifyFTSError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var se *sqlite.Error
+	if errors.As(err, &se) && se.Code() == sqlite3.SQLITE_ERROR {
+		return errors.Join(ErrBadQuery, err)
+	}
+	return err
 }
 
 // BulkMarkRead marks every matching entry read. Idempotent.

@@ -11,43 +11,53 @@ import (
 )
 
 // Feed mirrors the feeds table. Optional columns use *T for
-// nullability; INTEGER booleans expose as bool.
+// nullability; INTEGER booleans expose as bool. JSON tags match the
+// schema column names so the API surface (design.md §6) and SPA can
+// consume Feed values verbatim.
 type Feed struct {
-	ID          int64
-	UserID      int64
-	CategoryID  *int64
-	IconID      *int64
-	Title       string
-	FeedURL     string
-	SiteURL     *string
-	Description *string
+	ID          int64   `json:"id"`
+	UserID      int64   `json:"user_id"`
+	CategoryID  *int64  `json:"category_id"`
+	IconID      *int64  `json:"icon_id"`
+	Title       string  `json:"title"`
+	FeedURL     string  `json:"feed_url"`
+	SiteURL     *string `json:"site_url"`
+	Description *string `json:"description"`
 
-	ETag         *string
-	LastModified *string
-	LastPolledAt *int64
-	NextPollAt   *int64
-	PollInterval int64
-	ErrorCount   int
-	LastError    *string
+	ETag         *string `json:"etag"`
+	LastModified *string `json:"last_modified"`
+	LastPolledAt *int64  `json:"last_polled_at"`
+	NextPollAt   *int64  `json:"next_poll_at"`
+	PollInterval int64   `json:"poll_interval"`
+	ErrorCount   int     `json:"error_count"`
+	LastError    *string `json:"last_error"`
 
-	WeeklyEntryCount int
+	WeeklyEntryCount int `json:"weekly_entry_count"`
 
-	Crawler      bool
-	ScraperRules *string
+	Crawler      bool    `json:"crawler"`
+	ScraperRules *string `json:"scraper_rules"`
 
-	Disabled           bool
-	IgnoreEntryUpdates bool
+	Disabled           bool `json:"disabled"`
+	IgnoreEntryUpdates bool `json:"ignore_entry_updates"`
 
-	UserAgent            *string
-	Cookie               *string
-	Username             *string
-	Password             *string
-	ProxyURL             *string
-	DisableHTTP2         bool
-	AllowSelfSignedCerts bool
+	UserAgent *string `json:"user_agent"`
 
-	CreatedAt int64
-	UpdatedAt int64
+	// Credential-bearing fields are redacted from JSON output
+	// (json:"-"). v1 has no auth on the API surface, so a network
+	// peer that can hit GET /feeds/{id} could otherwise read every
+	// stored cookie / basic-auth credential / proxy URL. Writes use
+	// dedicated request DTOs (api.subscribeReq / api.updateFeedReq),
+	// which do honour these fields, so the round-trip stays usable.
+	Cookie   *string `json:"-"`
+	Username *string `json:"-"`
+	Password *string `json:"-"`
+	ProxyURL *string `json:"-"`
+
+	DisableHTTP2         bool `json:"disable_http2"`
+	AllowSelfSignedCerts bool `json:"allow_self_signed_certs"`
+
+	CreatedAt int64 `json:"created_at"`
+	UpdatedAt int64 `json:"updated_at"`
 }
 
 const feedSelectCols = `id, user_id, category_id, icon_id, title, feed_url, site_url, description,
@@ -120,6 +130,9 @@ func (s *Store) CreateFeed(ctx context.Context, f *Feed) (int64, error) {
 		f.WeeklyEntryCount, boolInt(f.Crawler), f.ScraperRules, boolInt(f.Disabled), boolInt(f.IgnoreEntryUpdates),
 		f.UserAgent, f.Cookie, f.Username, f.Password, f.ProxyURL, boolInt(f.DisableHTTP2), boolInt(f.AllowSelfSignedCerts),
 	)
+	if isUniqueConstraint(err) {
+		return 0, ErrConflict
+	}
 	if err != nil {
 		return 0, err
 	}
@@ -149,6 +162,20 @@ func (s *Store) UpdateFeed(ctx context.Context, f *Feed) error {
 
 func (s *Store) DeleteFeed(ctx context.Context, userID, id int64) error {
 	res, err := s.db.ExecContext(ctx, `DELETE FROM feeds WHERE id = ? AND user_id = ?`, id, userID)
+	if err != nil {
+		return err
+	}
+	return rowsOrNotFound(res)
+}
+
+// SetNextPollAt schedules the next poll for a feed without touching any
+// other column — used by POST /feeds/{id}/refresh, which only needs to
+// nudge the dispatcher. Avoids the GetFeed/UpdateFeed round-trip and
+// the corresponding clobber race against the poller.
+func (s *Store) SetNextPollAt(ctx context.Context, userID, id, nextPollAt int64) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE feeds SET next_poll_at = ?, updated_at = unixepoch()
+		 WHERE id = ? AND user_id = ?`, nextPollAt, id, userID)
 	if err != nil {
 		return err
 	}
