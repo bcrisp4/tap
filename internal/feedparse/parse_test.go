@@ -64,6 +64,15 @@ func TestParse_HashStableAcrossCalls(t *testing.T) {
 	require.Equal(t, r1.Entries[0].Hash, r2.Entries[0].Hash, "hash must be deterministic")
 }
 
+func TestParse_InvalidFeedURLErrors(t *testing.T) {
+	body := loadTestdata(t, "jvns.atom.xml")
+	// Control bytes inside a URL trip url.Parse; the body is irrelevant —
+	// we should reject before parsing it.
+	_, err := feedparse.Parse(body, "https://example.com/\x7f")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "feedURL")
+}
+
 func TestParse_RelativeLinkResolved(t *testing.T) {
 	atom := []byte(`<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom">
 		<title>X</title><id>https://x.com/</id>

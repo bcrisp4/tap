@@ -25,8 +25,10 @@ type Result struct {
 }
 
 // Parse normalises an RSS / Atom / JSON Feed body into Tap's shape.
-// feedURL is used to (a) resolve relative entry links and (b) seed the
-// hash for entries lacking GUID and link.
+// feedURL is the absolute URL the body was fetched from; it's used to
+// resolve relative entry links against. It must parse as a URL, but is
+// not mixed into EntryHash — the hash uses (feed_id, guid|link, …) and
+// the caller (poller) recomputes it once the real feed_id is known.
 //
 // Note on EntryHash and feed_id: Parse doesn't know the persistent
 // feed_id (the row may not exist on first subscribe, or the caller
@@ -35,13 +37,16 @@ type Result struct {
 // enough for in-memory dedup within one parse call; the canonical hash
 // is the one written to entries.hash.
 func Parse(body []byte, feedURL string) (*Result, error) {
+	base, err := url.Parse(feedURL)
+	if err != nil {
+		return nil, fmt.Errorf("feedparse: invalid feedURL %q: %w", feedURL, err)
+	}
+
 	fp := gofeed.NewParser()
 	feed, err := fp.Parse(bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("feedparse: %w", err)
 	}
-
-	base, _ := url.Parse(feedURL)
 
 	out := &Result{
 		Meta: FeedMeta{
