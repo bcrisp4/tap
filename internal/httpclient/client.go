@@ -96,13 +96,17 @@ func (c *Client) Do(req *http.Request, opts *Options) (*http.Response, error) {
 	if opts == nil {
 		opts = &Options{}
 	}
-	rt, err := c.transportFor(req.URL, opts)
+	rt, viaUnguarded, err := c.transportFor(req.URL, opts)
 	if err != nil {
 		return nil, err
 	}
 	applyHeaders(req, c.cfg.UserAgent, opts)
 
-	cli := &http.Client{Transport: rt, Timeout: c.cfg.Timeout}
+	cli := &http.Client{
+		Transport:     rt,
+		Timeout:       c.cfg.Timeout,
+		CheckRedirect: c.checkRedirect(viaUnguarded),
+	}
 	resp, err := cli.Do(req)
 	if err != nil {
 		return resp, err
@@ -111,14 +115,41 @@ func (c *Client) Do(req *http.Request, opts *Options) (*http.Response, error) {
 	return resp, nil
 }
 
-func (c *Client) transportFor(u *url.URL, opts *Options) (http.RoundTripper, error) {
+// transportFor picks the right transport for the request and reports
+// whether it is the unguarded one — callers need that to install a
+// matching redirect policy.
+func (c *Client) transportFor(u *url.URL, opts *Options) (rt http.RoundTripper, viaUnguarded bool, err error) {
 	switch {
 	case opts.ProxyURL != "":
-		return c.transportForProxy(opts.ProxyURL, opts)
+		rt, err = c.transportForProxy(opts.ProxyURL, opts)
+		return rt, false, err
 	case c.cfg.Allowlist.MatchesHost(u.Hostname()):
-		return newBrotliTransport(c.cloneTransport(c.unguarded, opts)), nil
+		return newBrotliTransport(c.cloneTransport(c.unguarded, opts)), true, nil
 	default:
-		return newBrotliTransport(c.cloneTransport(c.protected, opts)), nil
+		return newBrotliTransport(c.cloneTransport(c.protected, opts)), false, nil
+	}
+}
+
+// checkRedirect returns a CheckRedirect callback that reproduces the
+// SSRF guarantees across redirect hops:
+//   - For the protected transport, the SSRF dialer runs on every TCP
+//     connect (including each redirect), so no extra check is needed.
+//   - For the unguarded transport (used when the original hostname
+//     matched the suffix allowlist), redirects to a non-allowlisted
+//     host would silently skip the SSRF block. Reject those unless
+//     AllowPrivate is set.
+//
+// Returns nil for the protected/proxy paths so net/http uses its
+// default redirect policy.
+func (c *Client) checkRedirect(viaUnguarded bool) func(*http.Request, []*http.Request) error {
+	if !viaUnguarded || c.cfg.AllowPrivate {
+		return nil
+	}
+	return func(req *http.Request, _ []*http.Request) error {
+		if !c.cfg.Allowlist.MatchesHost(req.URL.Hostname()) {
+			return fmt.Errorf("ssrf: redirect from allowlisted host to %q would bypass SSRF guard", req.URL.Hostname())
+		}
+		return nil
 	}
 }
 

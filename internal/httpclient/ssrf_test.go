@@ -8,14 +8,14 @@ import (
 )
 
 func TestParseAllowedHosts(t *testing.T) {
-	got, err := parseAllowedHosts("marlin-tet.ts.net, 10.0.0.0/24, ,192.168.1.0/24")
+	got, err := ParseAllowedHosts("marlin-tet.ts.net, 10.0.0.0/24, ,192.168.1.0/24")
 	require.NoError(t, err)
 	require.Equal(t, []string{"marlin-tet.ts.net"}, got.Suffixes)
 	require.Len(t, got.CIDRs, 2)
 }
 
 func TestParseAllowedHosts_BadCIDRRejected(t *testing.T) {
-	_, err := parseAllowedHosts("10.0.0.0/99")
+	_, err := ParseAllowedHosts("10.0.0.0/99")
 	require.Error(t, err)
 }
 

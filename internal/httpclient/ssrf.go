@@ -38,11 +38,11 @@ func (a AllowedHosts) ipInCIDR(ip net.IP) bool {
 	return false
 }
 
-// parseAllowedHosts splits a comma-separated string into hostname
+// ParseAllowedHosts splits a comma-separated string into hostname
 // suffixes and CIDR blocks. Empty entries are skipped. Unrecognised
 // entries (not a CIDR and contain no dot) are also skipped — they're
 // likely typos. Returns an error if a CIDR-shaped entry fails to parse.
-func parseAllowedHosts(s string) (AllowedHosts, error) {
+func ParseAllowedHosts(s string) (AllowedHosts, error) {
 	var out AllowedHosts
 	for _, raw := range strings.Split(s, ",") {
 		entry := strings.TrimSpace(raw)
