@@ -128,14 +128,44 @@ func TestYAMLParser_NestedMapsStitchWithDot(t *testing.T) {
 	require.Equal(t, []kv{{"proxy.cache-dir", "/x"}}, *calls)
 }
 
-func TestYAMLParser_ListCallsSetPerElement(t *testing.T) {
+func TestYAMLParser_ListErrors(t *testing.T) {
+	// Tap registers only scalar flags. ffyaml emits one set-call per
+	// list element, so without protection a YAML list silently collapses
+	// to its last element. YAMLParser must instead fail loudly on the
+	// duplicate key with guidance to use a comma-separated string.
 	set, calls := captureSet()
 	yaml := "allowed_hosts:\n  - a\n  - b\n"
-	require.NoError(t, config.YAMLParser(strings.NewReader(yaml), set))
-	require.Equal(t, []kv{
-		{"allowed-hosts", "a"},
-		{"allowed-hosts", "b"},
-	}, *calls)
+	err := config.YAMLParser(strings.NewReader(yaml), set)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `"allowed_hosts"`)
+	require.Contains(t, err.Error(), "comma-separated")
+	// Only the first element reached set; the duplicate aborted parsing.
+	require.Equal(t, []kv{{"allowed-hosts", "a"}}, *calls)
+}
+
+
+func TestYAMLParser_ListErrorsThroughFFParse(t *testing.T) {
+	// End-to-end: a YAML config file containing a list for a scalar
+	// flag must abort ff.Parse instead of silently keeping the last
+	// element.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "tap.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("allowed_hosts:\n  - a\n  - b\n"), 0o644))
+
+	fs := ff.NewFlagSet("test")
+	var configPath string
+	fs.StringVar(&configPath, 'c', "config", "", "config file")
+	cfg := &config.Config{}
+	config.RegisterFlags(fs, cfg)
+
+	err := ff.Parse(fs, []string{"--config=" + path},
+		ff.WithEnvVarPrefix("TAP"),
+		ff.WithConfigFileFlag("config"),
+		ff.WithConfigFileParser(config.YAMLParser),
+		ff.WithConfigAllowMissingFile(),
+	)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `"allowed_hosts"`)
 }
 
 func TestYAMLParser_PropagatesSetError(t *testing.T) {

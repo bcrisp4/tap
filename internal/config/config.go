@@ -3,6 +3,7 @@
 package config
 
 import (
+	"fmt"
 	"io"
 	"strings"
 	"time"
@@ -88,8 +89,24 @@ func RegisterFlags(fs *ff.FlagSet, cfg *Config) {
 // registers no flag for the dotted form, so nested maps surface as an
 // "unknown flag" error from ff. Stick to flat keys matching the
 // registered flag long-names with `-` ⇄ `_` translation.
+//
+// Tap registers only scalar flags, so YAML lists are not supported:
+// ffyaml emits one set call per element and the second call would
+// silently overwrite the first on a StringVar binding. To make this
+// fail loudly, YAMLParser tracks which keys it has already forwarded
+// and returns an error on the second occurrence, telling the user to
+// use a comma-separated string for list-shaped values like
+// allowed_hosts.
 func YAMLParser(r io.Reader, set func(name, value string) error) error {
+	seen := make(map[string]struct{})
 	return ffyaml.Parse(r, func(name, value string) error {
-		return set(strings.ReplaceAll(name, "_", "-"), value)
+		flag := strings.ReplaceAll(name, "_", "-")
+		if _, dup := seen[flag]; dup {
+			return fmt.Errorf("config: YAML key %q appears multiple times "+
+				"(Tap config flags are scalar; for list-shaped values like "+
+				"allowed_hosts use a comma-separated string)", name)
+		}
+		seen[flag] = struct{}{}
+		return set(flag, value)
 	})
 }
