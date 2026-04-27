@@ -268,7 +268,7 @@ func (s *Store) CommitPollNotModified(
 	etag, lastModified string,
 	nextPollAt int64,
 ) error {
-	_, err := s.db.ExecContext(ctx,
+	res, err := s.db.ExecContext(ctx,
 		`UPDATE feeds SET
 			etag = COALESCE(NULLIF(?, ''), etag),
 			last_modified = COALESCE(NULLIF(?, ''), last_modified),
@@ -279,7 +279,10 @@ func (s *Store) CommitPollNotModified(
 			updated_at = unixepoch()
 		 WHERE id = ?`,
 		etag, lastModified, nextPollAt, feedID)
-	return err
+	if err != nil {
+		return err
+	}
+	return rowsOrNotFound(res)
 }
 
 // CommitPollFailure records the failure: increment error_count, store
@@ -292,7 +295,7 @@ func (s *Store) CommitPollFailure(
 	lastError string,
 	nextPollAt int64,
 ) error {
-	_, err := s.db.ExecContext(ctx,
+	res, err := s.db.ExecContext(ctx,
 		`UPDATE feeds SET
 			error_count = ?,
 			last_error = NULLIF(?, ''),
@@ -301,7 +304,10 @@ func (s *Store) CommitPollFailure(
 			updated_at = unixepoch()
 		 WHERE id = ?`,
 		errCount, lastError, nextPollAt, feedID)
-	return err
+	if err != nil {
+		return err
+	}
+	return rowsOrNotFound(res)
 }
 
 // isUniqueConstraint reports whether err is a SQLite UNIQUE

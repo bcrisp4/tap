@@ -195,3 +195,12 @@ func TestFeeds_CommitPollFailure(t *testing.T) {
 	require.Equal(t, "dial tcp: timeout", *got.LastError)
 	require.Equal(t, int64(5000), *got.NextPollAt)
 }
+
+func TestFeeds_CommitPoll_UnknownFeedReturnsNotFound(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	err := s.CommitPollNotModified(ctx, 9999, "", "", 1)
+	require.True(t, errors.Is(err, storage.ErrNotFound))
+	err = s.CommitPollFailure(ctx, 9999, 1, "boom", 1)
+	require.True(t, errors.Is(err, storage.ErrNotFound))
+}
