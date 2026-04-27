@@ -984,9 +984,13 @@ precedence (highest first):
 
 Mapping is mechanical: each row in the table below names the env-var
 form. The flag form lowercases the name and replaces underscores with
-hyphens (`TAP_DB_PATH` → `--db-path`); the YAML key drops the `TAP_`
-prefix and lowercases, keeping underscores (`TAP_DB_PATH` → `db_path`,
-top level).
+hyphens (`TAP_DB_PATH` → `--db-path`); the YAML key matches the flag
+long-name exactly (`TAP_DB_PATH` → `db-path`, top level), so ff/v4
+resolves YAML keys against the flag set without a translation step.
+List-shaped knobs (e.g. `allowed-hosts`) are typed as `[]string` and
+registered with `StringListVar`, so YAML lists populate the slice
+natively — repeat the flag (`--allowed-hosts=a --allowed-hosts=b`) on
+the CLI, or use a YAML list (`allowed-hosts: [a, b]`) in the file.
 
 Implemented with `peterbourgon/ff/v4` (CLI + flags + env + file
 precedence in a single dep) and `ffyaml` for the file parser.
