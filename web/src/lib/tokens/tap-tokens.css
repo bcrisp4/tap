@@ -1,0 +1,76 @@
+/* Tap — Design Tokens
+   Klein Blue accent; monochrome else.
+   Themes: light, dark, sepia.
+   Type: Source Serif 4 (body), Inter Tight (UI), JetBrains Mono (meta).
+
+   Ported from docs/ui_design_handoff/styles.css. Component-level
+   classes (.entry, .tap-sidebar, .tap-topbar, .tap-river, .reader-*,
+   .m-*, .poll-strip, .kbd, .theme-chip, .tap-mark, .wordmark, the
+   .is-mobile overrides, and the WebKit scrollbar rules) are
+   intentionally omitted — those return as scoped Svelte components
+   in plans 10/11. */
+
+@import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;0,8..60,600;1,8..60,400&family=Inter+Tight:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+	--serif: 'Source Serif 4', 'Iowan Old Style', Charter, Georgia, serif;
+	--sans: 'Inter Tight', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+	--mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+	--klein: #002fa7;
+}
+
+/* ───── Light ───── */
+.theme-light {
+	--bg: #fafaf7;
+	--bg-soft: #f3f3ee;
+	--surface: #ffffff;
+	--ink: #1a1a1a;
+	--ink-2: #4a4a48;
+	--ink-3: #8a8a86;
+	--ink-4: #c8c8c2;
+	--rule: #e6e6df;
+	--accent: #002fa7;
+	--accent-soft: rgba(0, 47, 167, 0.08);
+}
+
+/* ───── Dark ───── */
+.theme-dark {
+	--bg: #0d0d0e;
+	--bg-soft: #161617;
+	--surface: #1a1a1c;
+	--ink: #ededea;
+	--ink-2: #a8a8a4;
+	--ink-3: #6e6e6a;
+	--ink-4: #3a3a38;
+	--rule: #232325;
+	--accent: #5a7fdc; /* desaturated Klein for AA contrast */
+	--accent-soft: rgba(90, 127, 220, 0.14);
+}
+
+/* ───── Sepia ───── */
+.theme-sepia {
+	--bg: #f4ecd8;
+	--bg-soft: #ece3c9;
+	--surface: #faf3df;
+	--ink: #3b2e1a;
+	--ink-2: #6b5a3e;
+	--ink-3: #9e8d6b;
+	--ink-4: #c8b88f;
+	--rule: #d9cca8;
+	--accent: #002fa7;
+	--accent-soft: rgba(0, 47, 167, 0.1);
+}
+
+/* Animation primitives reused by future components (poll-strip pulse,
+   keyboard-hint feedback). */
+@keyframes tap-pulse {
+	0%,
+	100% {
+		opacity: 1;
+		transform: scale(1);
+	}
+	50% {
+		opacity: 0.35;
+		transform: scale(0.8);
+	}
+}
