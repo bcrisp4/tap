@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -31,9 +32,8 @@ func TestRun_UnknownSubcommand_Errors(t *testing.T) {
 	require.NotEqual(t, 0, code)
 }
 
-// healthcheckProbe is set in main_test.go to short-circuit the HTTP
-// call so we can test the healthcheck subcommand's exit code routing
-// without standing up a real server.
+// Stub the package-level healthcheckProbe so the subcommand's
+// exit-code routing can be exercised without a real HTTP server.
 func TestRun_Healthcheck_ServerHealthy_ExitsZero(t *testing.T) {
 	t.Cleanup(func() { healthcheckProbe = defaultHealthcheckProbe })
 	healthcheckProbe = func(_ context.Context, _ string) error { return nil }
@@ -46,7 +46,7 @@ func TestRun_Healthcheck_ServerHealthy_ExitsZero(t *testing.T) {
 func TestRun_Healthcheck_ServerUnreachable_ExitsNonZero(t *testing.T) {
 	t.Cleanup(func() { healthcheckProbe = defaultHealthcheckProbe })
 	healthcheckProbe = func(_ context.Context, _ string) error {
-		return errSyntheticHealthcheckFailure
+		return errors.New("synthetic")
 	}
 
 	var stdout, stderr bytes.Buffer
@@ -54,9 +54,3 @@ func TestRun_Healthcheck_ServerUnreachable_ExitsNonZero(t *testing.T) {
 	require.NotEqual(t, 0, code)
 	require.Contains(t, stderr.String(), "healthcheck")
 }
-
-var errSyntheticHealthcheckFailure = errSentinel("synthetic")
-
-type errSentinel string
-
-func (e errSentinel) Error() string { return string(e) }
