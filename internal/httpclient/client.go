@@ -122,38 +122,61 @@ func (c *Client) transportFor(u *url.URL, opts *Options) (http.RoundTripper, err
 	}
 }
 
+// cloneTransport returns base unchanged when no per-request override
+// touches the transport, otherwise returns a deep clone with overrides
+// applied. Callers that *will* mutate the transport (e.g. to set Proxy
+// or DialContext) must clone unconditionally — see transportForProxy.
 func (c *Client) cloneTransport(base *http.Transport, opts *Options) *http.Transport {
 	if !opts.DisableHTTP2 && !opts.AllowSelfSigned {
 		return base
 	}
 	t := base.Clone()
+	applyTLSAndHTTP2(t, opts)
+	return t
+}
+
+// applyTLSAndHTTP2 mutates t in place to honour the per-request TLS /
+// HTTP/2 toggles. Caller must own t (i.e. it must already be a clone).
+func applyTLSAndHTTP2(t *http.Transport, opts *Options) {
 	if opts.DisableHTTP2 {
 		t.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
 		t.ForceAttemptHTTP2 = false
 	}
 	if opts.AllowSelfSigned {
-		// base.Clone() above already deep-clones TLSClientConfig (or
-		// leaves it nil), so it's safe to mutate t.TLSClientConfig
-		// without affecting the shared base transport.
 		if t.TLSClientConfig == nil {
 			t.TLSClientConfig = &tls.Config{} //nolint:gosec
 		}
 		t.TLSClientConfig.InsecureSkipVerify = true //nolint:gosec
 	}
-	return t
+}
+
+// proxyCacheKey discriminates cached proxy transports by all per-feed
+// fields that change the transport's behaviour, not just the proxy URL.
+// Without this, a request that needs strict TLS could reuse a cached
+// transport built earlier with InsecureSkipVerify=true (or HTTP/2 off).
+type proxyCacheKey struct {
+	URL             string
+	DisableHTTP2    bool
+	AllowSelfSigned bool
 }
 
 // transportForProxy returns (or builds) a brotli-wrapped transport
-// keyed by proxy URL. Supports http://, https://, and socks5:// URIs.
+// keyed by (proxy URL, TLS / HTTP2 options). Supports http://,
+// https://, and socks5:// URIs.
 func (c *Client) transportForProxy(proxyURL string, opts *Options) (http.RoundTripper, error) {
-	if cached, ok := c.proxies.Load(proxyURL); ok {
+	key := proxyCacheKey{URL: proxyURL, DisableHTTP2: opts.DisableHTTP2, AllowSelfSigned: opts.AllowSelfSigned}
+	if cached, ok := c.proxies.Load(key); ok {
 		return cached.(http.RoundTripper), nil
 	}
 	u, err := url.Parse(proxyURL)
 	if err != nil {
 		return nil, fmt.Errorf("httpclient: parse proxy_url: %w", err)
 	}
-	t := c.cloneTransport(c.protected, opts)
+	// Always build a fresh clone — the switch below mutates Proxy /
+	// DialContext, which would corrupt c.protected if cloneTransport
+	// short-circuited and returned the shared base.
+	t := c.protected.Clone()
+	applyTLSAndHTTP2(t, opts)
 	switch u.Scheme {
 	case "http", "https":
 		t.Proxy = http.ProxyURL(u)
@@ -173,7 +196,7 @@ func (c *Client) transportForProxy(proxyURL string, opts *Options) (http.RoundTr
 		return nil, fmt.Errorf("httpclient: unsupported proxy scheme %q", u.Scheme)
 	}
 	wrapped := newBrotliTransport(t)
-	actual, _ := c.proxies.LoadOrStore(proxyURL, wrapped)
+	actual, _ := c.proxies.LoadOrStore(key, wrapped)
 	return actual.(http.RoundTripper), nil
 }
 
