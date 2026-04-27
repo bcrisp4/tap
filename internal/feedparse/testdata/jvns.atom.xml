@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>jvns.ca</title>
+  <link href="https://jvns.ca/"/>
+  <id>https://jvns.ca/</id>
+  <updated>2026-04-26T12:00:00Z</updated>
+  <subtitle>Notes by Julia Evans.</subtitle>
+  <entry>
+    <id>tag:jvns.ca,2026:bugs-impossible</id>
+    <title>Reasons why bugs might feel "impossible"</title>
+    <link href="https://jvns.ca/blog/2026/04/26/bugs-impossible/"/>
+    <published>2026-04-26T08:00:00Z</published>
+    <updated>2026-04-26T08:00:00Z</updated>
+    <author><name>Julia Evans</name></author>
+    <summary>A bug feels impossible when one of your assumptions is wrong.</summary>
+    <content type="html">&lt;p&gt;A bug feels impossible when one of your assumptions is wrong. Here are some categories of wrong assumptions I keep running into.&lt;/p&gt;</content>
+  </entry>
+</feed>
