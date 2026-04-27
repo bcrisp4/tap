@@ -55,7 +55,7 @@ The build is fully static (no CGo). Pure-Go SQLite via `modernc.org/sqlite` is t
 ## Tech stack pins (see design.md §3 for the full table)
 
 - Go (latest stable; toolchain pinned in `go.mod`).
-- `peterbourgon/ff/v4` + `ffyaml` + `ff.Command` — flag/env/YAML config layering, precedence flag > env > file > default. YAML keys are underscored.
+- `peterbourgon/ff/v4` + `ffyaml` + `ff.Command` — flag/env/YAML config layering, precedence flag > env > file > default. YAML keys are hyphenated and match flag long-names (e.g. `db-path`).
 - `modernc.org/sqlite` (pure-Go), WAL + foreign keys + FTS5.
 - `mmcdole/gofeed` for feed parsing.
 - `codeberg.org/readeck/go-readability/v2` for article extraction.
