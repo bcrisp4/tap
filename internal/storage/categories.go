@@ -6,11 +6,13 @@ import (
 	"errors"
 )
 
-// Category mirrors the categories table.
+// Category mirrors the categories table. JSON tags align with the
+// schema column names so the API surface (design.md §6) can return
+// *Category values directly.
 type Category struct {
-	ID     int64
-	UserID int64
-	Name   string
+	ID     int64  `json:"id"`
+	UserID int64  `json:"user_id"`
+	Name   string `json:"name"`
 }
 
 func (s *Store) ListCategories(ctx context.Context, userID int64) ([]*Category, error) {

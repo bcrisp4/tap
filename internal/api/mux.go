@@ -24,6 +24,7 @@ type Dependencies struct {
 // search, OPML, and system endpoints alongside these feed routes.
 func Mux(deps Dependencies) *http.ServeMux {
 	feeds := &feedHandlers{store: deps.Store, client: deps.HTTPClient}
+	cats := &categoryHandlers{store: deps.Store}
 
 	mux := http.NewServeMux()
 
@@ -35,6 +36,11 @@ func Mux(deps Dependencies) *http.ServeMux {
 	mux.HandleFunc("PUT /api/v1/feeds/{id}", feeds.update)
 	mux.HandleFunc("DELETE /api/v1/feeds/{id}", feeds.delete)
 	mux.HandleFunc("POST /api/v1/feeds/{id}/refresh", feeds.refresh)
+
+	mux.HandleFunc("GET /api/v1/categories", cats.list)
+	mux.HandleFunc("POST /api/v1/categories", cats.create)
+	mux.HandleFunc("PUT /api/v1/categories/{id}", cats.rename)
+	mux.HandleFunc("DELETE /api/v1/categories/{id}", cats.delete)
 
 	return mux
 }
