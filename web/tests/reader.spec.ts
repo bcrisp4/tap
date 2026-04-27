@@ -17,12 +17,17 @@ interface Entry {
 }
 
 async function seedAndFetchEntryID(request: APIRequestContext): Promise<number> {
-	// Idempotent subscribe — duplicate POSTs return the existing feed.
-	await request
-		.post('/api/v1/feeds', {
-			data: { feed_url: 'https://jvns.ca/atom.xml', title: 'jvns.ca (e2e)' }
-		})
-		.catch(() => undefined);
+	// First run returns 201; subsequent runs hit 409 because the feed
+	// already exists. Either is fine. Anything else is a real error and
+	// we'd rather see it than degrade into the 30-s polling timeout.
+	const subscribe = await request.post('/api/v1/feeds', {
+		data: { feed_url: 'https://jvns.ca/atom.xml', title: 'jvns.ca (e2e)' }
+	});
+	if (subscribe.status() !== 201 && subscribe.status() !== 409) {
+		throw new Error(
+			`feed subscribe failed: ${subscribe.status()} ${await subscribe.text()}`
+		);
+	}
 
 	// Poll the entries list for up to ~30s; the poller has to fetch and
 	// extract the article body before /entries/{id} returns content.

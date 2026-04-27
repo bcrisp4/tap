@@ -20,6 +20,7 @@
 		<a
 			class={['rail-row', { 'is-selected': e.id === selectedId, 'is-read': e.read }]}
 			href={'/entry/' + e.id}
+			aria-current={e.id === selectedId ? 'page' : undefined}
 		>
 			<span class="rail-dot" aria-hidden="true"></span>
 			<div class="rail-text">

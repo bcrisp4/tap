@@ -39,7 +39,12 @@
 		<span>UNREAD</span>
 	</button>
 	<div class="reader-actions">
-		<button class="reader-action mono" onclick={onToggleRead} title="Toggle read (m)">
+		<button
+			class="reader-action mono"
+			onclick={onToggleRead}
+			title="Toggle read (m)"
+			aria-pressed={read}
+		>
 			<svg
 				width="14"
 				height="14"
@@ -57,6 +62,7 @@
 			class={['reader-action', 'mono', { 'is-saved': saved }]}
 			onclick={onToggleSaved}
 			title="Toggle saved (s)"
+			aria-pressed={saved}
 		>
 			<svg
 				width="14"
