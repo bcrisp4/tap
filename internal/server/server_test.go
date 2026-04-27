@@ -29,6 +29,21 @@ func listenAddr(t *testing.T) string {
 	return addr
 }
 
+// waitReady polls /healthz until the server responds 200 OK or the
+// deadline elapses, so tests can assert post-startup behaviour without
+// a hard-coded sleep.
+func waitReady(t *testing.T, addr string) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		resp, err := http.Get("http://" + addr + "/healthz")
+		if err != nil {
+			return false
+		}
+		resp.Body.Close()
+		return resp.StatusCode == http.StatusOK
+	}, 2*time.Second, 20*time.Millisecond, "server never came up")
+}
+
 func TestServer_Healthz(t *testing.T) {
 	addr := listenAddr(t)
 	srv, err := server.New(addr, newSilentLogger())
@@ -38,17 +53,10 @@ func TestServer_Healthz(t *testing.T) {
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.Run(ctx) }()
 
-	// Poll until the server is up.
-	deadline := time.Now().Add(2 * time.Second)
-	var resp *http.Response
-	for time.Now().Before(deadline) {
-		resp, err = http.Get("http://" + addr + "/healthz")
-		if err == nil {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	require.NoError(t, err, "server never came up")
+	waitReady(t, addr)
+
+	resp, err := http.Get("http://" + addr + "/healthz")
+	require.NoError(t, err)
 	defer resp.Body.Close()
 
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -74,8 +82,10 @@ func TestServer_GracefulShutdown(t *testing.T) {
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.Run(ctx) }()
 
-	// Give the listener a moment to bind.
-	time.Sleep(50 * time.Millisecond)
+	// Wait until the server is actually serving before cancelling, so
+	// the test deterministically exercises shutdown rather than a race
+	// between cancel() and the listener becoming ready.
+	waitReady(t, addr)
 	cancel()
 
 	select {
