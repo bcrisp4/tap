@@ -42,9 +42,11 @@ type EntriesFilter struct {
 	Offset     int
 }
 
-// BulkScope identifies the rows BulkMarkRead acts on. Exactly one of
-// FeedID or CategoryID may be set; if both are nil, it acts on every
-// row for the user.
+// BulkScope narrows the rows BulkMarkRead acts on. Each non-nil field
+// adds an AND-filter; both nil means every unread row for the user.
+// In practice callers set at most one (the API exposes "mark feed
+// read" and "mark category read" as separate verbs), but the
+// intersection is well-defined when both are supplied.
 type BulkScope struct {
 	FeedID     *int64
 	CategoryID *int64
