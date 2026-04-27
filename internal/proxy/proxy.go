@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"strings"
 
@@ -114,8 +115,13 @@ func (p *Proxy) fetchAndCache(ctx context.Context, srcURL string) (Entry, error)
 		return Entry{}, fmt.Errorf("origin returned %d", resp.StatusCode)
 	}
 
-	ct := stripParams(resp.Header.Get("Content-Type"))
-	if _, ok := allowedMIMEs[strings.ToLower(ct)]; !ok {
+	// mime.ParseMediaType strips parameters (charset, boundary, …) and
+	// lowercases the type, both of which the allowlist needs.
+	ct, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	if err != nil {
+		return Entry{}, errMIMENotAllowed
+	}
+	if _, ok := allowedMIMEs[ct]; !ok {
 		return Entry{}, errMIMENotAllowed
 	}
 
@@ -160,12 +166,4 @@ func (p *Proxy) Encoder() func(string) string {
 	return func(srcURL string) string {
 		return "/api/v1/proxy/" + EncodeToken(srcURL, secret)
 	}
-}
-
-// stripParams trims any "; charset=..." parameter from a Content-Type.
-func stripParams(ct string) string {
-	if i := strings.Index(ct, ";"); i >= 0 {
-		return strings.TrimSpace(ct[:i])
-	}
-	return strings.TrimSpace(ct)
 }
