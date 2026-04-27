@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 )
@@ -38,11 +39,20 @@ func New(addr string, logger *slog.Logger) (*Server, error) {
 
 // Run starts the listener and blocks until ctx is cancelled, then
 // performs a graceful shutdown with a 30-second deadline.
+//
+// The TCP listener is bound synchronously before Run returns to its
+// goroutine, so a bind failure (e.g. address in use) surfaces as the
+// returned error without ever logging "http server listening".
 func (s *Server) Run(ctx context.Context) error {
+	listener, err := net.Listen("tcp", s.srv.Addr)
+	if err != nil {
+		return fmt.Errorf("listen %s: %w", s.srv.Addr, err)
+	}
+	s.logger.Info("http server listening", "addr", listener.Addr().String())
+
 	errCh := make(chan error, 1)
 	go func() {
-		s.logger.Info("http server listening", "addr", s.srv.Addr)
-		err := s.srv.ListenAndServe()
+		err := s.srv.Serve(listener)
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 			return
