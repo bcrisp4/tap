@@ -4,6 +4,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -122,6 +124,57 @@ func TestProxy_DisallowedMIMEIs415(t *testing.T) {
 	w := httptest.NewRecorder()
 	p.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/proxy/"+tok, nil))
 	require.Equal(t, http.StatusUnsupportedMediaType, w.Code)
+}
+
+func TestProxy_CacheFailureIs500(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write([]byte("body"))
+	}))
+	defer srv.Close()
+
+	// Point the cache at a path that can't be written to so Cache.Put
+	// fails — a regular file masquerading as a cache directory makes
+	// MkdirAll fail with ENOTDIR for any 2-char shard subdirectory.
+	bogusFile := filepath.Join(t.TempDir(), "not-a-dir")
+	require.NoError(t, os.WriteFile(bogusFile, []byte("x"), 0o644))
+	cache := proxy.NewCache(bogusFile)
+
+	p := proxy.New(proxy.Config{
+		Secret:        probeSecret,
+		Client:        newAllowedClient(t),
+		Cache:         cache,
+		MaxBodyBytes:  1 << 20,
+		MaxCacheBytes: 10 << 20,
+	})
+	tok := proxy.EncodeToken(srv.URL+"/x", probeSecret)
+	w := httptest.NewRecorder()
+	p.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/proxy/"+tok, nil))
+	require.Equal(t, http.StatusInternalServerError, w.Code,
+		"cache write failures must surface as 500, not 404")
+}
+
+func TestProxy_NotModifiedIncludesCacheControl(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("ETag", `"v1"`)
+		_, _ = w.Write([]byte("body"))
+	}))
+	defer srv.Close()
+	p, tok := newProxy(t, srv.URL+"/x")
+
+	// Prime cache.
+	w1 := httptest.NewRecorder()
+	p.ServeHTTP(w1, httptest.NewRequest(http.MethodGet, "/api/v1/proxy/"+tok, nil))
+	require.Equal(t, http.StatusOK, w1.Code)
+
+	r2 := httptest.NewRequest(http.MethodGet, "/api/v1/proxy/"+tok, nil)
+	r2.Header.Set("If-None-Match", `"v1"`)
+	w2 := httptest.NewRecorder()
+	p.ServeHTTP(w2, r2)
+	require.Equal(t, http.StatusNotModified, w2.Code)
+	require.Contains(t, w2.Header().Get("Cache-Control"), "max-age=",
+		"304 must repeat Cache-Control so clients refresh their freshness window")
 }
 
 func TestProxy_EncoderProducesValidTokens(t *testing.T) {

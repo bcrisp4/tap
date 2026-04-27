@@ -19,7 +19,7 @@ type Config struct {
 	// Secret is the HMAC secret used by EncodeToken / DecodeToken.
 	Secret string
 	// Client is the shared outbound HTTP client (Plan 03), responsible
-	// for SSRF protection, per-host limits, timeouts, and redirect
+	// for SSRF protection, request timeouts, body caps, and redirect
 	// handling.
 	Client *httpclient.Client
 	// Cache is the on-disk body+meta store.
@@ -63,6 +63,10 @@ var allowedMIMEs = map[string]struct{}{
 // errMIMENotAllowed signals a 415 response.
 var errMIMENotAllowed = errors.New("proxy: mime not on allowlist")
 
+// errCacheFailure signals a 500 response — used so internal storage
+// failures aren't silently mapped to "origin error" 404s.
+var errCacheFailure = errors.New("proxy: cache failure")
+
 // ServeHTTP handles a single proxy request.
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	tok := strings.TrimPrefix(r.URL.Path, "/api/v1/proxy/")
@@ -87,14 +91,20 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Coalesce concurrent misses for the same URL — one origin fetch
-	// per URL even under high concurrency.
+	// per URL even under high concurrency. Use context.WithoutCancel so
+	// a single client disconnect can't abort the shared fetch and fail
+	// every other waiter for the same URL; the httpclient's own
+	// Timeout still bounds the work.
+	fetchCtx := context.WithoutCancel(r.Context())
 	v, err, _ := p.flights.Do(srcURL, func() (any, error) {
-		return p.fetchAndCache(r.Context(), srcURL)
+		return p.fetchAndCache(fetchCtx, srcURL)
 	})
 	if err != nil {
 		switch {
 		case errors.Is(err, errMIMENotAllowed):
 			http.Error(w, "unsupported media type", http.StatusUnsupportedMediaType)
+		case errors.Is(err, errCacheFailure):
+			http.Error(w, "cache error", http.StatusInternalServerError)
 		default:
 			http.Error(w, "origin error", http.StatusNotFound)
 		}
@@ -135,7 +145,7 @@ func (p *Proxy) fetchAndCache(ctx context.Context, srcURL string) (Entry, error)
 		etag = etagOf(body)
 	}
 	if err := p.cfg.Cache.Put(srcURL, body, ct, etag); err != nil {
-		return Entry{}, err
+		return Entry{}, fmt.Errorf("%w: %v", errCacheFailure, err)
 	}
 	if p.cfg.MaxCacheBytes > 0 {
 		_ = p.cfg.Cache.Evict(p.cfg.MaxCacheBytes)
@@ -145,9 +155,15 @@ func (p *Proxy) fetchAndCache(ctx context.Context, srcURL string) (Entry, error)
 
 // serveEntry writes the cached entry to the response, honoring
 // If-None-Match (304) and setting Cache-Control + ETag.
+//
+// Cache-Control is set on both 200 and 304 responses so clients refresh
+// their cached freshness window from the conditional response too (per
+// RFC 7232 §4.1: 304 SHOULD carry the same caching headers as 200).
 func (p *Proxy) serveEntry(w http.ResponseWriter, r *http.Request, e Entry) {
+	cacheControl := fmt.Sprintf("public, max-age=%d", p.cfg.CacheControlMaxAge)
 	if e.ETag != "" && r.Header.Get("If-None-Match") == e.ETag {
 		w.Header().Set("ETag", e.ETag)
+		w.Header().Set("Cache-Control", cacheControl)
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
@@ -155,7 +171,7 @@ func (p *Proxy) serveEntry(w http.ResponseWriter, r *http.Request, e Entry) {
 	if e.ETag != "" {
 		w.Header().Set("ETag", e.ETag)
 	}
-	w.Header().Set("Cache-Control", fmt.Sprintf("public, max-age=%d", p.cfg.CacheControlMaxAge))
+	w.Header().Set("Cache-Control", cacheControl)
 	_, _ = w.Write(e.Body)
 }
 
