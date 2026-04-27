@@ -71,7 +71,7 @@ func loadApplied(ctx context.Context, db *sql.DB) (map[string]struct{}, error) {
 	for rows.Next() {
 		var v string
 		if err := rows.Scan(&v); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("scan schema_version row: %w", err)
 		}
 		out[v] = struct{}{}
 	}

@@ -12,9 +12,9 @@ import (
 // level: "debug" | "info" | "warn" | "error".
 // format: "json" | "text".
 func New(level, format string, w io.Writer) (*slog.Logger, error) {
-	lvl, err := parseLevel(level)
-	if err != nil {
-		return nil, err
+	var lvl slog.Level
+	if err := lvl.UnmarshalText([]byte(level)); err != nil {
+		return nil, fmt.Errorf("log: %w", err)
 	}
 	opts := &slog.HandlerOptions{Level: lvl}
 	var h slog.Handler
@@ -27,19 +27,4 @@ func New(level, format string, w io.Writer) (*slog.Logger, error) {
 		return nil, fmt.Errorf("log: unknown format %q (want json|text)", format)
 	}
 	return slog.New(h), nil
-}
-
-func parseLevel(s string) (slog.Level, error) {
-	switch strings.ToLower(s) {
-	case "debug":
-		return slog.LevelDebug, nil
-	case "info":
-		return slog.LevelInfo, nil
-	case "warn":
-		return slog.LevelWarn, nil
-	case "error":
-		return slog.LevelError, nil
-	default:
-		return 0, fmt.Errorf("log: unknown level %q (want debug|info|warn|error)", s)
-	}
 }

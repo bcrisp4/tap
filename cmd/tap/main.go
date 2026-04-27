@@ -70,6 +70,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		},
 	}
 
+	fail := func(err error) { fmt.Fprintf(stderr, "tap: %v\n", err) }
+
 	parseErr := rootCmd.Parse(args[1:],
 		ff.WithEnvVarPrefix("TAP"),
 		ff.WithConfigFileFlag("config"),
@@ -81,12 +83,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprint(stderr, ffhelp.Command(rootCmd))
 		return 0
 	case parseErr != nil:
-		fmt.Fprintf(stderr, "tap: %v\n", parseErr)
+		fail(parseErr)
 		return 2
 	}
 
 	if err := rootCmd.Run(ctx); err != nil {
-		fmt.Fprintf(stderr, "tap: %v\n", err)
+		fail(err)
 		return 1
 	}
 	return 0

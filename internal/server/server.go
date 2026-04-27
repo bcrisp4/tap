@@ -1,5 +1,5 @@
 // Package server hosts the Tap HTTP server skeleton: routing, listen,
-// graceful shutdown. Plan 08 extends it with /api/v1/* handlers.
+// graceful shutdown.
 package server
 
 import (
@@ -13,7 +13,6 @@ import (
 
 // Server wraps a configured *http.Server.
 type Server struct {
-	addr   string
 	logger *slog.Logger
 	srv    *http.Server
 }
@@ -28,7 +27,6 @@ func New(addr string, logger *slog.Logger) (*Server, error) {
 	mux.HandleFunc("GET /healthz", healthz)
 
 	return &Server{
-		addr:   addr,
 		logger: logger,
 		srv: &http.Server{
 			Addr:              addr,
@@ -43,7 +41,7 @@ func New(addr string, logger *slog.Logger) (*Server, error) {
 func (s *Server) Run(ctx context.Context) error {
 	errCh := make(chan error, 1)
 	go func() {
-		s.logger.Info("http server listening", "addr", s.addr)
+		s.logger.Info("http server listening", "addr", s.srv.Addr)
 		err := s.srv.ListenAndServe()
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
