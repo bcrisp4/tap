@@ -49,7 +49,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		ShortHelp: "run the Tap HTTP server",
 		Flags:     serveFS,
 		Exec: func(ctx context.Context, _ []string) error {
-			return runServe(ctx, cfg, stdout)
+			return runServe(ctx, cfg, stderr)
 		},
 	}
 	rootCmd = &ff.Command{
@@ -94,8 +94,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func runServe(ctx context.Context, cfg *config.Config, _ io.Writer) error {
-	logger, err := log.New(cfg.LogLevel, cfg.LogFormat, os.Stderr)
+func runServe(ctx context.Context, cfg *config.Config, stderr io.Writer) error {
+	logger, err := log.New(cfg.LogLevel, cfg.LogFormat, stderr)
 	if err != nil {
 		return fmt.Errorf("init logger: %w", err)
 	}
