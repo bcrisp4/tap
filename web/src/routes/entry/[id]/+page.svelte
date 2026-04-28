@@ -16,6 +16,7 @@
 	import ReaderBody from '$lib/components/reader/ReaderBody.svelte';
 	import MobileReaderTopBar from '$lib/components/reader/MobileReaderTopBar.svelte';
 	import MobileReaderFootBar from '$lib/components/reader/MobileReaderFootBar.svelte';
+	import { createSwipe, type SwipeEvent } from '$lib/swipe.svelte';
 
 	// TanStack Svelte Query v6 (Plan 09 pin) returns runes-driven reactive
 	// objects directly — `entry.isLoading`, `entry.data`. Don't dereference
@@ -62,6 +63,40 @@
 	function back() {
 		goto('/');
 	}
+
+	// Plan 18 / T6: swipe-to-navigate between sibling entries on
+	// mobile. The siblings come from the same useEntries query the
+	// previous page used (cached) — left-swipe goes to the next
+	// sibling, right-swipe to the previous. At first/last sibling we
+	// briefly bounce visually but don't navigate.
+	let bounceDx = $state(0);
+
+	function siblingId(offset: -1 | 1): number | null {
+		const list = entries.data?.data ?? [];
+		const e = entry.data;
+		if (!e) return null;
+		const idx = list.findIndex((x) => x.id === e.id);
+		if (idx < 0) return null;
+		const target = idx + offset;
+		if (target < 0 || target >= list.length) return null;
+		return list[target].id;
+	}
+
+	function onReaderSwipe(ev: SwipeEvent) {
+		// Right-swipe → previous (rewind). Left-swipe → next (forward).
+		const offset: -1 | 1 = ev.direction === 'right' ? -1 : 1;
+		const next = siblingId(offset);
+		if (next === null) {
+			// At an edge — bounce visually so the user gets feedback,
+			// then snap back. The body's `transform` style picks this up.
+			bounceDx = ev.direction === 'right' ? 30 : -30;
+			setTimeout(() => (bounceDx = 0), 200);
+			return;
+		}
+		void goto('/entry/' + next);
+	}
+
+	const readerSwipe = createSwipe({ threshold: 60, onSwipe: onReaderSwipe });
 
 	function toggleReadHere() {
 		const e = entry.data;
@@ -134,7 +169,19 @@
 			onBack={back}
 			onSave={toggleSavedHere}
 		/>
-		<div class="reader-scroller" onscroll={onScroll}>
+		<div
+			class="reader-scroller"
+			class:is-swiping={readerSwipe.swipeDx !== 0}
+			style:transform={readerSwipe.swipeDx !== 0 || bounceDx !== 0
+				? `translateX(${readerSwipe.swipeDx + bounceDx}px)`
+				: undefined}
+			role="article"
+			onscroll={onScroll}
+			ontouchstart={readerSwipe.onTouchStart}
+			ontouchmove={readerSwipe.onTouchMove}
+			ontouchend={readerSwipe.onTouchEnd}
+			ontouchcancel={readerSwipe.onTouchCancel}
+		>
 			<ReaderBody entry={entry.data} feed={feed} />
 		</div>
 		<MobileReaderFootBar
@@ -198,5 +245,12 @@
 	.reader-scroller {
 		flex: 1;
 		overflow-y: auto;
+		transition: transform 220ms cubic-bezier(0.2, 0.8, 0.4, 1);
+	}
+	/* While the finger is dragging, suppress the spring-back transition
+	   so the body tracks the finger 1:1; the transition kicks back in
+	   for the release / bounce-at-edge animation. */
+	.reader-scroller.is-swiping {
+		transition: transform 0ms;
 	}
 </style>

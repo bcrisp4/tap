@@ -126,3 +126,31 @@ test('mobile: right-swipe on a row marks it read', async ({ page, request }) => 
 		)
 		.toBe(true);
 });
+
+test('mobile: left-swipe in the reader navigates to the next sibling entry', async ({
+	page,
+	request
+}) => {
+	await page.setViewportSize({ width: 390, height: 844 });
+	await ensureUnread(request);
+
+	// Pull two unread sibling ids straight from the API so we know what
+	// the SPA's cached list will resolve to. The SPA's useEntries call
+	// uses the same default ordering, so list[0] is the "current" and
+	// list[1] is "next".
+	const list = (await request
+		.get('/api/v1/entries?status=unread&limit=10')
+		.then((r) => r.json())) as { data: Array<{ id: number }> };
+	if (list.data.length < 2) test.skip();
+	const currentId = list.data[0].id;
+	const nextId = list.data[1].id;
+
+	await page.goto('/entry/' + currentId);
+	await expect(page.getByTestId('reader-body')).toBeVisible({ timeout: 15_000 });
+
+	await syntheticSwipe(page, '.reader-scroller', 320, 400, 60, 400);
+
+	// goto fires synchronously inside the swipe handler; the SPA route
+	// transitions to /entry/<nextId>. Wait for the URL to settle.
+	await expect(page).toHaveURL(new RegExp('/entry/' + nextId + '$'));
+});
