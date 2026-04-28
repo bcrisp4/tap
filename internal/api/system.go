@@ -30,13 +30,17 @@ type statusResponse struct {
 
 func (h *systemHandlers) status(w http.ResponseWriter, _ *http.Request) {
 	snap := h.state.Snapshot()
+	errs := make([]string, len(snap.RecentErrors))
+	for i, e := range snap.RecentErrors {
+		errs[i] = e.Error
+	}
 	WriteOK(w, http.StatusOK, statusResponse{
 		Version:       version.String(),
 		UptimeSeconds: int64(time.Since(h.startedAt).Seconds()),
 		RunState: runStateOut{
 			ActivePolls:  snap.ActivePolls,
 			LastPollAt:   snap.LastPollAt,
-			RecentErrors: snap.RecentErrors,
+			RecentErrors: errs,
 		},
 	})
 }

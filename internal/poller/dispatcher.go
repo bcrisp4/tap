@@ -97,7 +97,7 @@ func (d *Dispatcher) runOne(ctx context.Context, id int64) {
 	defer func() {
 		if r := recover(); r != nil {
 			if d.cfg.State != nil {
-				d.cfg.State.RecordError(fmt.Errorf("poller panic on feed %d: %v\n%s", id, r, debug.Stack()))
+				d.cfg.State.RecordError(id, "", fmt.Errorf("poller panic on feed %d: %v\n%s", id, r, debug.Stack()))
 			}
 		}
 	}()

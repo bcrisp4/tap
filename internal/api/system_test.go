@@ -12,7 +12,7 @@ import (
 func TestSystem_Status(t *testing.T) {
 	f := newAPIFixture(t)
 	f.state.PollStarted()
-	f.state.PollFinished(nil)
+	f.state.PollFinished(0, "", nil)
 
 	w := f.do(t, "GET", "/api/v1/system/status", "")
 	require.Equal(t, http.StatusOK, w.Code)
@@ -36,7 +36,7 @@ func TestSystem_Status(t *testing.T) {
 func TestSystem_Status_IncludesRecentErrors(t *testing.T) {
 	f := newAPIFixture(t)
 	f.state.PollStarted()
-	f.state.PollFinished(errors.New("boom"))
+	f.state.PollFinished(0, "", errors.New("boom"))
 
 	w := f.do(t, "GET", "/api/v1/system/status", "")
 	require.Equal(t, http.StatusOK, w.Code)

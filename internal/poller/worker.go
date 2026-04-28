@@ -72,7 +72,7 @@ func (w *Worker) PollOne(ctx context.Context, feedID int64) error {
 	var pollErr error
 	defer func() {
 		if w.cfg.RunState != nil {
-			w.cfg.RunState.PollFinished(pollErr)
+			w.cfg.RunState.PollFinished(0, "", pollErr)
 		}
 	}()
 
