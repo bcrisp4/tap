@@ -30,6 +30,7 @@ func Mux(deps Dependencies) *http.ServeMux {
 	search := &searchHandlers{store: deps.Store}
 	opml := &opmlHandlers{store: deps.Store}
 	system := &systemHandlers{state: deps.RunState, startedAt: time.Now()}
+	icons := &iconHandlers{store: deps.Store}
 
 	mux := http.NewServeMux()
 
@@ -57,6 +58,8 @@ func Mux(deps Dependencies) *http.ServeMux {
 	mux.HandleFunc("GET /api/v1/opml/export", opml.exportHandler)
 
 	mux.HandleFunc("GET /api/v1/system/status", system.status)
+
+	mux.HandleFunc("GET /api/v1/icons/{hash}", icons.get)
 
 	return mux
 }
