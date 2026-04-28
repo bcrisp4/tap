@@ -1,33 +1,43 @@
 <script lang="ts">
-	// Compact mobile header: brand + view label + unread count + search
-	// affordance (search route ships in Plan 12).
 	import Wordmark from '$brand/Wordmark.svelte';
 
-	let { unread = 0 }: { unread?: number } = $props();
+	let {
+		label = 'unread',
+		count = null,
+		showSearch = true
+	}: {
+		label?: string;
+		count?: number | null;
+		showSearch?: boolean;
+	} = $props();
 </script>
 
 <div class="m-topbar">
 	<div class="title">
 		<Wordmark />
-		<span class="hint">· unread</span>
+		<span class="hint">· {label}</span>
 	</div>
 	<div class="right">
-		<span class="count mono">{unread}</span>
-		<button type="button" class="iconbtn" aria-label="Search">
-			<svg
-				width="16"
-				height="16"
-				viewBox="0 0 16 16"
-				fill="none"
-				stroke="currentColor"
-				stroke-width="1.5"
-				stroke-linecap="round"
-				aria-hidden="true"
-			>
-				<circle cx="7" cy="7" r="4.5" />
-				<path d="m10.5 10.5 3 3" />
-			</svg>
-		</button>
+		{#if count !== null}
+			<span class="count mono">{count}</span>
+		{/if}
+		{#if showSearch}
+			<a class="iconbtn" href="/search" aria-label="Search">
+				<svg
+					width="16"
+					height="16"
+					viewBox="0 0 16 16"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="1.5"
+					stroke-linecap="round"
+					aria-hidden="true"
+				>
+					<circle cx="7" cy="7" r="4.5" />
+					<path d="m10.5 10.5 3 3" />
+				</svg>
+			</a>
+		{/if}
 	</div>
 </div>
 
@@ -64,10 +74,17 @@
 		color: var(--ink-3);
 	}
 	.iconbtn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
 		color: var(--ink-2);
 		padding: 4px;
 		background: transparent;
 		border: 0;
 		cursor: pointer;
+		text-decoration: none;
+	}
+	.iconbtn:hover {
+		color: var(--ink);
 	}
 </style>

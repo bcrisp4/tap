@@ -35,6 +35,15 @@ type Entry struct {
 }
 
 // EntriesFilter mirrors the §6 list query params (subset for Plan 02).
+//
+// OrderBy selects the column the result set is sorted by:
+//   - ""        → falls through to Sort/Order (default published_at).
+//   - "read_at" → ORDER BY read_at DESC NULLS LAST. Used by /history.
+//
+// The two knobs (Sort/Order vs OrderBy) are kept distinct so the new
+// /history flow can opt in without re-tuning the existing list ordering
+// semantics. Storage trusts its caller; the API edge does the
+// allow-listing.
 type EntriesFilter struct {
 	Status     string // "" (all), "unread", "read"
 	Saved      *bool
@@ -42,6 +51,7 @@ type EntriesFilter struct {
 	CategoryID *int64
 	Sort       string // "published_at" (default), "created_at"
 	Order      string // "desc" (default), "asc"
+	OrderBy    string // "" (use Sort/Order) | "read_at"
 	Limit      int
 	Offset     int
 }
@@ -109,13 +119,23 @@ func (s *Store) InsertEntry(ctx context.Context, e *Entry) (int64, error) {
 func (s *Store) ListEntries(ctx context.Context, userID int64, f EntriesFilter) ([]*Entry, error) {
 	where, args := entriesWhere(userID, f)
 
-	sort := "published_at"
-	if f.Sort == "created_at" {
-		sort = "created_at"
-	}
-	order := "DESC"
-	if strings.EqualFold(f.Order, "asc") {
-		order = "ASC"
+	// `read_at DESC NULLS LAST` is the dedicated ordering for the
+	// /history view: unread rows (read_at = NULL) sink, then we get the
+	// most-recently-read on top. It deliberately bypasses the
+	// Sort/Order knobs so callers don't need to know the column name.
+	var orderClause string
+	if f.OrderBy == "read_at" {
+		orderClause = "read_at DESC NULLS LAST"
+	} else {
+		sort := "published_at"
+		if f.Sort == "created_at" {
+			sort = "created_at"
+		}
+		direction := "DESC"
+		if strings.EqualFold(f.Order, "asc") {
+			direction = "ASC"
+		}
+		orderClause = sort + " " + direction
 	}
 
 	if f.Limit <= 0 {
@@ -124,7 +144,7 @@ func (s *Store) ListEntries(ctx context.Context, userID int64, f EntriesFilter) 
 	args = append(args, f.Limit, f.Offset)
 
 	q := `SELECT ` + entrySelectCols + ` FROM entries ` + where +
-		` ORDER BY ` + sort + ` ` + order + ` LIMIT ? OFFSET ?`
+		` ORDER BY ` + orderClause + ` LIMIT ? OFFSET ?`
 
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {

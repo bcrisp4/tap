@@ -175,5 +175,45 @@ func TestEntries_EntryExists(t *testing.T) {
 	require.True(t, exists)
 }
 
+// mustReadAt marks an entry read with an explicit read_at timestamp.
+// Bypasses UpdateEntryState (which would stamp the current epoch and
+// not honour ordering control needed for the /history fixtures).
+func mustReadAt(t *testing.T, s *storage.Store, id, ts int64) {
+	t.Helper()
+	_, err := s.DB().Exec(
+		`UPDATE entries SET read = 1, read_at = ?, changed_at = unixepoch() WHERE id = ?`,
+		ts, id,
+	)
+	require.NoError(t, err)
+}
+
+// TestEntries_ListByOrderByReadAt verifies the /history ordering: read
+// entries surface in read_at DESC order, independent of created_at.
+func TestEntries_ListByOrderByReadAt(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	feedID := mustFeed(t, s)
+
+	id1, err := s.InsertEntry(ctx, &storage.Entry{FeedID: feedID, UserID: 1, Hash: "a", Title: "A"})
+	require.NoError(t, err)
+	id2, err := s.InsertEntry(ctx, &storage.Entry{FeedID: feedID, UserID: 1, Hash: "b", Title: "B"})
+	require.NoError(t, err)
+	id3, err := s.InsertEntry(ctx, &storage.Entry{FeedID: feedID, UserID: 1, Hash: "c", Title: "C"})
+	require.NoError(t, err)
+
+	// Read in order B → A → C, so read_at DESC = C, A, B.
+	mustReadAt(t, s, id2, 100)
+	mustReadAt(t, s, id1, 200)
+	mustReadAt(t, s, id3, 300)
+
+	out, err := s.ListEntries(ctx, 1,
+		storage.EntriesFilter{Status: "read", OrderBy: "read_at", Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, out, 3)
+	require.Equal(t, id3, out[0].ID, "newest read first")
+	require.Equal(t, id1, out[1].ID)
+	require.Equal(t, id2, out[2].ID)
+}
+
 func strPtr(s string) *string { return &s }
 func int64Ptr(i int64) *int64 { return &i }

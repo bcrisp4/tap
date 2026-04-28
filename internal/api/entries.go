@@ -13,7 +13,10 @@ type entryHandlers struct {
 }
 
 func (h *entryHandlers) list(w http.ResponseWriter, r *http.Request) {
-	filter := parseEntriesFilter(r)
+	filter, ok := parseEntriesFilter(w, r)
+	if !ok {
+		return
+	}
 	entries, err := h.store.ListEntries(r.Context(), userID, filter)
 	if err != nil {
 		writeErr(w, err)
@@ -43,12 +46,28 @@ func stripContent(entries []*storage.Entry) []*storage.Entry {
 // parseEntriesFilter pulls the query params documented in design.md §6
 // into an EntriesFilter. Defaults: status=unread, sort=published_at,
 // order=desc, limit=50, offset=0.
-func parseEntriesFilter(r *http.Request) storage.EntriesFilter {
+//
+// The `order` param is overloaded: legacy values ("asc"/"desc") drive
+// the sort direction (Order); the Plan 14 value "read_at" drives the
+// column choice (OrderBy) so /history can opt into read_at DESC. Any
+// other value yields a 400 bad_query so we never pass user input
+// through to the SQL builder. Returns ok=false after writing an error
+// response; callers must early-return.
+func parseEntriesFilter(w http.ResponseWriter, r *http.Request) (storage.EntriesFilter, bool) {
 	q := r.URL.Query()
 	f := storage.EntriesFilter{
 		Status: q.Get("status"),
 		Sort:   q.Get("sort"),
-		Order:  q.Get("order"),
+	}
+	switch v := q.Get("order"); v {
+	case "", "desc", "asc":
+		f.Order = v
+	case "read_at":
+		f.OrderBy = "read_at"
+	default:
+		WriteError(w, http.StatusBadRequest, "bad_query",
+			"order must be asc, desc, or read_at")
+		return storage.EntriesFilter{}, false
 	}
 	if f.Status == "" {
 		f.Status = "unread"
@@ -75,7 +94,7 @@ func parseEntriesFilter(r *http.Request) storage.EntriesFilter {
 	if f.Limit <= 0 {
 		f.Limit = 50
 	}
-	return f
+	return f, true
 }
 
 // queryInt parses an integer query parameter; ok is false on missing
