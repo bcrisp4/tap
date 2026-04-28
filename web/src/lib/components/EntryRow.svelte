@@ -22,6 +22,7 @@
 <script lang="ts">
 	import type { Entry, Feed } from '$api/types';
 	import { inputMode } from '$lib/inputmode.svelte';
+	import { createSwipe, type SwipeEvent } from '$lib/swipe.svelte';
 
 	let {
 		entry,
@@ -122,6 +123,26 @@
 		ev.preventDefault();
 		onclick(ev);
 	}
+
+	// Plan 18 / T5: swipe-to-mark-read on touch devices. Right-swipe →
+	// mark read (matches "completed" semantics, fits the visual flow
+	// of dragging the row off-screen toward the right). Left-swipe →
+	// mark unread (the symmetric inverse).
+	//
+	// We render the swipeDx as a translateX so the row visually
+	// follows the finger. After the gesture ends the row springs back
+	// because swipeDx resets to 0; the cache flip after the mutate
+	// re-renders with the new read state.
+	const swipe = createSwipe({
+		threshold: 60,
+		onSwipe: (ev: SwipeEvent) => {
+			if (ev.direction === 'right') {
+				onToggleRead(entry.id, true);
+			} else {
+				onToggleRead(entry.id, false);
+			}
+		}
+	});
 </script>
 
 <article
@@ -131,6 +152,12 @@
 	class:is-selected={showKeyboardHighlight}
 	class:is-multi={multiSelect}
 	class:is-multi-selected={multiSelected}
+	class:is-swiping={swipe.swipeDx !== 0}
+	style:transform={swipe.swipeDx !== 0 ? `translateX(${swipe.swipeDx}px)` : undefined}
+	ontouchstart={swipe.onTouchStart}
+	ontouchmove={swipe.onTouchMove}
+	ontouchend={swipe.onTouchEnd}
+	ontouchcancel={swipe.onTouchCancel}
 >
 	<!--
 		Per-row affordance. Real <button> with native keyboard /
@@ -202,10 +229,20 @@
 		padding: 14px 24px 14px 40px;
 		border-bottom: 1px solid var(--rule);
 		background: transparent;
-		transition: background 120ms ease;
+		transition:
+			background 120ms ease,
+			transform 220ms cubic-bezier(0.2, 0.8, 0.4, 1);
 		font-family: inherit;
 		color: inherit;
 		box-sizing: border-box;
+	}
+	/* While the finger is dragging, suppress the spring-back transition
+	   so the row tracks the finger 1:1; the transition kicks back in
+	   for the release animation. */
+	.entry.is-swiping {
+		transition:
+			background 120ms ease,
+			transform 0ms;
 	}
 	@media (hover: hover) {
 		.entry:hover {
