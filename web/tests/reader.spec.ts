@@ -85,6 +85,12 @@ test('auto-marks read on reader mount (Plan 16 invariant)', async ({ page, reque
 			{ timeout: 3_000, intervals: [100, 150, 200, 300] }
 		)
 		.toBe(true);
+
+	// The header toggle button reflects the new state: copy "MARK UNREAD",
+	// aria-pressed=true, and the icon is filled (Plan 16 T2).
+	const toggle = page.locator('.reader-action').filter({ hasText: /MARK/ });
+	await expect(toggle).toHaveText(/MARK UNREAD/);
+	await expect(toggle).toHaveAttribute('aria-pressed', 'true');
 });
 
 test('Esc returns to the unread list', async ({ page, request }) => {
