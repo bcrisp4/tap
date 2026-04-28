@@ -3,10 +3,18 @@ package api
 import (
 	"errors"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/bcrisp4/tap/internal/storage"
 )
+
+// sha256HexRe matches a 64-char lowercase hex string — the only
+// shape an icons.hash value ever takes (sha256 hex, written by the
+// poller via crypto/sha256). Validating up front avoids leaking
+// arbitrary user input into the ETag header and skips a needless
+// storage round-trip on obviously malformed paths.
+var sha256HexRe = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // iconHandlers serves cached favicon bytes by their content-addressable
 // sha256 hash. Bytes are stored once, served forever — the URL is
@@ -21,21 +29,16 @@ type iconHandlers struct {
 // can keep favicons indefinitely.
 func (h *iconHandlers) get(w http.ResponseWriter, r *http.Request) {
 	hash := strings.TrimSpace(r.PathValue("hash"))
-	if hash == "" {
-		WriteError(w, http.StatusBadRequest, "bad_hash", "icon hash is required")
+	if !sha256HexRe.MatchString(hash) {
+		WriteError(w, http.StatusBadRequest, "bad_hash", "icon hash must be 64 lowercase hex chars")
 		return
 	}
 
-	// ETag short-circuit: if the client already has this exact hash
-	// cached, skip the body. The hash is the entire content
-	// fingerprint, so an If-None-Match match is a guaranteed hit.
-	if match := r.Header.Get("If-None-Match"); match != "" && etagMatches(match, hash) {
-		w.Header().Set("ETag", quoteETag(hash))
-		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-		w.WriteHeader(http.StatusNotModified)
-		return
-	}
-
+	// Confirm the icon exists before short-circuiting on If-None-Match.
+	// RFC 7232 §3.2: a 304 means "the resource exists and your cached
+	// copy is fresh"; returning 304 for an unknown hash would falsely
+	// promise the body. Looking the row up first also lets us reject
+	// `If-None-Match: *` against a missing resource with 404.
 	icon, err := h.store.GetIconByHash(r.Context(), hash)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
@@ -43,6 +46,13 @@ func (h *iconHandlers) get(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeErr(w, err)
+		return
+	}
+
+	if match := r.Header.Get("If-None-Match"); match != "" && etagMatches(match, hash) {
+		w.Header().Set("ETag", quoteETag(hash))
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		w.WriteHeader(http.StatusNotModified)
 		return
 	}
 
