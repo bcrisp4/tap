@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -217,10 +216,11 @@ func (w *Worker) maybeFetchIcon(ctx context.Context, feed *storage.Feed, parsedS
 		}
 		iconID = existing.ID
 	}
-	if err := w.cfg.Store.SetFeedIcon(ctx, feed.ID, &iconID); err != nil {
-		// The feed could have been deleted mid-poll; nothing to do.
-		_ = errors.Is(err, storage.ErrNotFound)
-	}
+	// The feed could have been deleted mid-poll (ErrNotFound), or hit
+	// any other transient write error. Either way the next successful
+	// poll will retry — the gate is feed.IconID == nil, which we
+	// haven't actually mutated.
+	_ = w.cfg.Store.SetFeedIcon(ctx, feed.ID, &iconID)
 }
 
 // fetchSiteHTML returns the response body for siteURL, or nil on any

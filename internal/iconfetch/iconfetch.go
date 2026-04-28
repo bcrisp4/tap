@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"path"
 	"strings"
 
 	"golang.org/x/net/html"
@@ -185,11 +186,24 @@ func (f *Fetcher) Fetch(ctx context.Context, candidateURL string) (*Result, erro
 	return &Result{Bytes: body, MIME: mime}, nil
 }
 
+// extByMIME maps a known file extension to the canonical MIME we
+// store. Used by normaliseMIME to recover from CDNs that serve
+// favicons as application/octet-stream — the URL extension is the
+// most reliable hint left in that case.
+var extByMIME = map[string]string{
+	".ico":  "image/x-icon",
+	".png":  "image/png",
+	".svg":  "image/svg+xml",
+	".jpg":  "image/jpeg",
+	".jpeg": "image/jpeg",
+	".webp": "image/webp",
+}
+
 // normaliseMIME extracts the bare type/subtype from a Content-Type
 // header (dropping `; charset=...` and similar parameters). Falls
-// back to a path-extension guess when the header is empty —
-// /favicon.ico responses are still occasionally served as
-// application/octet-stream.
+// back to a path-extension guess — /favicon.ico responses are
+// occasionally served as application/octet-stream, which is otherwise
+// rejected by the closed allow-list.
 func normaliseMIME(contentType, fetchedURL string) string {
 	if i := strings.Index(contentType, ";"); i >= 0 {
 		contentType = contentType[:i]
@@ -198,25 +212,12 @@ func normaliseMIME(contentType, fetchedURL string) string {
 	if allowedMIMETypes[contentType] {
 		return contentType
 	}
-	// Extension fallback. `.ico` defaults to image/x-icon — the most
-	// common CDN-served favicon mime is `application/octet-stream`,
-	// which is otherwise rejected.
 	u, err := url.Parse(fetchedURL)
 	if err != nil {
 		return contentType
 	}
-	switch {
-	case strings.HasSuffix(strings.ToLower(u.Path), ".ico"):
-		return "image/x-icon"
-	case strings.HasSuffix(strings.ToLower(u.Path), ".png"):
-		return "image/png"
-	case strings.HasSuffix(strings.ToLower(u.Path), ".svg"):
-		return "image/svg+xml"
-	case strings.HasSuffix(strings.ToLower(u.Path), ".jpg"),
-		strings.HasSuffix(strings.ToLower(u.Path), ".jpeg"):
-		return "image/jpeg"
-	case strings.HasSuffix(strings.ToLower(u.Path), ".webp"):
-		return "image/webp"
+	if mime, ok := extByMIME[strings.ToLower(path.Ext(u.Path))]; ok {
+		return mime
 	}
 	return contentType
 }

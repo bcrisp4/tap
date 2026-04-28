@@ -42,9 +42,9 @@
 		role="dialog"
 		aria-modal="true"
 		aria-labelledby="hotkeys-title"
+		tabindex="-1"
 		onclick={onBackdropClick}
 		onkeydown={onKeydown}
-		tabindex="-1"
 	>
 		<div class="panel" role="document">
 			<header>
