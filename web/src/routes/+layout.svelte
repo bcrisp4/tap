@@ -8,6 +8,7 @@
 	import { hotkeysModal } from '$lib/hotkeys-modal.svelte';
 	import { bindInputMode } from '$lib/inputmode.svelte';
 	import HotkeysModal from '$lib/components/HotkeysModal.svelte';
+	import Toast from '$lib/components/Toast.svelte';
 	import '../app.css';
 
 	const client = makeQueryClient();
@@ -80,4 +81,5 @@
 <QueryClientProvider {client}>
 	{@render children()}
 	<HotkeysModal />
+	<Toast />
 </QueryClientProvider>
