@@ -62,4 +62,20 @@ describe('OpmlMenu (Plan 21 T4)', () => {
 		expect(SRC).toMatch(/invalidateQueries/);
 		expect(SRC).toMatch(/keys\.feeds\(\)/);
 	});
+
+	it('exposes both menu actions as keyboard-accessible menuitem buttons', () => {
+		// Earlier shape used a <label> wrapping a hidden <input type=file>,
+		// which isn't tabbable inside `role="menu"` and gave keyboard /
+		// screen-reader users no way to invoke Import. The popover now
+		// renders two <button> menuitems; the Import button programmatically
+		// triggers a separate file input that lives outside the menu DOM.
+		const menuitems = SRC.match(/role="menuitem"/g) ?? [];
+		expect(menuitems.length).toBe(2);
+		// The Import button drives the file input by ref, not by being
+		// the input's <label>.
+		expect(SRC).toMatch(/fileInput\?\.click\(\)/);
+		// The hidden file input is outside the menu and explicitly
+		// removed from the tab order.
+		expect(SRC).toMatch(/tabindex="-1"/);
+	});
 });

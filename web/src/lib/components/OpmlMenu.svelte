@@ -17,6 +17,7 @@
 	import { toast } from '$lib/toast.svelte';
 
 	let open = $state(false);
+	let fileInput: HTMLInputElement | null = $state(null);
 	const qc = useQueryClient();
 
 	async function importOpml(file: File) {
@@ -71,19 +72,35 @@
 
 	{#if open}
 		<div class="opml-popover" role="menu">
-			<label class="opml-action">
-				<span>Import OPML…</span>
-				<input
-					type="file"
-					accept=".opml,.xml,application/xml,text/xml"
-					aria-label="Import OPML"
-					onchange={onPick}
-					hidden
-				/>
-			</label>
-			<button type="button" class="opml-action" onclick={exportOpml}>
+			<button
+				type="button"
+				class="opml-action"
+				role="menuitem"
+				onclick={() => fileInput?.click()}
+			>
+				Import OPML…
+			</button>
+			<button
+				type="button"
+				class="opml-action"
+				role="menuitem"
+				onclick={exportOpml}
+			>
 				Export OPML
 			</button>
+			<!-- The file input lives outside the menu list so its presence
+			     in the DOM doesn't add an empty menuitem slot. It's hidden
+			     for both sighted and assistive users; the Import button
+			     above triggers it programmatically. -->
+			<input
+				bind:this={fileInput}
+				type="file"
+				accept=".opml,.xml,application/xml,text/xml"
+				aria-hidden="true"
+				tabindex="-1"
+				onchange={onPick}
+				hidden
+			/>
 		</div>
 	{/if}
 </div>

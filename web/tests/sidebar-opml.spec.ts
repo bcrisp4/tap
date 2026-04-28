@@ -27,10 +27,12 @@ test('sidebar footer exposes the OPML popover next to Settings', async ({ page }
 	await expect(opmlBtn).toHaveAttribute('aria-expanded', 'false');
 	await opmlBtn.click();
 	await expect(opmlBtn).toHaveAttribute('aria-expanded', 'true');
-	// Both actions render in the popover.
+	// Both actions render in the popover as menuitems (the explicit
+	// `role="menuitem"` overrides the <button>'s implicit role, so we
+	// query by the menuitem role here).
 	await expect(page.getByRole('menu')).toBeVisible();
-	await expect(page.getByText('Import OPML…')).toBeVisible();
-	await expect(page.getByRole('button', { name: 'Export OPML' })).toBeVisible();
+	await expect(page.getByRole('menuitem', { name: 'Import OPML…' })).toBeVisible();
+	await expect(page.getByRole('menuitem', { name: 'Export OPML' })).toBeVisible();
 });
 
 test('Export OPML triggers a download of tap-subscriptions.opml', async ({ page }) => {
@@ -38,7 +40,7 @@ test('Export OPML triggers a download of tap-subscriptions.opml', async ({ page 
 	await page.getByRole('button', { name: 'OPML import / export' }).click();
 	const [download] = await Promise.all([
 		page.waitForEvent('download'),
-		page.getByRole('button', { name: 'Export OPML' }).click()
+		page.getByRole('menuitem', { name: 'Export OPML' }).click()
 	]);
 	expect(download.suggestedFilename()).toBe('tap-subscriptions.opml');
 });
@@ -52,9 +54,12 @@ test('Import OPML round-trips a small OPML body and surfaces a toast', async ({ 
   </body>
 </opml>`;
 
-	// Pre-clean: if a prior run already imported this URL, skip the
-	// import (the dedupe path returns 0 imported and the assertion
-	// becomes vacuous; we exercise the post path either way).
+	// We always exercise the import path; on a re-run the feed URL
+	// already exists, so the Go handler dedupes via storage.ErrConflict
+	// and returns `imported: 0`. Either way the toast surface is hit
+	// and the URL ends up in /feeds, so the assertions below stay
+	// stable. We only capture `already` so the trailing sanity check
+	// can tolerate a 0-feed import without being vacuous.
 	const ctx = await request.newContext({ baseURL: BASE });
 	try {
 		const list = await ctx.get('/api/v1/feeds');
@@ -65,7 +70,7 @@ test('Import OPML round-trips a small OPML body and surfaces a toast', async ({ 
 		await page.getByRole('button', { name: 'OPML import / export' }).click();
 
 		const fileChooserPromise = page.waitForEvent('filechooser');
-		await page.getByText('Import OPML…').click();
+		await page.getByRole('menuitem', { name: 'Import OPML…' }).click();
 		const chooser = await fileChooserPromise;
 		await chooser.setFiles({
 			name: 'plan-21.opml',
