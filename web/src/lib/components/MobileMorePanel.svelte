@@ -7,22 +7,12 @@
 	// the scrim or pressing Escape.
 	import { useFeeds } from '$api/queries';
 	import FeedIcon from './FeedIcon.svelte';
-	import { theme, type Theme } from '$lib/theme.svelte';
+	import { cycleTheme } from '$lib/theme.svelte';
 	import { hotkeysModal } from '$lib/hotkeys-modal.svelte';
 
 	let { open, onClose }: { open: boolean; onClose: () => void } = $props();
 
 	const feeds = useFeeds();
-
-	const CYCLE: readonly Theme[] = ['light', 'sepia', 'dark'] as const;
-	function cycleTheme() {
-		if (theme.theme === 'system') {
-			theme.setTheme(CYCLE[0]);
-			return;
-		}
-		const i = CYCLE.indexOf(theme.theme as (typeof CYCLE)[number]);
-		theme.setTheme(CYCLE[(i + 1) % CYCLE.length]);
-	}
 
 	function onKey(ev: KeyboardEvent) {
 		if (ev.key === 'Escape' && open) {

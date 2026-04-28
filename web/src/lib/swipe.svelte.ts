@@ -51,7 +51,7 @@ class SwipeState {
 	reset() {
 		this.active = false;
 		this.canceled = false;
-		this.swipeDx = 0;
+		if (this.swipeDx !== 0) this.swipeDx = 0;
 	}
 }
 
@@ -69,7 +69,7 @@ export function createSwipe(opts: SwipeOptions): SwipeHandlers {
 		state.startY = t.clientY;
 		state.currentX = t.clientX;
 		state.currentY = t.clientY;
-		state.swipeDx = 0;
+		if (state.swipeDx !== 0) state.swipeDx = 0;
 	};
 
 	const onTouchMove = (ev: TouchEvent) => {
@@ -78,7 +78,7 @@ export function createSwipe(opts: SwipeOptions): SwipeHandlers {
 		// own the gesture (pinch-zoom etc.).
 		if (ev.touches.length !== 1) {
 			state.canceled = true;
-			state.swipeDx = 0;
+			if (state.swipeDx !== 0) state.swipeDx = 0;
 			return;
 		}
 		const t = ev.touches[0];
@@ -88,11 +88,8 @@ export function createSwipe(opts: SwipeOptions): SwipeHandlers {
 		const dy = state.currentY - state.startY;
 		// Suppress the visual under-finger drag if the gesture looks
 		// like a vertical scroll. The natural vertical scroll wins.
-		if (Math.abs(dy) > Math.abs(dx) * verticalRatio) {
-			state.swipeDx = 0;
-		} else {
-			state.swipeDx = dx;
-		}
+		const next = Math.abs(dy) > Math.abs(dx) * verticalRatio ? 0 : dx;
+		if (state.swipeDx !== next) state.swipeDx = next;
 	};
 
 	const onTouchEnd = (_ev: TouchEvent) => {

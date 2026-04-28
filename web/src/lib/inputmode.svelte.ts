@@ -26,21 +26,24 @@ const MODIFIER_KEYS = new Set(['Shift', 'Control', 'Alt', 'Meta', 'CapsLock']);
 class InputModeStore {
 	mode = $state<InputMode>('mouse');
 
+	// Same-value writes are guarded so high-frequency events
+	// (mousemove fires every pixel of motion) don't re-notify
+	// downstream consumers like the EntryRow highlight derivation.
 	set(m: InputMode) {
-		this.mode = m;
+		if (this.mode !== m) this.mode = m;
 	}
 
 	handleKeydown(ev: KeyboardEvent) {
 		if (MODIFIER_KEYS.has(ev.key)) return;
-		this.mode = 'keyboard';
+		this.set('keyboard');
 	}
 
 	handleMouseMove(_ev: MouseEvent) {
-		this.mode = 'mouse';
+		this.set('mouse');
 	}
 
 	handleTouchStart(_ev: Event) {
-		this.mode = 'touch';
+		this.set('touch');
 	}
 }
 

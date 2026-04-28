@@ -54,64 +54,44 @@
 	// has no way of knowing why one row is shaded).
 	const showKeyboardHighlight = $derived(selected && inputMode.mode === 'keyboard');
 
-	// Tracks which entry-id was acted on by the most-recent pointerup so
-	// the synthesized click that follows a touch tap can be suppressed
-	// without affecting genuine mouse clicks (which deliver pointerup +
-	// click on the same target). On mobile the synthesized click after
-	// a touch tap can land on the stretched <a> sibling instead of the
-	// button, navigating into the reader instead of toggling read —
-	// pointerup + stopPropagation guarantees the toggle wins.
-	let suppressNextDotClick = false;
-	let suppressNextSelectClick = false;
-
-	function onReadDotPointerUp(ev: PointerEvent) {
-		// Only handle primary-button pointer ups. Mouse right-click and
-		// middle-click should fall through to the browser's defaults.
-		if (ev.button !== 0) return;
-		ev.stopPropagation();
-		ev.preventDefault();
-		suppressNextDotClick = true;
-		onToggleRead(entry.id, !entry.read);
+	// On touch devices the synthesized click that follows a tap can
+	// retarget to the stretched <a> sibling instead of the button —
+	// navigating into the reader instead of toggling. We act on
+	// pointerup and swallow the trailing click via a one-shot guard.
+	// Keyboard activations (Space / Enter) deliver a click WITHOUT a
+	// preceding pointerup, so the click handler also runs the action
+	// when the guard is unset.
+	function makeButtonHandlers(action: () => void) {
+		let consumeNextClick = false;
+		return {
+			onPointerUp(ev: PointerEvent) {
+				if (ev.button !== 0) return;
+				ev.stopPropagation();
+				ev.preventDefault();
+				consumeNextClick = true;
+				action();
+			},
+			onClick(ev: MouseEvent) {
+				ev.stopPropagation();
+				ev.preventDefault();
+				if (consumeNextClick) {
+					consumeNextClick = false;
+					return;
+				}
+				action();
+			}
+		};
 	}
 
-	function onReadDotClick(ev: MouseEvent) {
-		// pointerup already handled the toggle; the click is the
-		// browser's compatibility echo. Swallow it so it doesn't
-		// double-fire (or, worse, retarget at the underlying anchor
-		// after a touch tap).
-		if (suppressNextDotClick) {
-			suppressNextDotClick = false;
-			ev.stopPropagation();
-			ev.preventDefault();
-			return;
-		}
-		// Fallback for environments that didn't dispatch pointerup —
-		// keyboard-activated clicks (Space / Enter) come in as a click
-		// without a preceding pointerup.
-		ev.stopPropagation();
-		ev.preventDefault();
-		onToggleRead(entry.id, !entry.read);
-	}
-
-	function onSelectBoxPointerUp(ev: PointerEvent) {
-		if (ev.button !== 0) return;
-		ev.stopPropagation();
-		ev.preventDefault();
-		suppressNextSelectClick = true;
-		onToggleSelect(entry.id, ev as unknown as MouseEvent);
-	}
-
-	function onSelectBoxClick(ev: MouseEvent) {
-		if (suppressNextSelectClick) {
-			suppressNextSelectClick = false;
-			ev.stopPropagation();
-			ev.preventDefault();
-			return;
-		}
-		ev.stopPropagation();
-		ev.preventDefault();
-		onToggleSelect(entry.id, ev);
-	}
+	const readDot = makeButtonHandlers(() => onToggleRead(entry.id, !entry.read));
+	// Parent's onToggleSelect contract takes (id, ev) but ignores ev
+	// (RiverList only consumes the event for its own row-level chord
+	// detection, not for the per-row select-box). Pass an empty stub
+	// MouseEvent so the type signature is honoured without coupling
+	// the EntryRow to whichever pointer event source fired.
+	const selectBox = makeButtonHandlers(() =>
+		onToggleSelect(entry.id, new MouseEvent('click'))
+	);
 
 	function onLinkClick(ev: MouseEvent) {
 		// The parent owns navigation (RiverList → +page.svelte). Honour
@@ -124,24 +104,11 @@
 		onclick(ev);
 	}
 
-	// Plan 18 / T5: swipe-to-mark-read on touch devices. Right-swipe →
-	// mark read (matches "completed" semantics, fits the visual flow
-	// of dragging the row off-screen toward the right). Left-swipe →
-	// mark unread (the symmetric inverse).
-	//
-	// We render the swipeDx as a translateX so the row visually
-	// follows the finger. After the gesture ends the row springs back
-	// because swipeDx resets to 0; the cache flip after the mutate
-	// re-renders with the new read state.
+	// Right-swipe = mark read (matches "completed" semantics — drag
+	// the row off toward the right). Left-swipe = mark unread.
 	const swipe = createSwipe({
 		threshold: 60,
-		onSwipe: (ev: SwipeEvent) => {
-			if (ev.direction === 'right') {
-				onToggleRead(entry.id, true);
-			} else {
-				onToggleRead(entry.id, false);
-			}
-		}
+		onSwipe: (ev: SwipeEvent) => onToggleRead(entry.id, ev.direction === 'right')
 	});
 </script>
 
@@ -171,8 +138,8 @@
 			class="select-box"
 			aria-label={multiSelected ? 'Deselect entry' : 'Select entry'}
 			aria-pressed={multiSelected}
-			onpointerup={onSelectBoxPointerUp}
-			onclick={onSelectBoxClick}
+			onpointerup={selectBox.onPointerUp}
+			onclick={selectBox.onClick}
 		>
 			<span class="check" aria-hidden="true">{multiSelected ? '✓' : ''}</span>
 		</button>
@@ -183,8 +150,8 @@
 			aria-label={entry.read ? 'Mark unread' : 'Mark read'}
 			aria-pressed={!entry.read}
 			data-testid="row-read-toggle"
-			onpointerup={onReadDotPointerUp}
-			onclick={onReadDotClick}
+			onpointerup={readDot.onPointerUp}
+			onclick={readDot.onClick}
 		>
 			<span class="dot" aria-hidden="true"></span>
 		</button>
