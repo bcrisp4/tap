@@ -21,6 +21,7 @@
 
 <script lang="ts">
 	import type { Entry, Feed } from '$api/types';
+	import { inputMode } from '$lib/inputmode.svelte';
 
 	let {
 		entry,
@@ -46,6 +47,11 @@
 
 	const ago = $derived(formatAgo(entry.published_at ?? entry.created_at));
 	const swatchColor = $derived(swatchFor(feed?.title ?? feed?.feed_url ?? 'tap'));
+	// Keyboard-selection highlight is only meaningful when the user is
+	// actually driving with the keyboard. On mouse / touch the row that
+	// happens to be `selectedId` shouldn't paint highlighted (the user
+	// has no way of knowing why one row is shaded).
+	const showKeyboardHighlight = $derived(selected && inputMode.mode === 'keyboard');
 
 	function onReadDotClick(ev: MouseEvent) {
 		// Stop the row click; the read-dot has its own action and we
@@ -77,7 +83,7 @@
 	class="entry"
 	class:is-read={entry.read}
 	class:is-saved={entry.saved}
-	class:is-selected={selected}
+	class:is-selected={showKeyboardHighlight}
 	class:is-multi={multiSelect}
 	class:is-multi-selected={multiSelected}
 >
