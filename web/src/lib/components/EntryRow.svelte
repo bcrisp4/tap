@@ -27,28 +27,78 @@
 		feed,
 		selected = false,
 		showSummary = true,
-		onclick = () => {}
+		multiSelect = false,
+		multiSelected = false,
+		onclick = (_ev: MouseEvent) => {},
+		onToggleRead = (_id: number, _read: boolean) => {},
+		onToggleSelect = (_id: number, _ev: MouseEvent) => {}
 	}: {
 		entry: Entry;
 		feed?: Feed;
 		selected?: boolean;
 		showSummary?: boolean;
+		multiSelect?: boolean;
+		multiSelected?: boolean;
 		onclick?: (e: MouseEvent) => void;
+		onToggleRead?: (id: number, read: boolean) => void;
+		onToggleSelect?: (id: number, ev: MouseEvent) => void;
 	} = $props();
 
 	const ago = $derived(formatAgo(entry.published_at ?? entry.created_at));
 	const swatchColor = $derived(swatchFor(feed?.title ?? feed?.feed_url ?? 'tap'));
+
+	function onReadDotClick(ev: MouseEvent) {
+		// Stop the row click; the read-dot has its own action and we
+		// don't want a click-to-open hijack.
+		ev.stopPropagation();
+		onToggleRead(entry.id, !entry.read);
+	}
+
+	function onSelectBoxClick(ev: MouseEvent) {
+		ev.stopPropagation();
+		onToggleSelect(entry.id, ev);
+	}
 </script>
 
-<button
-	type="button"
+<div
 	class="entry"
 	class:is-read={entry.read}
 	class:is-saved={entry.saved}
 	class:is-selected={selected}
-	{onclick}
+	class:is-multi={multiSelect}
+	class:is-multi-selected={multiSelected}
+	role="button"
+	tabindex="0"
+	onclick={onclick}
+	onkeydown={(ev) => {
+		if (ev.key === 'Enter' || ev.key === ' ') {
+			ev.preventDefault();
+			onclick(ev as unknown as MouseEvent);
+		}
+	}}
 >
-	<span class="junction" aria-hidden="true"></span>
+	{#if multiSelect}
+		<button
+			type="button"
+			class="select-box"
+			aria-label={multiSelected ? 'Deselect entry' : 'Select entry'}
+			aria-pressed={multiSelected}
+			onclick={onSelectBoxClick}
+		>
+			<span class="check" aria-hidden="true">{multiSelected ? '✓' : ''}</span>
+		</button>
+	{:else}
+		<button
+			type="button"
+			class="read-dot"
+			aria-label={entry.read ? 'Mark unread' : 'Mark read'}
+			aria-pressed={!entry.read}
+			data-testid="row-read-toggle"
+			onclick={onReadDotClick}
+		>
+			<span class="dot" aria-hidden="true"></span>
+		</button>
+	{/if}
 	{#if entry.saved}
 		<span class="saved-mark mono">SAVED</span>
 	{/if}
@@ -64,7 +114,7 @@
 	{#if showSummary && entry.summary}
 		<p class="summary">{entry.summary}</p>
 	{/if}
-</button>
+</div>
 
 <style>
 	.entry {
@@ -79,11 +129,15 @@
 		transition: background 120ms ease;
 		font-family: inherit;
 		color: inherit;
+		box-sizing: border-box;
 	}
 	.entry:hover {
 		background: var(--bg-soft);
 	}
 	.entry.is-selected {
+		background: var(--accent-soft);
+	}
+	.entry.is-multi-selected {
 		background: var(--accent-soft);
 	}
 	.entry.is-read .title {
@@ -94,10 +148,27 @@
 		color: var(--ink-3);
 	}
 
-	.junction {
+	/* Per-row mark-read button. Filled dot = unread, hollow ring =
+	   read. Hidden on mobile — Plan 18 swaps in swipe gestures. */
+	.read-dot {
 		position: absolute;
-		left: 22px;
-		top: 22px;
+		left: 16px;
+		top: 16px;
+		width: 18px;
+		height: 18px;
+		display: inline-grid;
+		place-items: center;
+		background: transparent;
+		border: 0;
+		border-radius: 50%;
+		padding: 0;
+		cursor: pointer;
+		color: inherit;
+	}
+	.read-dot:hover {
+		background: var(--bg-soft);
+	}
+	.read-dot .dot {
 		width: 6px;
 		height: 6px;
 		border-radius: 50%;
@@ -105,10 +176,39 @@
 		transition:
 			transform 200ms ease,
 			background 200ms ease;
+		box-sizing: border-box;
 	}
-	.entry.is-read .junction {
+	.entry.is-read .read-dot .dot {
 		background: transparent;
 		border: 1px solid var(--ink-4);
+	}
+
+	/* Multi-select checkbox replaces the read dot when the river is in
+	   multi-select mode. */
+	.select-box {
+		position: absolute;
+		left: 14px;
+		top: 14px;
+		width: 18px;
+		height: 18px;
+		display: inline-grid;
+		place-items: center;
+		background: var(--bg);
+		border: 1px solid var(--ink-4);
+		border-radius: 3px;
+		padding: 0;
+		cursor: pointer;
+		color: inherit;
+	}
+	.entry.is-multi-selected .select-box {
+		background: var(--accent);
+		border-color: var(--accent);
+		color: var(--bg);
+	}
+	.select-box .check {
+		font-size: 12px;
+		line-height: 1;
+		font-family: var(--sans);
 	}
 
 	.saved-mark {
@@ -185,8 +285,11 @@
 	:global(.density-compact) .entry .summary {
 		display: none;
 	}
-	:global(.density-compact) .entry .junction {
-		top: 17px;
+	:global(.density-compact) .entry .read-dot {
+		top: 11px;
+	}
+	:global(.density-compact) .entry .select-box {
+		top: 9px;
 	}
 	:global(.density-compact) .entry .saved-mark {
 		top: 13px;
@@ -197,14 +300,17 @@
 	}
 
 	/* Mobile overrides cascade from the .is-mobile root applied in
-	   +page.svelte. */
+	   +page.svelte. Plan 18 will add swipe gestures; for now the
+	   per-row read dot is hidden on mobile to keep the row tappable. */
 	:global(.is-mobile) .entry {
 		padding-left: 36px;
 		padding-right: 18px;
 	}
-	:global(.is-mobile) .entry .junction {
-		left: 18px;
-		top: 22px;
+	:global(.is-mobile) .entry .read-dot {
+		display: none;
+	}
+	:global(.is-mobile) .entry.is-multi .select-box {
+		left: 14px;
 	}
 	:global(.is-mobile) .entry .saved-mark {
 		right: 18px;
