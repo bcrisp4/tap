@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/bcrisp4/tap/internal/httpclient"
+	"github.com/bcrisp4/tap/internal/iconfetch"
 	"github.com/bcrisp4/tap/internal/limiter"
 	"github.com/bcrisp4/tap/internal/reader"
 	"github.com/bcrisp4/tap/internal/storage"
@@ -61,6 +62,7 @@ func New(cfg Config) *Poller {
 	worker := NewWorker(WorkerConfig{
 		Store: cfg.Store, Client: cfg.Client, Limiter: hostLim,
 		Pipeline: cfg.Pipeline, RunState: state, PollFactor: cfg.PollFactor,
+		IconFetcher: iconfetch.New(cfg.Client),
 	})
 	return &Poller{cfg: cfg, state: state, hostLim: hostLim, worker: worker}
 }
