@@ -5,6 +5,7 @@
 	// header is the only branding we render in the chrome.
 	import { theme, cycleTheme, type Theme } from '$lib/theme.svelte';
 	import { hotkeysModal } from '$lib/hotkeys-modal.svelte';
+	import { Settings } from 'lucide-svelte';
 
 	function themeLabel(t: Theme): string {
 		switch (t) {
@@ -62,15 +63,7 @@
 	</button>
 
 	<a class="icon-btn" href="/settings" aria-label="Settings" title="Settings">
-		<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-			<circle cx="8" cy="8" r="2.25" fill="none" stroke="currentColor" stroke-width="1.25" />
-			<path
-				d="M8 1.5v2.25 M8 12.25v2.25 M1.5 8h2.25 M12.25 8h2.25 M3.4 3.4l1.6 1.6 M11 11l1.6 1.6 M3.4 12.6l1.6-1.6 M11 5l1.6-1.6"
-				stroke="currentColor"
-				stroke-width="1.1"
-				stroke-linecap="round"
-			/>
-		</svg>
+		<Settings size="16" aria-hidden="true" />
 	</a>
 </div>
 
