@@ -10,7 +10,12 @@
 
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { MutationObserver, QueryClient } from '@tanstack/svelte-query';
-import { keys, toggleReadMutationOptions, toggleSavedMutationOptions } from './queries';
+import {
+	keys,
+	toggleReadMutationOptions,
+	toggleSavedMutationOptions,
+	bulkUpdateMutationOptions
+} from './queries';
 import type { Entry, FeedPatch } from './types';
 
 describe('query keys', () => {
@@ -213,6 +218,27 @@ describe('useToggleSaved', () => {
 
 		const hist = qc.getQueryData(['history', 'list', 100]) as { data: Entry[] };
 		expect(hist.data[0].saved).toBe(true);
+	});
+});
+
+describe('useBulkUpdate', () => {
+	it('drops every targeted entry from an unread list and decrements total', async () => {
+		stubFetchOk({});
+		const qc = new QueryClient({ defaultOptions: { mutations: { retry: 0 } } });
+		qc.setQueryData(['entries', 'list', { status: 'unread' }], {
+			data: [entry(1), entry(2), entry(3)],
+			pagination: { limit: 50, offset: 0, total: 3 }
+		});
+
+		await runMutation(qc, bulkUpdateMutationOptions(qc), { ids: [1, 2], read: true });
+
+		const list = qc.getQueryData(['entries', 'list', { status: 'unread' }]) as {
+			data: Entry[];
+			pagination: { total: number };
+		};
+		expect(list.data.map((e) => e.id)).toEqual([3]);
+		expect(list.pagination.total).toBe(1);
+		expect(qc.getQueryState(['entries', 'list', { status: 'unread' }])?.isInvalidated).toBe(true);
 	});
 });
 

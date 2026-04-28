@@ -174,34 +174,36 @@ export function useToggleRead() {
 // Plan 15's multi-select UX never selects more than a screen's worth
 // of rows in practice (~50), so the fan-out cost is acceptable.
 //
-// Optimistic update mirrors useToggleRead: we flip `read` on every
-// cached list before the server replies, snapshot the prior state
-// for rollback, and invalidate after settle.
-export function useBulkUpdate() {
-	const qc = useQueryClient();
-	return createMutation(() => ({
+// Optimistic update mirrors useToggleRead: we patch each id across
+// every cached list (entries / history / search), snapshot the prior
+// state for rollback, and invalidate after settle.
+export function bulkUpdateMutationOptions(qc: QueryClient) {
+	return {
 		mutationFn: async ({ ids, read }: { ids: number[]; read: boolean }) => {
 			await Promise.all(ids.map((id) => putJSON<Entry>(`/entries/${id}`, { read })));
 		},
-		onMutate: async ({ ids, read }) => {
-			await qc.cancelQueries({ queryKey: keys.entriesList() });
-			const prev = qc.getQueriesData<{ data: Entry[] }>({ queryKey: keys.entriesList() });
-			const idSet = new Set(ids);
-			qc.setQueriesData<{ data: Entry[] }>({ queryKey: keys.entriesList() }, (old) =>
-				old ? { ...old, data: old.data.map((e) => (idSet.has(e.id) ? { ...e, read } : e)) } : old
-			);
+		onMutate: async ({ ids, read }: { ids: number[]; read: boolean }) => {
+			await cancelLists(qc);
+			const previous = snapshotLists(qc);
 			for (const id of ids) {
+				patchEntryEverywhere(qc, id, { read });
 				qc.setQueryData<Entry>(keys.entry(id), (old) => (old ? { ...old, read } : old));
 			}
-			return { prev };
+			return { previous };
 		},
-		onError: (_err, _vars, ctx) => {
-			ctx?.prev?.forEach(([key, data]) => qc.setQueryData(key, data));
+		onError: (_err: unknown, _vars: unknown, ctx: { previous: ListSnapshot } | undefined) => {
+			if (!ctx?.previous) return;
+			restoreLists(qc, ctx.previous);
 		},
 		onSettled: () => {
-			qc.invalidateQueries({ queryKey: keys.entriesAll() });
+			invalidateLists(qc);
 		}
-	}));
+	};
+}
+
+export function useBulkUpdate() {
+	const qc = useQueryClient();
+	return createMutation(() => bulkUpdateMutationOptions(qc));
 }
 
 export function toggleSavedMutationOptions(qc: QueryClient) {
