@@ -2,17 +2,17 @@
 	// iOS-style bottom tab bar. Routes for /saved, /search, /settings
 	// land in later plans (12, 14); we render the affordances now so
 	// the navigation surface matches the design handoff on day one.
-	type TabId = 'unread' | 'saved' | 'search' | 'settings';
+	type TabId = 'unread' | 'saved' | 'settings';
 
-	// Routes outside the four tabs (history, /feeds/*, the reader)
-	// pass no `active` prop so no tab is highlighted — better than
-	// faking a sibling highlight.
+	// Routes outside the listed tabs (history, /feeds/*, the reader,
+	// /search) pass no `active` prop so no tab is highlighted — better
+	// than faking a sibling highlight. Search is reachable via the
+	// MobileTopBar magnifier icon, so it doesn't appear here.
 	let { active }: { active?: TabId } = $props();
 
 	const tabs: ReadonlyArray<{ id: TabId; label: string; href: string }> = [
 		{ id: 'unread', label: 'Unread', href: '/' },
 		{ id: 'saved', label: 'Saved', href: '/saved' },
-		{ id: 'search', label: 'Search', href: '/search' },
 		{ id: 'settings', label: 'Settings', href: '/settings' }
 	];
 </script>
@@ -28,7 +28,7 @@
 <style>
 	.m-tabbar {
 		display: grid;
-		grid-template-columns: repeat(4, 1fr);
+		grid-template-columns: repeat(3, 1fr);
 		border-top: 1px solid var(--rule);
 		background: var(--bg);
 		padding: 10px 0 calc(env(safe-area-inset-bottom, 0px) + 14px);

@@ -109,7 +109,7 @@
 		<div class="m-search-wrap">
 			{@render searchPanel()}
 		</div>
-		<MobileTabBar active="search" />
+		<MobileTabBar />
 	</div>
 {:else}
 	<div class="tap">
