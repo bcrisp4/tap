@@ -61,7 +61,13 @@ export function createSwipe(opts: SwipeOptions): SwipeHandlers {
 	const state = new SwipeState();
 
 	const onTouchStart = (ev: TouchEvent) => {
-		if (ev.touches.length !== 1) return;
+		// Multi-touch landing on top of an in-flight gesture: kill it
+		// outright. Without the reset, a later touchend could still
+		// fire onSwipe based on the original single-finger dx.
+		if (ev.touches.length !== 1) {
+			if (state.active) state.reset();
+			return;
+		}
 		const t = ev.touches[0];
 		state.active = true;
 		state.canceled = false;
@@ -74,11 +80,11 @@ export function createSwipe(opts: SwipeOptions): SwipeHandlers {
 
 	const onTouchMove = (ev: TouchEvent) => {
 		if (!state.active) return;
-		// Multi-touch arriving mid-swipe → cancel and let the browser
-		// own the gesture (pinch-zoom etc.).
+		// Multi-touch arriving mid-swipe → fully reset. A bare
+		// `canceled = true` would still let later single-finger
+		// touchmoves repaint swipeDx once the second finger lifts.
 		if (ev.touches.length !== 1) {
-			state.canceled = true;
-			if (state.swipeDx !== 0) state.swipeDx = 0;
+			state.reset();
 			return;
 		}
 		const t = ev.touches[0];
@@ -92,8 +98,16 @@ export function createSwipe(opts: SwipeOptions): SwipeHandlers {
 		if (state.swipeDx !== next) state.swipeDx = next;
 	};
 
-	const onTouchEnd = (_ev: TouchEvent) => {
+	const onTouchEnd = (ev: TouchEvent) => {
 		if (!state.active) return;
+		// Pull the final position from changedTouches so a quick
+		// flick with no intermediate touchmove (notably iOS Safari)
+		// still resolves to the real dx, not the stale touchstart x.
+		if (ev.changedTouches.length > 0) {
+			const t = ev.changedTouches[0];
+			state.currentX = t.clientX;
+			state.currentY = t.clientY;
+		}
 		const dx = state.currentX - state.startX;
 		const dy = state.currentY - state.startY;
 		const wasCanceled = state.canceled;

@@ -94,4 +94,65 @@ describe('createSwipe', () => {
 		);
 		expect(onSwipe).not.toHaveBeenCalled();
 	});
+
+	// Defensive edge cases (Copilot review on PR #21).
+
+	it('cancels in-flight gesture when a second touchstart arrives without an intervening touchmove', () => {
+		// Real-device flow: finger 1 down → finger 2 down (second
+		// touchstart fires with touches.length === 2). Without an
+		// intermediate touchmove the original implementation never
+		// flagged the gesture canceled, so the eventual touchend
+		// could still fire onSwipe with the original dx.
+		const onSwipe = vi.fn();
+		const sw = createSwipe({ threshold: 60, onSwipe });
+		sw.onTouchStart(makeTouchEvent([{ clientX: 50, clientY: 100 }]));
+		sw.onTouchMove(makeTouchEvent([{ clientX: 130, clientY: 100 }]));
+		// Second finger lands. No touchmove between this and touchend.
+		sw.onTouchStart(
+			makeTouchEvent([
+				{ clientX: 130, clientY: 100 },
+				{ clientX: 200, clientY: 100 }
+			])
+		);
+		sw.onTouchEnd(makeTouchEvent([{ clientX: 130, clientY: 100 }]));
+		expect(onSwipe).not.toHaveBeenCalled();
+	});
+
+	it('stays canceled after multi-touch even if the second finger lifts and single-finger touchmoves resume', () => {
+		// After multi-touch the gesture must stay dead until the next
+		// clean touchstart. Visual swipeDx must not resume drifting
+		// when one finger lifts and the other keeps moving.
+		const onSwipe = vi.fn();
+		const sw = createSwipe({ threshold: 60, onSwipe });
+		sw.onTouchStart(makeTouchEvent([{ clientX: 50, clientY: 100 }]));
+		sw.onTouchMove(makeTouchEvent([{ clientX: 130, clientY: 100 }]));
+		// Second finger arrives → cancel.
+		sw.onTouchMove(
+			makeTouchEvent([
+				{ clientX: 130, clientY: 100 },
+				{ clientX: 200, clientY: 100 }
+			])
+		);
+		// Second finger lifted; first finger keeps moving. Must NOT
+		// resume painting swipeDx.
+		sw.onTouchMove(makeTouchEvent([{ clientX: 180, clientY: 100 }]));
+		expect(sw.swipeDx).toBe(0);
+		sw.onTouchEnd(makeTouchEvent([{ clientX: 180, clientY: 100 }]));
+		expect(onSwipe).not.toHaveBeenCalled();
+	});
+
+	it('uses changedTouches in touchend so a quick flick with no intermediate touchmove still registers', () => {
+		// Some browsers (notably iOS Safari for very fast flicks)
+		// deliver touchstart → touchend with no intermediate
+		// touchmove. dx must be derived from changedTouches in
+		// touchend, not the stale currentX from touchstart.
+		const onSwipe = vi.fn();
+		const sw = createSwipe({ threshold: 60, onSwipe });
+		sw.onTouchStart(makeTouchEvent([{ clientX: 50, clientY: 100 }]));
+		// No touchmove. touchend's changedTouches carries the final
+		// position.
+		sw.onTouchEnd(makeTouchEvent([{ clientX: 200, clientY: 100 }]));
+		expect(onSwipe).toHaveBeenCalledTimes(1);
+		expect(onSwipe).toHaveBeenCalledWith({ direction: 'right', dx: 150, dy: 0 });
+	});
 });
