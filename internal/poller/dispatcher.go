@@ -96,12 +96,24 @@ func (d *Dispatcher) runOne(ctx context.Context, id int64) {
 	defer d.in.Clear(id)
 	defer func() {
 		if r := recover(); r != nil {
-			if d.cfg.State != nil {
-				d.cfg.State.RecordError(id, "", fmt.Errorf("poller panic on feed %d: %v\n%s", id, r, debug.Stack()))
-			}
+			recordDispatchPanic(d.cfg.State, id, r)
 		}
 	}()
 	_ = d.cfg.Worker.PollOne(ctx, id)
+}
+
+// recordDispatchPanic records a panic in Worker.PollOne as a
+// process-wide error (FeedID=0, FeedTitle=""), matching the contract
+// in PollerError. The feed ID is preserved in the error message for
+// forensics — a panic at the dispatcher level is a Tap-level bug,
+// not a feed health issue, so the /system/status UI shouldn't try to
+// link this entry to /feeds/<id>. nil-state is a no-op so the
+// dispatcher remains usable in tests that don't wire RunState.
+func recordDispatchPanic(state *RunState, feedID int64, r any) {
+	if state == nil {
+		return
+	}
+	state.RecordError(0, "", fmt.Errorf("poller panic on feed %d: %v\n%s", feedID, r, debug.Stack()))
 }
 
 // dispatch claims due feeds and sends them to the worker pool. We mark
