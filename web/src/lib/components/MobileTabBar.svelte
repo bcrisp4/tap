@@ -4,7 +4,10 @@
 	// the navigation surface matches the design handoff on day one.
 	type TabId = 'unread' | 'saved' | 'search' | 'settings';
 
-	let { active = 'unread' as TabId }: { active?: TabId } = $props();
+	// Routes outside the four tabs (history, /feeds/*, the reader)
+	// pass no `active` prop so no tab is highlighted — better than
+	// faking a sibling highlight.
+	let { active }: { active?: TabId } = $props();
 
 	const tabs: ReadonlyArray<{ id: TabId; label: string; href: string }> = [
 		{ id: 'unread', label: 'Unread', href: '/' },

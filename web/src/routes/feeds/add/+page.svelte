@@ -42,9 +42,7 @@
 		subscribe.mutate(body, {
 			onSuccess: (res) => goto(`/feeds/${res.id}`),
 			onError: (err) => {
-				if (err instanceof ApiError && err.status === 409) {
-					subscribeError = `already subscribed (${err.message})`;
-				} else if (err instanceof ApiError) {
+				if (err instanceof ApiError) {
 					subscribeError = err.message;
 				} else {
 					subscribeError = 'subscription failed';

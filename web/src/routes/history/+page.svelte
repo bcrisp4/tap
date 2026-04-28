@@ -52,7 +52,7 @@
 				/>
 			{/if}
 		</div>
-		<MobileTabBar active="unread" />
+		<MobileTabBar />
 	</div>
 {:else}
 	<div class="tap">

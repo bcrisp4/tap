@@ -32,7 +32,7 @@
 
 	<div class="group-title">Feeds</div>
 	{#each feeds.data?.data ?? [] as f (f.id)}
-		<a href={'/feed/' + f.id} class="feed-row">
+		<a href={'/feeds/' + f.id} class="feed-row">
 			<span class="ico" style="background: {swatchFor(f.title)}" aria-hidden="true"></span>
 			<span class="name">{f.title}</span>
 		</a>
