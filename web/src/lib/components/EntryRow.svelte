@@ -60,22 +60,24 @@
 	}
 </script>
 
-<div
+<!--
+	Row is a plain article — NOT role="button" — because it nests
+	real <button> children (the read-dot and the multi-select box).
+	A button-in-button is invalid HTML and confuses screen readers.
+	Keyboard activation lives on the global j/k + o/Enter handler in
+	keyboard.svelte.ts; the click listener here is the desktop
+	mouse convenience.
+-->
+<!-- svelte-ignore a11y_click_events_have_key_events -->
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+<article
 	class="entry"
 	class:is-read={entry.read}
 	class:is-saved={entry.saved}
 	class:is-selected={selected}
 	class:is-multi={multiSelect}
 	class:is-multi-selected={multiSelected}
-	role="button"
-	tabindex="0"
 	onclick={onclick}
-	onkeydown={(ev) => {
-		if (ev.key === 'Enter' || ev.key === ' ') {
-			ev.preventDefault();
-			onclick(ev as unknown as MouseEvent);
-		}
-	}}
 >
 	{#if multiSelect}
 		<button
@@ -114,7 +116,7 @@
 	{#if showSummary && entry.summary}
 		<p class="summary">{entry.summary}</p>
 	{/if}
-</div>
+</article>
 
 <style>
 	.entry {
