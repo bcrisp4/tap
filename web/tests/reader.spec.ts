@@ -143,6 +143,39 @@ test('Saved button in reader header turns Klein blue', async ({ page, request })
 	expect(color === 'rgb(0, 47, 167)' || color === 'rgb(90, 127, 220)').toBeTruthy();
 });
 
+test('image click opens the lightbox; Esc closes it (Plan 16 T4)', async ({
+	page,
+	request
+}) => {
+	const id = await seedAndFetchEntryID(request);
+	await page.goto(`/entry/${id}`);
+	await expect(page.getByTestId('reader-body')).toBeVisible({ timeout: 15_000 });
+
+	// Inject a synthetic <img> into the article body so the test
+	// works even when the seed feed's current entry happens to have
+	// no inline images. We deliberately use a 1×1 transparent PNG
+	// data URL — fast, no network, naturally clickable, no parent <a>.
+	const PNG =
+		'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgAAIAAAUAAeImBZsAAAAASUVORK5CYII=';
+	await page.evaluate((src) => {
+		const article = document.querySelector('[data-testid="reader-body"] .reader-content');
+		if (!article) throw new Error('reader-content missing');
+		const img = document.createElement('img');
+		img.src = src;
+		img.alt = 'test image';
+		img.dataset.testid = 'lightbox-trigger';
+		article.appendChild(img);
+	}, PNG);
+
+	await page.locator('[data-testid="lightbox-trigger"]').click();
+
+	const dialog = page.getByRole('dialog', { name: 'Image preview' });
+	await expect(dialog).toBeVisible();
+
+	await page.keyboard.press('Escape');
+	await expect(dialog).toHaveCount(0);
+});
+
 test('m keyboard shortcut toggles read state', async ({ page, request }) => {
 	const id = await seedAndFetchEntryID(request);
 

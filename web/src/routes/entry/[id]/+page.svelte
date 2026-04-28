@@ -100,6 +100,12 @@
 			return;
 		}
 		if (ev.key === 'Escape') {
+			// If a modal dialog is open (e.g. the image lightbox in
+			// ReaderBody), Esc belongs to the dialog — let it close
+			// itself before we'd consider popping the whole route.
+			if (document.querySelector('[role="dialog"][aria-modal="true"]')) {
+				return;
+			}
 			ev.preventDefault();
 			back();
 			return;

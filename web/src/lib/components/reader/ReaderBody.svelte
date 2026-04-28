@@ -16,15 +16,50 @@
 <script lang="ts">
 	import type { Entry, Feed } from '$api/types';
 	import { swatchFor } from '$lib/components/swatch';
+	import ImageLightbox from '$lib/components/ImageLightbox.svelte';
 
 	let { entry, feed }: { entry: Entry; feed?: Feed } = $props();
 
 	const date = $derived(formatDate(entry.published_at ?? entry.created_at));
 	const sourceName = $derived(feed?.title ?? '—');
 	const sourceURL = $derived(feed?.site_url ?? feed?.feed_url ?? '');
+
+	// Lightbox state. Opening is driven by a SINGLE delegated click on
+	// the article container; we never bind one listener per <img>,
+	// because the body HTML is injected via {@html} and per-element
+	// hooks would have to walk the DOM after every render.
+	let lightboxSrc = $state<string | null>(null);
+	let lightboxAlt = $state('');
+
+	function onArticleClick(ev: MouseEvent) {
+		const target = ev.target as HTMLElement | null;
+		if (!target || target.tagName !== 'IMG') return;
+		// If the image is wrapped in an <a>, let the link win — the
+		// author probably linked the image deliberately to a higher-res
+		// version or external destination.
+		if (target.closest('a')) return;
+		ev.preventDefault();
+		const img = target as HTMLImageElement;
+		lightboxSrc = img.currentSrc || img.src;
+		lightboxAlt = img.alt ?? '';
+	}
+
+	function closeLightbox() {
+		lightboxSrc = null;
+		lightboxAlt = '';
+	}
 </script>
 
-<article class="reader-body" data-testid="reader-body">
+<!-- The article's only click handler is a delegated open-lightbox
+     that fires only on <img> targets. The article itself is not
+     focusable, so the equivalent keyboard activation lives on the
+     image elements via Tab + Enter when alt text or wrapping links
+     promote them to focusable. The whole-article click hook is the
+     simplest sound place to delegate from given the body comes in
+     via {@html}; we'd otherwise need a post-render walk. -->
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+<!-- svelte-ignore a11y_click_events_have_key_events -->
+<article class="reader-body" data-testid="reader-body" onclick={onArticleClick}>
 	<div class="reader-source">
 		<span class="src-ico" style="background: {swatchFor(feed?.title ?? '')}"></span>
 		<span class="src-name">{sourceName}</span>
@@ -73,6 +108,8 @@
 
 	<div class="reader-foot mono">Cached locally</div>
 </article>
+
+<ImageLightbox src={lightboxSrc} alt={lightboxAlt} onClose={closeLightbox} />
 
 <style>
 	.reader-body {
@@ -247,6 +284,17 @@
 		height: auto;
 		display: block;
 		margin: 0 auto 22px;
+	}
+	/* Clickable inline images — the delegated handler on the article
+	   opens the lightbox. zoom-in is the most legible cursor cue for
+	   "this image will enlarge"; images wrapped in <a> keep their
+	   link cursor since the closest-<a> early return in onArticleClick
+	   yields to the link. */
+	.reader-content :global(img) {
+		cursor: zoom-in;
+	}
+	.reader-content :global(a img) {
+		cursor: pointer;
 	}
 	.reader-content :global(ul),
 	.reader-content :global(ol) {
