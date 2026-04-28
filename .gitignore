@@ -41,3 +41,4 @@ node_modules/
 /.remember/
 /.claude/worktrees/
 /.claude/settings.local.json
+/.playwright-mcp
