@@ -181,6 +181,7 @@
 				density="default"
 				showSummary={true}
 				onOpen={(id) => goto('/entry/' + id)}
+				onToggleRead={onRowToggleRead}
 			/>
 		</div>
 		<MobileTabBar active="unread" />

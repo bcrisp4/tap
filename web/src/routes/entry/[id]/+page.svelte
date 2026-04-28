@@ -65,21 +65,32 @@
 	}
 
 	// Plan 18 / T6: swipe-to-navigate between sibling entries on
-	// mobile. The siblings come from the same useEntries query the
-	// previous page used (cached) — left-swipe goes to the next
-	// sibling, right-swipe to the previous. At first/last sibling we
-	// briefly bounce visually but don't navigate.
+	// mobile. We snapshot the list of sibling-IDs the first time the
+	// current entry appears in the unread query and don't refresh it —
+	// auto-mark-read drops the current id from the live unread list,
+	// which would otherwise leave siblingId() stranded with no anchor.
+	// At first/last sibling we briefly bounce visually but don't navigate.
 	let bounceDx = $state(0);
+	let siblingIds: number[] = [];
 
-	function siblingId(offset: -1 | 1): number | null {
+	$effect(() => {
 		const list = entries.data?.data ?? [];
 		const e = entry.data;
-		if (!e) return null;
+		if (!e) return;
+		if (siblingIds.includes(e.id)) return;
 		const idx = list.findIndex((x) => x.id === e.id);
+		if (idx < 0) return;
+		siblingIds = list.map((x) => x.id);
+	});
+
+	function siblingId(offset: -1 | 1): number | null {
+		const e = entry.data;
+		if (!e) return null;
+		const idx = siblingIds.indexOf(e.id);
 		if (idx < 0) return null;
 		const target = idx + offset;
-		if (target < 0 || target >= list.length) return null;
-		return list[target].id;
+		if (target < 0 || target >= siblingIds.length) return null;
+		return siblingIds[target];
 	}
 
 	function onReaderSwipe(ev: SwipeEvent) {
