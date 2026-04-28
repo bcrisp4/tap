@@ -180,7 +180,6 @@
 				{selectedId}
 				density="default"
 				showSummary={true}
-				onSelect={(id) => goto('/entry/' + id)}
 				onOpen={(id) => goto('/entry/' + id)}
 			/>
 		</div>

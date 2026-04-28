@@ -4,8 +4,8 @@
 	// :global(.density-*) selectors inside EntryRow.svelte.
 	//
 	// Plan 15 adds three new wires:
-	//   - `onOpen`: row click navigates to the reader (desktop). Mobile
-	//     callers reuse `onSelect` for the same gesture so we keep both.
+	//   - `onOpen`: row click navigates to the reader. Distinct from
+	//     `onSelect` — see rowClick() below for the contract.
 	//   - `multiSelect` / `selectedIds`: when true, rows show a
 	//     checkbox; clicks toggle selection rather than open the reader.
 	//   - `onToggleRead` / `onToggleSelect`: per-row affordances bubble
@@ -46,7 +46,13 @@
 	function rowClick(id: number, ev: MouseEvent) {
 		// Shift-click / meta-click → toggle selection (entering multi-
 		// select mode if we're not in it). Otherwise: in multi-select
-		// mode toggle selection; in normal mode open the reader.
+		// mode toggle selection; in normal mode update selection AND
+		// open the reader. The two callbacks have distinct contracts —
+		// onSelect is "make this the keyboard-nav selectedId" (no
+		// navigation); onOpen is "navigate to the reader". Desktop
+		// passes both (it tracks selection separately for keyboard
+		// nav); mobile passes only onOpen because there's no keyboard
+		// selection to maintain.
 		if (ev.shiftKey || ev.metaKey || ev.ctrlKey) {
 			onToggleSelect(id, ev);
 			return;

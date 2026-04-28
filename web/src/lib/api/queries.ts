@@ -116,12 +116,14 @@ export function useToggleRead() {
 	}));
 }
 
-// `useBulkUpdate` flips read/saved on a list of entry ids. The
-// existing PUT /entries/read endpoint is scope-based (feed_id /
-// category_id) and doesn't accept a free-form id list, so we fan out
-// individual PUT /entries/{id} calls instead. Plan 15's multi-select
-// UX never selects more than a screen's worth of rows in practice
-// (~50), so the fan-out cost is acceptable.
+// `useBulkUpdate` flips `read` on a list of entry ids. (No `saved`
+// support today — Plan 15's bulk UI only exposes mark-read / mark-
+// unread; extend the vars + mutationFn if a future plan adds bulk
+// save/unsave.) The existing PUT /entries/read endpoint is scope-
+// based (feed_id / category_id) and doesn't accept a free-form id
+// list, so we fan out individual PUT /entries/{id} calls instead.
+// Plan 15's multi-select UX never selects more than a screen's worth
+// of rows in practice (~50), so the fan-out cost is acceptable.
 //
 // Optimistic update mirrors useToggleRead: we flip `read` on every
 // cached list before the server replies, snapshot the prior state
