@@ -108,7 +108,7 @@
 
 <style>
 	.reader-body {
-		max-width: 680px;
+		max-width: 820px;
 		margin: 0 auto;
 		padding: 56px 56px 80px;
 		width: 100%;
