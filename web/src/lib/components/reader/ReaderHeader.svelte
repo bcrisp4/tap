@@ -5,11 +5,9 @@
 	// buttons must render in JetBrains Mono so they read as utility chrome,
 	// not as body content. Don't "fix" the casing or the family.
 	//
-	// `read` defaults to true: Plan 16 auto-marks entries read on reader
-	// open, so the typical first-paint state of this header is the
-	// "Mark Unread" / filled-circle variant. The prop default reflects
-	// that — the route always passes a real value, but mistakes downstream
-	// degrade to the more useful default.
+	// `read` defaults true because the reader auto-marks on open; the
+	// route always passes a real value but the safer default is the one
+	// that matches first-paint reality.
 	let {
 		read = true,
 		saved = false,

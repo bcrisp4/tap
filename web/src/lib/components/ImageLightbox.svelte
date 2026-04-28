@@ -1,12 +1,6 @@
 <script lang="ts">
-	// Reader image lightbox: when the user clicks an inline article
-	// image, this component overlays the page with the image at its
-	// natural size on a dimmed backdrop. Esc, click on the backdrop
-	// (anywhere outside the image), or the close button dismisses it.
-	//
-	// The component is presentation-only: it doesn't own the open
-	// state. The parent (ReaderBody) tracks the current `src` and
-	// `alt`; passing `src=null` hides the lightbox.
+	// Presentation-only image lightbox: parent owns open state via `src`
+	// (null hides). Esc, backdrop click, or the close button dismisses.
 	let {
 		src,
 		alt = '',
@@ -19,28 +13,19 @@
 
 	const open = $derived(src !== null);
 
-	// Tracks the element that had focus when the lightbox opened so
-	// we can restore it when it closes. Without this, closing leaves
-	// focus on document.body, which is jarring for keyboard users
-	// (their next Tab starts at the top of the page).
 	let priorFocus: HTMLElement | null = null;
 	let backdropEl: HTMLDivElement | null = $state(null);
 
 	$effect(() => {
 		if (!open) return;
-		// On open: capture and move focus to the backdrop. The
-		// `tabindex="-1"` on the backdrop accepts programmatic focus
-		// without joining the tab order, which is what makes the
-		// `onkeydown` handler reachable for Enter/Space-to-dismiss
-		// AND ensures screen readers announce the dialog reliably.
+		// Capture focus so we can restore it on close — otherwise the
+		// closing dialog leaves focus on document.body, restarting the
+		// next keyboard Tab at the top of the page.
 		priorFocus = document.activeElement as HTMLElement | null;
 		// Defer one frame so the {#if open} insertion has hit the DOM.
 		requestAnimationFrame(() => backdropEl?.focus());
 		return () => {
-			// On close: bounce focus back where it was. We deliberately
-			// don't trap focus while open — the reader body is read-only
-			// chrome, and a trap would make Esc-then-back jarring.
-			priorFocus?.focus?.();
+			priorFocus?.focus();
 			priorFocus = null;
 		};
 	});
@@ -54,16 +39,11 @@
 	}
 
 	function onBackdropClick(ev: MouseEvent) {
-		// A click that lands on the backdrop element itself (not on
-		// the image or close button) dismisses. Bubbled clicks from
-		// the inner figure / image are stopped at the figure.
 		if (ev.target === ev.currentTarget) onClose();
 	}
 
 	function onBackdropKey(ev: KeyboardEvent) {
-		// Pairs the click-to-dismiss surface with Enter/Space activation
-		// when the dialog is keyboard-focused (a11y: non-button click
-		// surfaces still need keyboard parity).
+		// Keyboard parity for the click-to-dismiss backdrop.
 		if (ev.target !== ev.currentTarget) return;
 		if (ev.key === 'Enter' || ev.key === ' ') {
 			ev.preventDefault();
@@ -75,12 +55,10 @@
 <svelte:window onkeydown={onKey} />
 
 {#if open}
-	<!-- The wrapper is the click-outside surface. It's role=dialog so
-	     screen readers announce a modal context, but we intentionally
-	     do NOT trap focus: the reader body is read-only chrome and
-	     pressing Esc should bounce focus straight back to where it was.
-	     tabindex=-1 satisfies the dialog-must-be-focusable a11y rule
-	     without inserting the dialog into the tab order. -->
+	<!-- role=dialog announces a modal context, but we intentionally do
+	     NOT trap focus — the reader body is read-only chrome and Esc
+	     should bounce focus back where it was. tabindex=-1 makes the
+	     dialog programmatically focusable without joining the tab order. -->
 	<div
 		bind:this={backdropEl}
 		class="lightbox-backdrop"
@@ -112,11 +90,10 @@
 			</svg>
 			<span>CLOSE</span>
 		</button>
-		<!-- A button host for the image keeps focus management intact
-		     and stops backdrop-click from bubbling without violating
-		     the non-interactive-element-with-handler a11y rule. The
-		     button itself is a visual no-op (transparent, no border,
-		     cursor: default) so users see only the image. -->
+		<!-- Visual no-op button: absorbs clicks on the image so they
+		     don't bubble to the dismiss-on-backdrop handler, and lets
+		     the figure host keyboard handlers without violating the
+		     non-interactive-element-with-handler a11y rule. -->
 		<button
 			type="button"
 			class="lightbox-figure"
@@ -140,10 +117,7 @@
 		cursor: zoom-out;
 	}
 	.lightbox-figure {
-		/* Visually neutral host — strips browser button chrome so the
-		   user sees only the image. The element is a <button> only to
-		   absorb clicks without bubbling to the dismiss-on-backdrop
-		   handler and to satisfy keyboard-event a11y rules. */
+		/* Strip default button chrome so the user sees only the image. */
 		margin: 0;
 		padding: 0;
 		border: 0;
@@ -162,8 +136,7 @@
 		height: auto;
 		object-fit: contain;
 		display: block;
-		/* A 1-px hairline keeps the image edge legible against very
-		   dark images on the dim backdrop. */
+		/* Hairline keeps very dark images legible on the dim backdrop. */
 		box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
 	}
 	.lightbox-close {
@@ -188,8 +161,7 @@
 		border-color: rgba(255, 255, 255, 0.4);
 	}
 
-	/* On narrow viewports the close button collapses to icon-only so
-	   it doesn't compete with the image. */
+	/* Narrow viewports: collapse the close button to icon-only. */
 	@media (max-width: 720px) {
 		.lightbox-backdrop {
 			padding: 16px;

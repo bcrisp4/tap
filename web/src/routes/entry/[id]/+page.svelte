@@ -41,23 +41,13 @@
 
 	let progress = $state(0);
 
-	// Plan 16 inverts Plan 11's "no auto-mark-read" rule. Opening the
-	// reader is the user's signal that they've engaged with the entry,
-	// so the read flag flips to true on mount.
-	//
-	// Loop guard: the optimistic update inside `useToggleRead` flips
-	// the cached `entry.data.read` to true the moment we call mutate(),
-	// which would re-trigger any effect that depends on `entry.data.read`.
-	// We track per-id attempt counts in a plain Map (no reactivity
-	// needed) so the effect re-evaluates only when the route param
-	// `id` changes — not when the cache flips.
-	//
-	// On mutation success the guard becomes a no-op (read flag is
-	// already true). On error the optimistic update reverts and
-	// `entry.data.read` flips back to false, which would naturally
-	// re-trigger the effect — we cap re-attempts at MAX_RETRIES so
-	// a persistent server error doesn't turn into an infinite mutate
-	// loop, while still letting one transient failure self-heal.
+	// Auto-mark-read on reader open. The optimistic update in
+	// `useToggleRead` flips `entry.data.read` synchronously, so the
+	// effect's `if (e.read) return` short-circuits subsequent runs
+	// from the cache flip. On mutation error the cache reverts to
+	// false and the effect would re-fire — we cap the per-id attempts
+	// so a persistent server error doesn't loop. After the cap the
+	// user can press `m` to take over manually.
 	const MAX_AUTO_MARK_ATTEMPTS = 2;
 	const autoMarkAttempts = new Map<number, number>();
 
@@ -69,11 +59,6 @@
 		if (attempts >= MAX_AUTO_MARK_ATTEMPTS) return;
 		autoMarkAttempts.set(e.id, attempts + 1);
 		toggleRead.mutate({ id: e.id, read: true });
-		// If the mutation fails, useToggleRead's onError reverts the
-		// optimistic cache update — `entry.data.read` flips back to
-		// false and this effect runs again. The bumped attempt counter
-		// caps the loop at MAX_AUTO_MARK_ATTEMPTS; after that the user
-		// can press `m` to take over manually.
 	});
 
 	function back() {
@@ -92,10 +77,9 @@
 		toggleSaved.mutate({ id: e.id, saved: !e.saved });
 	}
 
-	// Reader-specific keyboard shortcuts. Plan 16 made `m` a manual
-	// override on top of the auto-mark-read-on-open behaviour above:
-	// the entry is already read by the time `m` lands, so pressing
-	// `m` will mark it unread (and pressing it again re-marks read).
+	// Reader keyboard shortcuts. `m` is a manual override on top of the
+	// auto-mark-read effect: the entry is already read on first press,
+	// so `m` flips back to unread.
 	function onKey(ev: KeyboardEvent) {
 		// Ignore shortcuts while typing in form controls.
 		const target = ev.target as HTMLElement | null;
@@ -108,9 +92,8 @@
 			return;
 		}
 		if (ev.key === 'Escape') {
-			// If a modal dialog is open (e.g. the image lightbox in
-			// ReaderBody), Esc belongs to the dialog — let it close
-			// itself before we'd consider popping the whole route.
+			// Defer to any open modal (e.g. the image lightbox); Esc
+			// should close the dialog before popping the route.
 			if (document.querySelector('[role="dialog"][aria-modal="true"]')) {
 				return;
 			}

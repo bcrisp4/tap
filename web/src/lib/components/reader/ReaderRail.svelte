@@ -6,11 +6,9 @@
 	// leaving the article. Selected row gets a Klein accent strip on the
 	// left edge; read rows fade to ink-3 with an empty dot.
 	//
-	// Plan 16 added a `collapsed` mode used by the reader route: only a
-	// thin "back to unread" rail renders, the article body gets the full
-	// width, but the sibling-IDs of `entries` stay in scope so Plan 18
-	// can wire swipe-to-navigate (forward/back through siblings) onto a
-	// derived `siblingIds` value here without re-architecting.
+	// `collapsed` swaps the full list for a thin "back to unread" rail
+	// while keeping `entries` in scope so swipe-to-navigate can read
+	// the live sibling IDs from the prop.
 	let {
 		entries,
 		selectedId,
@@ -22,14 +20,6 @@
 		collapsed?: boolean;
 		onBack?: () => void;
 	} = $props();
-
-	// Sibling-IDs hook reserved for Plan 18 swipe-to-navigate. The
-	// collapsed-rail aside still receives the full `entries` array,
-	// and we surface the count on `data-sibling-count` so a swipe
-	// handler can find the rail and read the live ids straight from
-	// the prop. Plan 18: derive `siblingIds = entries.map(e => e.id)`
-	// in this same script and bind whatever swipe action you need;
-	// no re-scaffolding required.
 </script>
 
 {#if collapsed}
@@ -151,11 +141,9 @@
 		color: var(--ink-3);
 	}
 
-	/* Collapsed rail: a 56-px back-to-unread strip rendered while the
-	   reader is open. Mirrors the rail's bg-soft surface and ruled
-	   right edge so the focus-mode reader still feels framed, just
-	   tighter. The button is centred top-aligned to read as utility
-	   chrome rather than a full sidebar. */
+	/* Collapsed rail: 56-px back-to-unread strip. Mirrors the full rail's
+	   bg-soft surface + ruled right edge so the focus-mode reader still
+	   feels framed, just tighter. */
 	.reader-rail-collapsed {
 		width: 56px;
 		border-right: 1px solid var(--rule);

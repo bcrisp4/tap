@@ -24,24 +24,23 @@
 	const sourceName = $derived(feed?.title ?? '—');
 	const sourceURL = $derived(feed?.site_url ?? feed?.feed_url ?? '');
 
-	// Lightbox state. Opening is driven by a SINGLE delegated click on
-	// the article container; we never bind one listener per <img>,
-	// because the body HTML is injected via {@html} and per-element
-	// hooks would have to walk the DOM after every render.
+	// Lightbox open state. We use a single delegated click on the article
+	// rather than per-<img> listeners because the body HTML comes from
+	// {@html} and per-element rebinding would have to walk the DOM on
+	// every render.
 	let lightboxSrc = $state<string | null>(null);
 	let lightboxAlt = $state('');
 
 	function onArticleClick(ev: MouseEvent) {
 		const target = ev.target as HTMLElement | null;
 		if (!target || target.tagName !== 'IMG') return;
-		// If the image is wrapped in an <a>, let the link win — the
-		// author probably linked the image deliberately to a higher-res
-		// version or external destination.
+		// Linked images keep their link behaviour — authors usually link
+		// to a higher-res version or an external destination on purpose.
 		if (target.closest('a')) return;
 		ev.preventDefault();
 		const img = target as HTMLImageElement;
 		lightboxSrc = img.currentSrc || img.src;
-		lightboxAlt = img.alt ?? '';
+		lightboxAlt = img.alt;
 	}
 
 	function closeLightbox() {
@@ -50,15 +49,11 @@
 	}
 </script>
 
-<!-- The article's only click handler is a delegated open-lightbox
-     that fires only on <img> targets. <img> elements aren't focusable
-     by default, so this path is mouse / touch only — keyboard-only
-     users can't open the lightbox for unlinked inline images. That's
-     a deliberate scope limit for this plan: the delegate lives here
-     (rather than in a post-render walk that adds tabindex="0" to every
-     <img>) because the body HTML is injected via {@html} and any
-     per-element rebinding would have to re-run on every render. The
-     a11y_ignore directives encode that tradeoff. -->
+<!-- Mouse/touch-only by design: <img> isn't focusable so unlinked
+     inline images can't be opened from the keyboard. Adding tabindex
+     after every {@html} render would mean a DOM walk on each update,
+     which the delegated handler avoids. The a11y_ignore directives
+     encode that tradeoff. -->
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <article class="reader-body" data-testid="reader-body" onclick={onArticleClick}>
@@ -285,11 +280,8 @@
 		display: block;
 		margin: 0 auto 22px;
 	}
-	/* Clickable inline images — the delegated handler on the article
-	   opens the lightbox. zoom-in is the most legible cursor cue for
-	   "this image will enlarge"; images wrapped in <a> keep their
-	   link cursor since the closest-<a> early return in onArticleClick
-	   yields to the link. */
+	/* Cue that an inline image opens the lightbox; linked images keep
+	   the link cursor (the delegated handler yields to <a> closest). */
 	.reader-content :global(img) {
 		cursor: zoom-in;
 	}
