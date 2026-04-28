@@ -43,6 +43,19 @@ func TestFromHTML_IgnoresNonIconRels(t *testing.T) {
 	require.Empty(t, iconfetch.FromHTML(body, "https://example.com/"))
 }
 
+// Bare `rel="shortcut"` (without an accompanying `icon` token) is
+// historically used for unrelated resources and must not be treated
+// as a favicon candidate. Real legacy markup always pairs them as
+// `rel="shortcut icon"`.
+func TestFromHTML_BareShortcutIsNotIcon(t *testing.T) {
+	body := []byte(`<html><head>
+		<link rel="shortcut" href="/not-a-favicon">
+		<link rel="shortcut icon" href="/legacy.ico">
+	</head></html>`)
+	got := iconfetch.FromHTML(body, "https://example.com/")
+	require.Equal(t, []string{"https://example.com/legacy.ico"}, got)
+}
+
 func TestFaviconFallback(t *testing.T) {
 	require.Equal(t, "https://example.com/favicon.ico",
 		iconfetch.FaviconFallback("https://example.com/some/path?x=1"))

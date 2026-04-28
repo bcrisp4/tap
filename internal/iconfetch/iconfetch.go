@@ -122,9 +122,16 @@ func FromHTML(htmlBody []byte, baseURL string) []string {
 	}
 }
 
+// relMentionsIcon reports whether a `rel` attribute names a favicon
+// candidate. Real-world markup uses `rel="icon"`, `rel="shortcut icon"`,
+// `rel="apple-touch-icon"`, `rel="mask-icon"`, etc. — i.e. the token
+// is either exactly `icon` or ends with `-icon`. Bare `shortcut`
+// alone (without an accompanying `icon` token) is intentionally NOT
+// matched; legacy markup always pairs it with `icon`, and matching
+// `shortcut` standalone risks pulling in unrelated `<link>` tags.
 func relMentionsIcon(rel string) bool {
 	for _, tok := range strings.Fields(rel) {
-		if tok == "icon" || tok == "shortcut" || strings.HasSuffix(tok, "-icon") {
+		if tok == "icon" || strings.HasSuffix(tok, "-icon") {
 			return true
 		}
 	}
