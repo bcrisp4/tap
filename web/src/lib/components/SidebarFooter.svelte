@@ -3,27 +3,8 @@
 	// help (toggles the global modal), and settings. Sits at the
 	// bottom of the desktop sidebar. The wordmark in the sidebar
 	// header is the only branding we render in the chrome.
-	import { theme, type Theme } from '$lib/theme.svelte';
+	import { theme, cycleTheme, type Theme } from '$lib/theme.svelte';
 	import { hotkeysModal } from '$lib/hotkeys-modal.svelte';
-
-	// Theme-cycle order is light → sepia → dark → light. We don't
-	// include 'system' in the quick cycle — Settings remains the place
-	// to opt back into OS-following.
-	const CYCLE: readonly Theme[] = ['light', 'sepia', 'dark'] as const;
-
-	function cycleTheme() {
-		// First click out of 'system' should land on the cycle's
-		// starting palette ('light'). Without this short-circuit the
-		// indexOf below would resolve 'system' to light then advance
-		// to the next entry, jumping straight to 'sepia' on click 1.
-		if (theme.theme === 'system') {
-			theme.setTheme(CYCLE[0]);
-			return;
-		}
-		const i = CYCLE.indexOf(theme.theme as (typeof CYCLE)[number]);
-		const next = CYCLE[(i + 1) % CYCLE.length];
-		theme.setTheme(next);
-	}
 
 	function themeLabel(t: Theme): string {
 		switch (t) {
@@ -114,8 +95,10 @@
 		text-decoration: none;
 		padding: 0;
 	}
-	.icon-btn:hover {
-		color: var(--ink);
-		background: var(--surface);
+	@media (hover: hover) {
+		.icon-btn:hover {
+			color: var(--ink);
+			background: var(--surface);
+		}
 	}
 </style>

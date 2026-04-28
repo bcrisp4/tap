@@ -160,17 +160,19 @@
 		padding: 0;
 		cursor: pointer;
 	}
-	.icon-btn:hover {
-		background: var(--bg-soft);
-		color: var(--ink);
-	}
 	.icon-btn:disabled {
 		color: var(--ink-4);
 		cursor: not-allowed;
 	}
-	.icon-btn:disabled:hover {
-		background: transparent;
-		color: var(--ink-4);
+	@media (hover: hover) {
+		.icon-btn:hover {
+			background: var(--bg-soft);
+			color: var(--ink);
+		}
+		.icon-btn:disabled:hover {
+			background: transparent;
+			color: var(--ink-4);
+		}
 	}
 	.icon-btn.is-spinning svg {
 		animation: tb-spin 0.9s linear infinite;

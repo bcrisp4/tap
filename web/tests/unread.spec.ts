@@ -46,9 +46,14 @@ test('j/k advance the selected entry', async ({ page }) => {
 	const rows = page.locator('.entry');
 	await expect(rows.first()).toBeVisible({ timeout: 20_000 });
 
-	// First row defaults to selected once data has loaded.
-	await expect(rows.first()).toHaveClass(/is-selected/);
+	// Plan 18: the keyboard-selection highlight is gated on input mode
+	// being 'keyboard'. Before the first keystroke we're still in
+	// 'mouse' mode (the safe default) so no row paints highlighted.
+	await expect(rows.first()).not.toHaveClass(/is-selected/);
 
+	// First j puts us in keyboard mode AND advances the selection from
+	// the default first row (selectedId resolves through the user-pick
+	// fallback) → second row.
 	await page.keyboard.press('j');
 	await expect(rows.nth(1)).toHaveClass(/is-selected/);
 	await page.keyboard.press('k');

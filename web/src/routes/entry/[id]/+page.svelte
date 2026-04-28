@@ -16,6 +16,7 @@
 	import ReaderBody from '$lib/components/reader/ReaderBody.svelte';
 	import MobileReaderTopBar from '$lib/components/reader/MobileReaderTopBar.svelte';
 	import MobileReaderFootBar from '$lib/components/reader/MobileReaderFootBar.svelte';
+	import { createSwipe, type SwipeEvent } from '$lib/swipe.svelte';
 
 	// TanStack Svelte Query v6 (Plan 09 pin) returns runes-driven reactive
 	// objects directly — `entry.isLoading`, `entry.data`. Don't dereference
@@ -42,29 +43,71 @@
 
 	let progress = $state(0);
 
-	// Auto-mark-read on reader open. The optimistic update in
-	// `useToggleRead` flips `entry.data.read` synchronously, so the
-	// effect's `if (e.read) return` short-circuits subsequent runs
-	// from the cache flip. On mutation error the cache reverts to
-	// false and the effect would re-fire — we cap the per-id attempts
-	// so a persistent server error doesn't loop. After the cap the
-	// user can press `m` to take over manually.
-	const MAX_AUTO_MARK_ATTEMPTS = 2;
-	const autoMarkAttempts = new Map<number, number>();
+	// Auto-mark-read on reader open. We fire exactly once per entry-id
+	// per page lifetime: the user's manual `m` press (or footbar tap on
+	// mobile) flips read=false, and the auto-effect must NOT re-fire
+	// against that — otherwise the manual unmark looks unresponsive
+	// (mobile flicker bug, Plan 18 T3 root cause). Once the auto-mutate
+	// has been issued, the user owns the read state.
+	const autoMarked = new Set<number>();
 
 	$effect(() => {
 		const e = entry.data;
 		if (!e) return;
 		if (e.read) return;
-		const attempts = autoMarkAttempts.get(e.id) ?? 0;
-		if (attempts >= MAX_AUTO_MARK_ATTEMPTS) return;
-		autoMarkAttempts.set(e.id, attempts + 1);
+		if (autoMarked.has(e.id)) return;
+		autoMarked.add(e.id);
 		toggleRead.mutate({ id: e.id, read: true });
 	});
 
 	function back() {
 		goto('/');
 	}
+
+	// Plan 18 / T6: swipe-to-navigate between sibling entries on
+	// mobile. We snapshot the list of sibling-IDs the first time the
+	// current entry appears in the unread query and don't refresh it —
+	// auto-mark-read drops the current id from the live unread list,
+	// which would otherwise leave siblingId() stranded with no anchor.
+	// At first/last sibling we briefly bounce visually but don't navigate.
+	let bounceDx = $state(0);
+	let siblingIds: number[] = [];
+
+	$effect(() => {
+		const list = entries.data?.data ?? [];
+		const e = entry.data;
+		if (!e) return;
+		if (siblingIds.includes(e.id)) return;
+		const idx = list.findIndex((x) => x.id === e.id);
+		if (idx < 0) return;
+		siblingIds = list.map((x) => x.id);
+	});
+
+	function siblingId(offset: -1 | 1): number | null {
+		const e = entry.data;
+		if (!e) return null;
+		const idx = siblingIds.indexOf(e.id);
+		if (idx < 0) return null;
+		const target = idx + offset;
+		if (target < 0 || target >= siblingIds.length) return null;
+		return siblingIds[target];
+	}
+
+	function onReaderSwipe(ev: SwipeEvent) {
+		// Right-swipe → previous (rewind). Left-swipe → next (forward).
+		const offset: -1 | 1 = ev.direction === 'right' ? -1 : 1;
+		const next = siblingId(offset);
+		if (next === null) {
+			// At an edge — bounce visually so the user gets feedback,
+			// then snap back. The body's `transform` style picks this up.
+			bounceDx = ev.direction === 'right' ? 30 : -30;
+			setTimeout(() => (bounceDx = 0), 200);
+			return;
+		}
+		void goto('/entry/' + next);
+	}
+
+	const readerSwipe = createSwipe({ threshold: 60, onSwipe: onReaderSwipe });
 
 	function toggleReadHere() {
 		const e = entry.data;
@@ -137,7 +180,19 @@
 			onBack={back}
 			onSave={toggleSavedHere}
 		/>
-		<div class="reader-scroller" onscroll={onScroll}>
+		<div
+			class="reader-scroller"
+			class:is-swiping={readerSwipe.swipeDx !== 0}
+			style:transform={readerSwipe.swipeDx !== 0 || bounceDx !== 0
+				? `translateX(${readerSwipe.swipeDx + bounceDx}px)`
+				: undefined}
+			role="article"
+			onscroll={onScroll}
+			ontouchstart={readerSwipe.onTouchStart}
+			ontouchmove={readerSwipe.onTouchMove}
+			ontouchend={readerSwipe.onTouchEnd}
+			ontouchcancel={readerSwipe.onTouchCancel}
+		>
 			<ReaderBody entry={entry.data} feed={feed} />
 		</div>
 		<MobileReaderFootBar
@@ -201,5 +256,12 @@
 	.reader-scroller {
 		flex: 1;
 		overflow-y: auto;
+		transition: transform 220ms cubic-bezier(0.2, 0.8, 0.4, 1);
+	}
+	/* While the finger is dragging, suppress the spring-back transition
+	   so the body tracks the finger 1:1; the transition kicks back in
+	   for the release / bounce-at-edge animation. */
+	.reader-scroller.is-swiping {
+		transition: transform 0ms;
 	}
 </style>

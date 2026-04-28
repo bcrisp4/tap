@@ -78,13 +78,20 @@
 	}
 	.m-back,
 	.m-action {
-		width: 40px;
-		height: 40px;
+		width: 44px;
+		height: 44px;
+		min-width: 44px;
+		min-height: 44px;
 		display: grid;
 		place-items: center;
 		color: var(--ink-2);
 		border-radius: 8px;
 		flex-shrink: 0;
+		background: transparent;
+		border: 0;
+		cursor: pointer;
+		padding: 0;
+		touch-action: manipulation;
 	}
 	.m-back:active,
 	.m-action:active {

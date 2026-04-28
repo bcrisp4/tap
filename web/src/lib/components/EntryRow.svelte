@@ -21,6 +21,8 @@
 
 <script lang="ts">
 	import type { Entry, Feed } from '$api/types';
+	import { inputMode } from '$lib/inputmode.svelte';
+	import { createSwipe, type SwipeEvent } from '$lib/swipe.svelte';
 
 	let {
 		entry,
@@ -46,20 +48,50 @@
 
 	const ago = $derived(formatAgo(entry.published_at ?? entry.created_at));
 	const swatchColor = $derived(swatchFor(feed?.title ?? feed?.feed_url ?? 'tap'));
+	// Keyboard-selection highlight is only meaningful when the user is
+	// actually driving with the keyboard. On mouse / touch the row that
+	// happens to be `selectedId` shouldn't paint highlighted (the user
+	// has no way of knowing why one row is shaded).
+	const showKeyboardHighlight = $derived(selected && inputMode.mode === 'keyboard');
 
-	function onReadDotClick(ev: MouseEvent) {
-		// Stop the row click; the read-dot has its own action and we
-		// don't want a click-to-open hijack.
-		ev.stopPropagation();
-		ev.preventDefault();
-		onToggleRead(entry.id, !entry.read);
+	// On touch devices the synthesized click that follows a tap can
+	// retarget to the stretched <a> sibling instead of the button —
+	// navigating into the reader instead of toggling. We act on
+	// pointerup and swallow the trailing click via a one-shot guard.
+	// Keyboard activations (Space / Enter) deliver a click WITHOUT a
+	// preceding pointerup, so the click handler also runs the action
+	// when the guard is unset.
+	function makeButtonHandlers(action: () => void) {
+		let consumeNextClick = false;
+		return {
+			onPointerUp(ev: PointerEvent) {
+				if (ev.button !== 0) return;
+				ev.stopPropagation();
+				ev.preventDefault();
+				consumeNextClick = true;
+				action();
+			},
+			onClick(ev: MouseEvent) {
+				ev.stopPropagation();
+				ev.preventDefault();
+				if (consumeNextClick) {
+					consumeNextClick = false;
+					return;
+				}
+				action();
+			}
+		};
 	}
 
-	function onSelectBoxClick(ev: MouseEvent) {
-		ev.stopPropagation();
-		ev.preventDefault();
-		onToggleSelect(entry.id, ev);
-	}
+	const readDot = makeButtonHandlers(() => onToggleRead(entry.id, !entry.read));
+	// Parent's onToggleSelect contract takes (id, ev) but ignores ev
+	// (RiverList only consumes the event for its own row-level chord
+	// detection, not for the per-row select-box). Pass an empty stub
+	// MouseEvent so the type signature is honoured without coupling
+	// the EntryRow to whichever pointer event source fired.
+	const selectBox = makeButtonHandlers(() =>
+		onToggleSelect(entry.id, new MouseEvent('click'))
+	);
 
 	function onLinkClick(ev: MouseEvent) {
 		// The parent owns navigation (RiverList → +page.svelte). Honour
@@ -71,15 +103,28 @@
 		ev.preventDefault();
 		onclick(ev);
 	}
+
+	// Right-swipe = mark read (matches "completed" semantics — drag
+	// the row off toward the right). Left-swipe = mark unread.
+	const swipe = createSwipe({
+		threshold: 60,
+		onSwipe: (ev: SwipeEvent) => onToggleRead(entry.id, ev.direction === 'right')
+	});
 </script>
 
 <article
 	class="entry"
 	class:is-read={entry.read}
 	class:is-saved={entry.saved}
-	class:is-selected={selected}
+	class:is-selected={showKeyboardHighlight}
 	class:is-multi={multiSelect}
 	class:is-multi-selected={multiSelected}
+	class:is-swiping={swipe.swipeDx !== 0}
+	style:transform={swipe.swipeDx !== 0 ? `translateX(${swipe.swipeDx}px)` : undefined}
+	ontouchstart={swipe.onTouchStart}
+	ontouchmove={swipe.onTouchMove}
+	ontouchend={swipe.onTouchEnd}
+	ontouchcancel={swipe.onTouchCancel}
 >
 	<!--
 		Per-row affordance. Real <button> with native keyboard /
@@ -93,7 +138,8 @@
 			class="select-box"
 			aria-label={multiSelected ? 'Deselect entry' : 'Select entry'}
 			aria-pressed={multiSelected}
-			onclick={onSelectBoxClick}
+			onpointerup={selectBox.onPointerUp}
+			onclick={selectBox.onClick}
 		>
 			<span class="check" aria-hidden="true">{multiSelected ? '✓' : ''}</span>
 		</button>
@@ -104,7 +150,8 @@
 			aria-label={entry.read ? 'Mark unread' : 'Mark read'}
 			aria-pressed={!entry.read}
 			data-testid="row-read-toggle"
-			onclick={onReadDotClick}
+			onpointerup={readDot.onPointerUp}
+			onclick={readDot.onClick}
 		>
 			<span class="dot" aria-hidden="true"></span>
 		</button>
@@ -149,13 +196,25 @@
 		padding: 14px 24px 14px 40px;
 		border-bottom: 1px solid var(--rule);
 		background: transparent;
-		transition: background 120ms ease;
+		transition:
+			background 120ms ease,
+			transform 220ms cubic-bezier(0.2, 0.8, 0.4, 1);
 		font-family: inherit;
 		color: inherit;
 		box-sizing: border-box;
 	}
-	.entry:hover {
-		background: var(--bg-soft);
+	/* While the finger is dragging, suppress the spring-back transition
+	   so the row tracks the finger 1:1; the transition kicks back in
+	   for the release animation. */
+	.entry.is-swiping {
+		transition:
+			background 120ms ease,
+			transform 0ms;
+	}
+	@media (hover: hover) {
+		.entry:hover {
+			background: var(--bg-soft);
+		}
 	}
 	.entry.is-selected {
 		background: var(--accent-soft);
@@ -188,13 +247,20 @@
 	}
 
 	/* Per-row mark-read button. Filled dot = unread, hollow ring =
-	   read. Hidden on mobile — Plan 18 swaps in swipe gestures. */
+	   read. The button is sized 44x44 (iOS HIG floor) with the dot
+	   visually centered via inline-grid; the visible dot itself stays
+	   small (.dot, 6px). The 3px offset keeps the dot's visual center
+	   at the same (25,25) point Plan 15 designed for the 18px button.
+	   `touch-action: manipulation` removes the 300ms tap-delay on
+	   touch devices. */
 	.read-dot {
 		position: absolute;
-		left: 16px;
-		top: 16px;
-		width: 18px;
-		height: 18px;
+		left: 3px;
+		top: 3px;
+		min-width: 44px;
+		min-height: 44px;
+		width: 44px;
+		height: 44px;
 		z-index: 1;
 		display: inline-grid;
 		place-items: center;
@@ -204,9 +270,12 @@
 		padding: 0;
 		cursor: pointer;
 		color: inherit;
+		touch-action: manipulation;
 	}
-	.read-dot:hover {
-		background: var(--bg-soft);
+	@media (hover: hover) {
+		.read-dot:hover {
+			background: var(--bg-soft);
+		}
 	}
 	.read-dot .dot {
 		width: 6px;
@@ -224,32 +293,51 @@
 	}
 
 	/* Multi-select checkbox replaces the read dot when the river is in
-	   multi-select mode. */
+	   multi-select mode. The visible 18×18 box is centered inside a
+	   44×44 hit area (iOS HIG floor) using a ::before pseudo-element
+	   so the visible affordance keeps its compact look while the tap
+	   target meets the minimum. */
 	.select-box {
 		position: absolute;
-		left: 14px;
-		top: 14px;
-		width: 18px;
-		height: 18px;
+		left: 0;
+		top: 0;
+		min-width: 44px;
+		min-height: 44px;
+		width: 44px;
+		height: 44px;
 		z-index: 1;
 		display: inline-grid;
 		place-items: center;
-		background: var(--bg);
-		border: 1px solid var(--ink-4);
-		border-radius: 3px;
+		background: transparent;
+		border: 0;
 		padding: 0;
 		cursor: pointer;
 		color: inherit;
+		touch-action: manipulation;
 	}
-	.entry.is-multi-selected .select-box {
-		background: var(--accent);
-		border-color: var(--accent);
-		color: var(--bg);
+	.select-box::before {
+		content: '';
+		display: block;
+		width: 18px;
+		height: 18px;
+		background: var(--bg);
+		border: 1px solid var(--ink-4);
+		border-radius: 3px;
+		grid-area: 1 / 1;
 	}
 	.select-box .check {
+		grid-area: 1 / 1;
+		z-index: 1;
 		font-size: 12px;
 		line-height: 1;
 		font-family: var(--sans);
+	}
+	.entry.is-multi-selected .select-box::before {
+		background: var(--accent);
+		border-color: var(--accent);
+	}
+	.entry.is-multi-selected .select-box {
+		color: var(--bg);
 	}
 
 	.saved-mark {
@@ -334,12 +422,6 @@
 	:global(.density-compact) .entry .summary {
 		display: none;
 	}
-	:global(.density-compact) .entry .read-dot {
-		top: 11px;
-	}
-	:global(.density-compact) .entry .select-box {
-		top: 9px;
-	}
 	:global(.density-compact) .entry .saved-mark {
 		top: 13px;
 	}
@@ -349,17 +431,14 @@
 	}
 
 	/* Mobile overrides cascade from the .is-mobile root applied in
-	   +page.svelte. Plan 18 will add swipe gestures; for now the
-	   per-row read dot is hidden on mobile to keep the row tappable. */
+	   +page.svelte. The read-dot stays visible on mobile (Plan 18 T3 +
+	   T4): T3 fixes its tap-vs-open conflict; T4 sizes it ≥44×44 via
+	   the dedicated `.read-dot` rules below so the underlying anchor
+	   never claims the tap. The swipe gesture (T5) is the secondary
+	   affordance, not the only one. */
 	:global(.is-mobile) .entry {
-		padding-left: 36px;
+		padding-left: 44px;
 		padding-right: 18px;
-	}
-	:global(.is-mobile) .entry .read-dot {
-		display: none;
-	}
-	:global(.is-mobile) .entry.is-multi .select-box {
-		left: 14px;
 	}
 	:global(.is-mobile) .entry .saved-mark {
 		right: 18px;

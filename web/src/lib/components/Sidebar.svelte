@@ -89,9 +89,11 @@
 		padding: 0 6px;
 		border-radius: 3px;
 	}
-	.add-feed:hover {
-		color: var(--ink);
-		background: var(--surface);
+	@media (hover: hover) {
+		.add-feed:hover {
+			color: var(--ink);
+			background: var(--surface);
+		}
 	}
 	.footer-spacer {
 		flex: 1;
@@ -108,8 +110,10 @@
 		text-decoration: none;
 		border-left: 2px solid transparent;
 	}
-	.nav-item:hover {
-		color: var(--ink);
+	@media (hover: hover) {
+		.nav-item:hover {
+			color: var(--ink);
+		}
 	}
 	.nav-item.active {
 		color: var(--ink);
@@ -134,8 +138,10 @@
 		color: var(--ink-2);
 		text-decoration: none;
 	}
-	.feed-row:hover {
-		color: var(--ink);
+	@media (hover: hover) {
+		.feed-row:hover {
+			color: var(--ink);
+		}
 	}
 	.feed-row .name {
 		overflow: hidden;

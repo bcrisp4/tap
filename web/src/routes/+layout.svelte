@@ -6,6 +6,7 @@
 	import { bindOnlineManager } from '$lib/offline/online';
 	import { prefetchRecent } from '$lib/offline/prefetch';
 	import { hotkeysModal } from '$lib/hotkeys-modal.svelte';
+	import { bindInputMode } from '$lib/inputmode.svelte';
 	import HotkeysModal from '$lib/components/HotkeysModal.svelte';
 	import '../app.css';
 
@@ -29,6 +30,12 @@
 		mq.addEventListener('change', applyThemeClasses);
 		return () => mq.removeEventListener('change', applyThemeClasses);
 	});
+
+	// Track which input device the user is driving the UI with so
+	// keyboard-only affordances (the row-selection highlight) hide
+	// while the user is on mouse / touch. One layout-wide listener
+	// keeps this off the per-component hot path.
+	onMount(() => bindInputMode());
 
 	// PWA / offline wiring. adapter-static doesn't auto-register the
 	// service worker (no SSR hook), so we do it manually. Initial

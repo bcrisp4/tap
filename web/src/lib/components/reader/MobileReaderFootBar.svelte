@@ -97,9 +97,15 @@
 		font-size: 11px;
 		font-weight: 500;
 		color: var(--ink-2);
+		min-width: 44px;
 		min-height: 52px;
 		border-radius: 8px;
 		text-decoration: none;
+		background: transparent;
+		border: 0;
+		cursor: pointer;
+		font-family: inherit;
+		touch-action: manipulation;
 	}
 	.m-foot-btn:active {
 		background: var(--bg-soft);

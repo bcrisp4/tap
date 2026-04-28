@@ -91,8 +91,10 @@
 		text-decoration: none;
 		color: inherit;
 	}
-	.rail-row:hover {
-		background: var(--bg);
+	@media (hover: hover) {
+		.rail-row:hover {
+			background: var(--bg);
+		}
 	}
 	.rail-row.is-selected {
 		background: var(--bg);
@@ -162,8 +164,10 @@
 		border-radius: 4px;
 		color: var(--ink-2);
 	}
-	.rail-back:hover {
-		color: var(--ink);
-		background: var(--bg);
+	@media (hover: hover) {
+		.rail-back:hover {
+			color: var(--ink);
+			background: var(--bg);
+		}
 	}
 </style>

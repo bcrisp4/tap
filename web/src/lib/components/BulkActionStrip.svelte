@@ -63,15 +63,17 @@
 		color: var(--ink);
 		cursor: pointer;
 	}
-	.action:hover {
-		background: var(--bg-soft);
-	}
 	.action.ghost {
 		background: transparent;
 		border-color: transparent;
 		color: var(--ink-2);
 	}
-	.action.ghost:hover {
-		color: var(--ink);
+	@media (hover: hover) {
+		.action:hover {
+			background: var(--bg-soft);
+		}
+		.action.ghost:hover {
+			color: var(--ink);
+		}
 	}
 </style>

@@ -71,3 +71,17 @@ export function applyThemeClasses() {
 	c.add('theme-' + resolvedTheme());
 	document.documentElement.dataset.tapFont = theme.font;
 }
+
+// Quick-cycle order is light → sepia → dark → light. 'system' is the
+// "follow OS" fallback and lives in Settings — the cycle's first click
+// from 'system' lands on 'light' rather than incrementing past it.
+const THEME_CYCLE: readonly Theme[] = ['light', 'sepia', 'dark'] as const;
+
+export function cycleTheme() {
+	if (theme.theme === 'system') {
+		theme.setTheme(THEME_CYCLE[0]);
+		return;
+	}
+	const i = THEME_CYCLE.indexOf(theme.theme as (typeof THEME_CYCLE)[number]);
+	theme.setTheme(THEME_CYCLE[(i + 1) % THEME_CYCLE.length]);
+}
