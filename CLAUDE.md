@@ -21,17 +21,26 @@ Implementation is split across **19 sub-plans** (00–18; 14–18 were added pos
 
 ## Worktrees
 
-Worktrees live under `.claude/worktrees/<branch>` (gitignored). Create with:
+Worktrees live under `.claude/worktrees/<slug>` (gitignored — slug is the
+branch name with the `feat/` / `chore/` / `docs/` prefix stripped, e.g.
+branch `feat/tap-18-mobile-polish` → dir `.claude/worktrees/tap-18-mobile-polish`).
+Create with:
 
 ```bash
-git worktree add .claude/worktrees/<branch> -b <branch>
+git worktree add .claude/worktrees/<slug> -b feat/tap-NN-<slug>
 ```
 
-Branches use `feat/tap-NN-<slug>` for plan branches and `docs/<slug>` or `chore/<slug>` for meta work. Worktrees stay until the corresponding PR merges; clean up via `git worktree remove .claude/worktrees/<branch>`.
+Branches use `feat/tap-NN-<slug>` for plan branches and `docs/<slug>` or `chore/<slug>` for meta work. Worktrees stay until the corresponding PR merges; clean up via `git worktree remove .claude/worktrees/<slug>`.
+
+**`cd` out of the worktree before `git worktree remove`** — running it from inside leaves CWD in a deleted dir and every subsequent shell call errors with `getcwd: cannot access parent directories`.
 
 ## Agent dispatch + PR review
 
 - Lead agents that run inline `sleep` polls for Copilot review often exit prematurely with truncated "Waiting for Copilot..." summaries. The implementation work is usually already done — dispatch a separate follow-up agent dedicated to the Copilot review loop after the lead reports.
+- Even dedicated polling subagents may yield back after arming `Monitor`. The most reliable polling path is a single `Bash` `until` loop with `timeout: 600000` and `sleep 30` between checks, run from the lead session.
+- Detect Copilot review via `gh api repos/<o>/<r>/pulls/<n>/reviews` and `.../pulls/<n>/comments`, filtering author by regex `[Cc]opilot` (login: `copilot-pull-request-reviewer[bot]`). The PR's `reviewRequests` field is unreliable — it can empty out within seconds of the request even while the review is still in flight.
+- Reply on Copilot's inline comments **in-thread**, not as a top-level PR comment: `gh api -X POST repos/<o>/<r>/pulls/<n>/comments/<id>/replies --input - <<<'{"body":"..."}'`.
+- Bundle Copilot fix commits by logical theme (one commit covering related comments on the same file/concern), not one commit per comment — matches the existing convention in this repo's history.
 - Nested `Agent` / `Task` tool dispatch is often unavailable in subagent envs. Agents should `ToolSearch query: "select:Agent" max_results: 1` first; if not exposed, fall back to inline TDD.
 - PR# ≠ Plan# under parallel dispatch. Confirm the mapping via `gh pr list --head feat/tap-NN-...` before issuing comment-fix calls against a PR number.
 - GitHub auto-requests Copilot on PR creation. **Don't dismiss it trying to re-trigger** — once dismissed, the special `Copilot` reviewer can't be re-requested via API (POST returns 200 but reviewer not attached). For a fresh cycle, close + reopen the PR.
