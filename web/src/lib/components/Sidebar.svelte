@@ -11,6 +11,7 @@
 	import Wordmark from '$brand/Wordmark.svelte';
 	import FeedIcon from './FeedIcon.svelte';
 	import SidebarFooter from './SidebarFooter.svelte';
+	import { AlertTriangle } from 'lucide-svelte';
 
 	let { active }: { active?: 'unread' | 'history' | 'saved' } = $props();
 
@@ -43,6 +44,15 @@
 		<a href={'/feeds/' + f.id} class="feed-row">
 			<FeedIcon feed={f} />
 			<span class="name">{f.title}</span>
+			{#if f.error_count > 0}
+				<AlertTriangle
+					class="feed-warn"
+					size="12"
+					aria-hidden="false"
+					aria-label={`Feed has errors: ${f.last_error ?? ''}`}
+					title={f.last_error ?? ''}
+				/>
+			{/if}
 		</a>
 	{/each}
 
@@ -148,5 +158,10 @@
 		text-overflow: ellipsis;
 		white-space: nowrap;
 		flex: 1;
+	}
+	.feed-row :global(.feed-warn) {
+		color: var(--accent-warn, #c33);
+		flex-shrink: 0;
+		margin-left: 4px;
 	}
 </style>
