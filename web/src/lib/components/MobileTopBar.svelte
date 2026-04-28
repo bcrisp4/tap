@@ -79,10 +79,13 @@
 		justify-content: center;
 		color: var(--ink-2);
 		padding: 4px;
+		min-width: 44px;
+		min-height: 44px;
 		background: transparent;
 		border: 0;
 		cursor: pointer;
 		text-decoration: none;
+		touch-action: manipulation;
 	}
 	@media (hover: hover) {
 		.iconbtn:hover {

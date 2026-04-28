@@ -243,15 +243,20 @@
 	}
 
 	/* Per-row mark-read button. Filled dot = unread, hollow ring =
-	   read. `touch-action: manipulation` removes the 300ms tap-delay
-	   on touch devices; `pointer-events: auto` keeps the button live
-	   even though its parent .meta/.title use pointer-events:none. */
+	   read. The button is sized 44x44 (iOS HIG floor) with the dot
+	   visually centered via inline-grid; the visible dot itself stays
+	   small (.dot, 6px). The 3px offset keeps the dot's visual center
+	   at the same (25,25) point Plan 15 designed for the 18px button.
+	   `touch-action: manipulation` removes the 300ms tap-delay on
+	   touch devices. */
 	.read-dot {
 		position: absolute;
-		left: 16px;
-		top: 16px;
-		width: 18px;
-		height: 18px;
+		left: 3px;
+		top: 3px;
+		min-width: 44px;
+		min-height: 44px;
+		width: 44px;
+		height: 44px;
 		z-index: 1;
 		display: inline-grid;
 		place-items: center;
@@ -284,33 +289,51 @@
 	}
 
 	/* Multi-select checkbox replaces the read dot when the river is in
-	   multi-select mode. */
+	   multi-select mode. The visible 18×18 box is centered inside a
+	   44×44 hit area (iOS HIG floor) using a ::before pseudo-element
+	   so the visible affordance keeps its compact look while the tap
+	   target meets the minimum. */
 	.select-box {
 		position: absolute;
-		left: 14px;
-		top: 14px;
-		width: 18px;
-		height: 18px;
+		left: 0;
+		top: 0;
+		min-width: 44px;
+		min-height: 44px;
+		width: 44px;
+		height: 44px;
 		z-index: 1;
 		display: inline-grid;
 		place-items: center;
-		background: var(--bg);
-		border: 1px solid var(--ink-4);
-		border-radius: 3px;
+		background: transparent;
+		border: 0;
 		padding: 0;
 		cursor: pointer;
 		color: inherit;
 		touch-action: manipulation;
 	}
-	.entry.is-multi-selected .select-box {
-		background: var(--accent);
-		border-color: var(--accent);
-		color: var(--bg);
+	.select-box::before {
+		content: '';
+		display: block;
+		width: 18px;
+		height: 18px;
+		background: var(--bg);
+		border: 1px solid var(--ink-4);
+		border-radius: 3px;
+		grid-area: 1 / 1;
 	}
 	.select-box .check {
+		grid-area: 1 / 1;
+		z-index: 1;
 		font-size: 12px;
 		line-height: 1;
 		font-family: var(--sans);
+	}
+	.entry.is-multi-selected .select-box::before {
+		background: var(--accent);
+		border-color: var(--accent);
+	}
+	.entry.is-multi-selected .select-box {
+		color: var(--bg);
 	}
 
 	.saved-mark {
@@ -395,12 +418,6 @@
 	:global(.density-compact) .entry .summary {
 		display: none;
 	}
-	:global(.density-compact) .entry .read-dot {
-		top: 11px;
-	}
-	:global(.density-compact) .entry .select-box {
-		top: 9px;
-	}
 	:global(.density-compact) .entry .saved-mark {
 		top: 13px;
 	}
@@ -418,9 +435,6 @@
 	:global(.is-mobile) .entry {
 		padding-left: 44px;
 		padding-right: 18px;
-	}
-	:global(.is-mobile) .entry.is-multi .select-box {
-		left: 14px;
 	}
 	:global(.is-mobile) .entry .saved-mark {
 		right: 18px;

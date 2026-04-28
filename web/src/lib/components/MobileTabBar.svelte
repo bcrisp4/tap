@@ -37,15 +37,18 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
+		justify-content: center;
 		gap: 5px;
 		font-family: var(--sans);
 		font-size: 11px;
 		font-weight: 500;
 		color: var(--ink-3);
 		padding: 6px 0 4px;
-		min-height: 48px;
+		min-width: 44px;
+		min-height: 44px;
 		position: relative;
 		text-decoration: none;
+		touch-action: manipulation;
 	}
 	.tab.active {
 		color: var(--ink);
