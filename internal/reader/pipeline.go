@@ -33,19 +33,45 @@ func NewPipeline(cfg PipelineConfig) *Pipeline {
 	return &Pipeline{cfg: cfg}
 }
 
-// Process runs extract → media rewrite → sanitize and returns the
-// final body HTML, ready for storage in entries.content.
-func (p *Pipeline) Process(entryHTML, articleURL, scraperRules string) (string, error) {
-	extracted, err := Extract(entryHTML, articleURL, scraperRules)
-	if err != nil {
-		return "", err
+// Extract runs the optional extraction layer (CSS rules → go-readability
+// fallback) over a fetched article HTML. Plan 15 splits this from the
+// universal media-rewrite + sanitize so callers that already have body
+// HTML (e.g. feed-supplied summaries) can skip extraction and still
+// benefit from the proxy + sanitiser.
+func (p *Pipeline) Extract(entryHTML, articleURL, scraperRules string) (string, error) {
+	return Extract(entryHTML, articleURL, scraperRules)
+}
+
+// RewriteAndSanitize rewrites <img>/<source> URLs through the proxy
+// encoder and sanitizes the result via the bluemonday policy. Universal:
+// every entry's content (extracted or feed-supplied) flows through this
+// step before storage so right-click→copy-image-URL always yields a
+// /api/v1/proxy/<token> URL.
+//
+// Sanitization MUST always run regardless of rewrite outcome — the
+// frontend renders content via `{@html entry.content}` so any path
+// that returns a non-error value here must be safe to render. If
+// RewriteMedia fails (rare; goquery parse error on adversarial
+// markup), we degrade gracefully: skip the proxy rewrite for this
+// entry but still sanitize the original HTML.
+func (p *Pipeline) RewriteAndSanitize(entryHTML, articleURL string) (string, error) {
+	source := entryHTML
+	if rewritten, err := RewriteMedia(entryHTML, articleURL, p.cfg.Encode); err == nil {
+		source = rewritten
 	}
-	rewritten, err := RewriteMedia(extracted, articleURL, p.cfg.Encode)
-	if err != nil {
-		return "", err
-	}
-	return Sanitize(rewritten, SanitizeOptions{
+	return Sanitize(source, SanitizeOptions{
 		ArticleURL:      articleURL,
 		IframeAllowlist: p.cfg.IframeAllowlist,
 	})
+}
+
+// Process runs Extract → RewriteAndSanitize and returns the final body
+// HTML, ready for storage in entries.content. Convenience wrapper for
+// callers that want the full crawler-mode pipeline.
+func (p *Pipeline) Process(entryHTML, articleURL, scraperRules string) (string, error) {
+	extracted, err := p.Extract(entryHTML, articleURL, scraperRules)
+	if err != nil {
+		return "", err
+	}
+	return p.RewriteAndSanitize(extracted, articleURL)
 }

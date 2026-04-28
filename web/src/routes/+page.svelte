@@ -2,23 +2,39 @@
 	// The unread "river" — the home view of Tap.
 	//
 	// Two layouts switch on a `(max-width: 720px)` matchMedia query:
-	//   - desktop: sidebar + top bar + poll strip + list + hints footer
+	//   - desktop: sidebar + top bar + list (+ bulk strip when active)
 	//   - mobile : top bar + list + bottom tab bar
 	//
-	// Selection + keyboard nav are owned here so all the chrome
-	// components stay pure-presentation.
+	// Plan 15 reshapes the desktop chrome:
+	//   - Top status row (PollStrip) and pulsing-blue dot are gone.
+	//   - OfflineIndicator replaces them, only visible when offline.
+	//   - KeyboardHints footer is gone (Plan 17 ships the modal).
+	//   - Click-to-open works on desktop; keyboard nav still works.
+	//   - Per-row mark-read button + multi-select + bulk read.
+	//   - Mark All Read shows a ConfirmModal.
+	//   - Refresh button is wired to the real /feeds/[id]/refresh path
+	//     and shows a loading spinner.
 	import { onMount } from 'svelte';
+	import { SvelteSet } from 'svelte/reactivity';
 	import { goto } from '$app/navigation';
 	import { useQueryClient } from '@tanstack/svelte-query';
-	import { useFeeds, useEntries, useToggleRead, useToggleSaved, keys } from '$api/queries';
-	import { putJSON } from '$api/client';
+	import {
+		useFeeds,
+		useEntries,
+		useToggleRead,
+		useToggleSaved,
+		useBulkUpdate,
+		keys
+	} from '$api/queries';
+	import { putJSON, postJSON } from '$api/client';
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import TopBar from '$lib/components/TopBar.svelte';
-	import PollStrip from '$lib/components/PollStrip.svelte';
 	import RiverList from '$lib/components/RiverList.svelte';
-	import KeyboardHints from '$lib/components/KeyboardHints.svelte';
 	import MobileTopBar from '$lib/components/MobileTopBar.svelte';
 	import MobileTabBar from '$lib/components/MobileTabBar.svelte';
+	import OfflineIndicator from '$lib/components/OfflineIndicator.svelte';
+	import ConfirmModal from '$lib/components/ConfirmModal.svelte';
+	import BulkActionStrip from '$lib/components/BulkActionStrip.svelte';
 	import { bindKeyboard } from '$lib/keyboard.svelte';
 
 	const qc = useQueryClient();
@@ -26,15 +42,14 @@
 	const entries = useEntries({ status: 'unread' });
 	const toggleRead = useToggleRead();
 	const toggleSaved = useToggleSaved();
+	const bulkUpdate = useBulkUpdate();
 
 	// `userSelectedId` is the explicit user choice (null until they
-	// click or press j/k). `selectedId` is what the UI actually
-	// displays — it falls through to the first visible entry while
-	// the user hasn't picked one OR when the previously-picked entry
-	// no longer matches anything in the current list (e.g. they just
-	// pressed `m` and the entry dropped off the unread filter). This
-	// split keeps the default-pick rule pure-derived rather than
-	// living inside an `$effect` that writes state.
+	// move with j/k). `selectedId` is what the UI actually displays —
+	// it falls through to the first visible entry while the user
+	// hasn't picked one OR when the previously-picked entry no longer
+	// matches anything in the current list (e.g. they just pressed
+	// `m` and the entry dropped off the unread filter).
 	let userSelectedId = $state<number | null>(null);
 	const visible = $derived(entries.data?.data ?? []);
 	const total = $derived(entries.data?.pagination.total ?? 0);
@@ -43,6 +58,21 @@
 			? userSelectedId
 			: (visible[0]?.id ?? null)
 	);
+
+	// Multi-select state. The set is reactive via $state — rebuilding
+	// the Set on each mutation triggers reactivity for the consumer
+	// components. Entering multi-select mode is implicit on the first
+	// shift-click / select-box click; explicit Clear empties the set
+	// and exits the mode.
+	const selectedIds = new SvelteSet<number>();
+	const multiSelect = $derived(selectedIds.size > 0);
+
+	// Refresh state. While `refreshing` is true, the button is
+	// disabled and shows a spinning glyph (TopBar applies the class).
+	let refreshing = $state(false);
+
+	// Mark-all-read confirmation modal.
+	let confirmMarkAllOpen = $state(false);
 
 	function indexOfSelected(): number {
 		return visible.findIndex((e) => e.id === selectedId);
@@ -74,12 +104,14 @@
 		}
 	});
 
-	async function markAllRead() {
-		// Bulk mark: design.md §6 specifies PUT /entries/read.
-		// Empty body = "mark all unread entries (across all feeds) read".
-		// Errors are caught locally so they don't surface as unhandled
-		// rejections; on success we invalidate the entries cache so the
-		// river refetches and the now-read entries drop off.
+	function openMarkAllConfirm() {
+		// Don't bring up the modal when there's nothing to mark.
+		if (total === 0) return;
+		confirmMarkAllOpen = true;
+	}
+
+	async function confirmMarkAll() {
+		confirmMarkAllOpen = false;
 		try {
 			await putJSON('/entries/read', {});
 			await qc.invalidateQueries({ queryKey: keys.entriesAll() });
@@ -88,9 +120,42 @@
 		}
 	}
 
-	function refresh() {
-		// Manual refresh wiring lands in Plan 12 (pull-to-refresh + the
-		// /feeds/:id/refresh trigger). Today the poller drives state.
+	async function refresh() {
+		// Plan 15 wires this for real. Fan out POST /feeds/[id]/refresh
+		// for every subscribed feed; the dispatcher picks them up on
+		// its next tick. Invalidate the entries cache after so the
+		// river refetches once new rows land.
+		const list = feeds.data?.data ?? [];
+		if (list.length === 0 || refreshing) return;
+		refreshing = true;
+		try {
+			await Promise.all(list.map((f) => postJSON(`/feeds/${f.id}/refresh`, {})));
+			await qc.invalidateQueries({ queryKey: keys.entriesAll() });
+		} catch (err) {
+			console.error('refresh failed', err);
+		} finally {
+			refreshing = false;
+		}
+	}
+
+	function toggleRowSelect(id: number) {
+		if (selectedIds.has(id)) selectedIds.delete(id);
+		else selectedIds.add(id);
+	}
+
+	function clearSelection() {
+		selectedIds.clear();
+	}
+
+	function bulkMark(read: boolean) {
+		const ids = Array.from(selectedIds);
+		if (ids.length === 0) return;
+		bulkUpdate.mutate({ ids, read });
+		clearSelection();
+	}
+
+	function onRowToggleRead(id: number, read: boolean) {
+		toggleRead.mutate({ id, read });
 	}
 
 	let isMobile = $state(false);
@@ -115,7 +180,7 @@
 				{selectedId}
 				density="default"
 				showSummary={true}
-				onSelect={(id) => goto('/entry/' + id)}
+				onOpen={(id) => goto('/entry/' + id)}
 			/>
 		</div>
 		<MobileTabBar active="unread" />
@@ -128,22 +193,46 @@
 				title="Unread"
 				unread={total}
 				total={total}
-				onMarkAllRead={markAllRead}
+				onMarkAllRead={openMarkAllConfirm}
 				onRefresh={refresh}
+				{refreshing}
 			/>
-			<PollStrip />
+			{#if multiSelect}
+				<BulkActionStrip
+					count={selectedIds.size}
+					onMarkRead={() => bulkMark(true)}
+					onMarkUnread={() => bulkMark(false)}
+					onClear={clearSelection}
+				/>
+			{/if}
 			<RiverList
 				entries={visible}
 				feeds={feeds.data?.data ?? []}
 				{selectedId}
 				density="default"
 				showSummary={true}
+				{multiSelect}
+				{selectedIds}
 				onSelect={(id) => (userSelectedId = id)}
+				onOpen={(id) => goto('/entry/' + id)}
+				onToggleRead={onRowToggleRead}
+				onToggleSelect={toggleRowSelect}
 			/>
-			<KeyboardHints />
 		</div>
 	</div>
 {/if}
+
+<OfflineIndicator />
+
+<ConfirmModal
+	open={confirmMarkAllOpen}
+	title="Mark all read?"
+	message={`Mark all ${total} unread ${total === 1 ? 'entry' : 'entries'} as read? This can't be undone.`}
+	confirmLabel="Mark all read"
+	cancelLabel="Cancel"
+	onConfirm={confirmMarkAll}
+	onCancel={() => (confirmMarkAllOpen = false)}
+/>
 
 <style>
 	.tap {

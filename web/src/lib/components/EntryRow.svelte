@@ -27,31 +27,105 @@
 		feed,
 		selected = false,
 		showSummary = true,
-		onclick = () => {}
+		multiSelect = false,
+		multiSelected = false,
+		onclick = (_ev: MouseEvent) => {},
+		onToggleRead = (_id: number, _read: boolean) => {},
+		onToggleSelect = (_id: number, _ev: MouseEvent) => {}
 	}: {
 		entry: Entry;
 		feed?: Feed;
 		selected?: boolean;
 		showSummary?: boolean;
+		multiSelect?: boolean;
+		multiSelected?: boolean;
 		onclick?: (e: MouseEvent) => void;
+		onToggleRead?: (id: number, read: boolean) => void;
+		onToggleSelect?: (id: number, ev: MouseEvent) => void;
 	} = $props();
 
 	const ago = $derived(formatAgo(entry.published_at ?? entry.created_at));
 	const swatchColor = $derived(swatchFor(feed?.title ?? feed?.feed_url ?? 'tap'));
+
+	function onReadDotClick(ev: MouseEvent) {
+		// Stop the row click; the read-dot has its own action and we
+		// don't want a click-to-open hijack.
+		ev.stopPropagation();
+		ev.preventDefault();
+		onToggleRead(entry.id, !entry.read);
+	}
+
+	function onSelectBoxClick(ev: MouseEvent) {
+		ev.stopPropagation();
+		ev.preventDefault();
+		onToggleSelect(entry.id, ev);
+	}
+
+	function onLinkClick(ev: MouseEvent) {
+		// The parent owns navigation (RiverList → +page.svelte). Honour
+		// the same modifier-key contract the parent expects: shift /
+		// meta / ctrl get routed to multi-select toggle. The default
+		// path lets the parent's onclick handle navigation via the
+		// SPA router, so we preventDefault to suppress the link's
+		// native full-page-navigation.
+		ev.preventDefault();
+		onclick(ev);
+	}
 </script>
 
-<button
-	type="button"
+<article
 	class="entry"
 	class:is-read={entry.read}
 	class:is-saved={entry.saved}
 	class:is-selected={selected}
-	{onclick}
+	class:is-multi={multiSelect}
+	class:is-multi-selected={multiSelected}
 >
-	<span class="junction" aria-hidden="true"></span>
+	<!--
+		Per-row affordance. Real <button> with native keyboard /
+		focus / a11y semantics. Sits visually in the row gutter via
+		position:absolute; the stretched <a> link below covers the
+		rest of the row and is the click-to-open target.
+	-->
+	{#if multiSelect}
+		<button
+			type="button"
+			class="select-box"
+			aria-label={multiSelected ? 'Deselect entry' : 'Select entry'}
+			aria-pressed={multiSelected}
+			onclick={onSelectBoxClick}
+		>
+			<span class="check" aria-hidden="true">{multiSelected ? '✓' : ''}</span>
+		</button>
+	{:else}
+		<button
+			type="button"
+			class="read-dot"
+			aria-label={entry.read ? 'Mark unread' : 'Mark read'}
+			aria-pressed={!entry.read}
+			data-testid="row-read-toggle"
+			onclick={onReadDotClick}
+		>
+			<span class="dot" aria-hidden="true"></span>
+		</button>
+	{/if}
 	{#if entry.saved}
 		<span class="saved-mark mono">SAVED</span>
 	{/if}
+	<!--
+		Stretched link covers the row's clickable area. <a href> is
+		natively keyboard-focusable (Tab) and Enter activates it. The
+		parent owns SPA navigation, so we preventDefault and forward
+		the click to the parent's handler. The href is still set for
+		middle-click / cmd-click / "open in new tab" behaviour and for
+		assistive tech which announces the URL.
+	-->
+	<a
+		class="hit"
+		href={'/entry/' + entry.id}
+		aria-label={'Open entry: ' + entry.title}
+		onclick={onLinkClick}
+	></a>
 	<h3 class="title">{entry.title}</h3>
 	<div class="meta">
 		<span class="ico" style="background: {swatchColor}" aria-hidden="true"></span>
@@ -64,7 +138,7 @@
 	{#if showSummary && entry.summary}
 		<p class="summary">{entry.summary}</p>
 	{/if}
-</button>
+</article>
 
 <style>
 	.entry {
@@ -74,16 +148,19 @@
 		width: 100%;
 		padding: 14px 24px 14px 40px;
 		border-bottom: 1px solid var(--rule);
-		cursor: pointer;
 		background: transparent;
 		transition: background 120ms ease;
 		font-family: inherit;
 		color: inherit;
+		box-sizing: border-box;
 	}
 	.entry:hover {
 		background: var(--bg-soft);
 	}
 	.entry.is-selected {
+		background: var(--accent-soft);
+	}
+	.entry.is-multi-selected {
 		background: var(--accent-soft);
 	}
 	.entry.is-read .title {
@@ -94,10 +171,44 @@
 		color: var(--ink-3);
 	}
 
-	.junction {
+	/* Stretched link: covers the row, sits BEHIND the action buttons
+	   (lower z-index) so the buttons get pointer events first.
+	   Visually invisible — the row's text shows through. */
+	.hit {
 		position: absolute;
-		left: 22px;
-		top: 22px;
+		inset: 0;
+		z-index: 0;
+		text-indent: -9999px;
+		overflow: hidden;
+		cursor: pointer;
+	}
+	.hit:focus-visible {
+		outline: 2px solid var(--accent);
+		outline-offset: -2px;
+	}
+
+	/* Per-row mark-read button. Filled dot = unread, hollow ring =
+	   read. Hidden on mobile — Plan 18 swaps in swipe gestures. */
+	.read-dot {
+		position: absolute;
+		left: 16px;
+		top: 16px;
+		width: 18px;
+		height: 18px;
+		z-index: 1;
+		display: inline-grid;
+		place-items: center;
+		background: transparent;
+		border: 0;
+		border-radius: 50%;
+		padding: 0;
+		cursor: pointer;
+		color: inherit;
+	}
+	.read-dot:hover {
+		background: var(--bg-soft);
+	}
+	.read-dot .dot {
 		width: 6px;
 		height: 6px;
 		border-radius: 50%;
@@ -105,10 +216,40 @@
 		transition:
 			transform 200ms ease,
 			background 200ms ease;
+		box-sizing: border-box;
 	}
-	.entry.is-read .junction {
+	.entry.is-read .read-dot .dot {
 		background: transparent;
 		border: 1px solid var(--ink-4);
+	}
+
+	/* Multi-select checkbox replaces the read dot when the river is in
+	   multi-select mode. */
+	.select-box {
+		position: absolute;
+		left: 14px;
+		top: 14px;
+		width: 18px;
+		height: 18px;
+		z-index: 1;
+		display: inline-grid;
+		place-items: center;
+		background: var(--bg);
+		border: 1px solid var(--ink-4);
+		border-radius: 3px;
+		padding: 0;
+		cursor: pointer;
+		color: inherit;
+	}
+	.entry.is-multi-selected .select-box {
+		background: var(--accent);
+		border-color: var(--accent);
+		color: var(--bg);
+	}
+	.select-box .check {
+		font-size: 12px;
+		line-height: 1;
+		font-family: var(--sans);
 	}
 
 	.saved-mark {
@@ -118,6 +259,8 @@
 		font-size: 10px;
 		letter-spacing: 0.04em;
 		color: var(--accent);
+		z-index: 1;
+		pointer-events: none;
 	}
 
 	.title {
@@ -128,6 +271,8 @@
 		color: var(--ink);
 		margin: 0 0 4px;
 		text-wrap: pretty;
+		position: relative;
+		pointer-events: none;
 	}
 	.meta {
 		font-family: var(--sans);
@@ -137,6 +282,8 @@
 		align-items: center;
 		gap: 10px;
 		margin-top: 5px;
+		position: relative;
+		pointer-events: none;
 	}
 	.meta .source {
 		color: var(--ink);
@@ -174,6 +321,8 @@
 		-webkit-box-orient: vertical;
 		overflow: hidden;
 		text-wrap: pretty;
+		position: relative;
+		pointer-events: none;
 	}
 
 	/* Density classes are applied to the .river container by RiverList,
@@ -185,8 +334,11 @@
 	:global(.density-compact) .entry .summary {
 		display: none;
 	}
-	:global(.density-compact) .entry .junction {
-		top: 17px;
+	:global(.density-compact) .entry .read-dot {
+		top: 11px;
+	}
+	:global(.density-compact) .entry .select-box {
+		top: 9px;
 	}
 	:global(.density-compact) .entry .saved-mark {
 		top: 13px;
@@ -197,14 +349,17 @@
 	}
 
 	/* Mobile overrides cascade from the .is-mobile root applied in
-	   +page.svelte. */
+	   +page.svelte. Plan 18 will add swipe gestures; for now the
+	   per-row read dot is hidden on mobile to keep the row tappable. */
 	:global(.is-mobile) .entry {
 		padding-left: 36px;
 		padding-right: 18px;
 	}
-	:global(.is-mobile) .entry .junction {
-		left: 18px;
-		top: 22px;
+	:global(.is-mobile) .entry .read-dot {
+		display: none;
+	}
+	:global(.is-mobile) .entry.is-multi .select-box {
+		left: 14px;
 	}
 	:global(.is-mobile) .entry .saved-mark {
 		right: 18px;

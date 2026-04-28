@@ -116,6 +116,45 @@ export function useToggleRead() {
 	}));
 }
 
+// `useBulkUpdate` flips `read` on a list of entry ids. (No `saved`
+// support today — Plan 15's bulk UI only exposes mark-read / mark-
+// unread; extend the vars + mutationFn if a future plan adds bulk
+// save/unsave.) The existing PUT /entries/read endpoint is scope-
+// based (feed_id / category_id) and doesn't accept a free-form id
+// list, so we fan out individual PUT /entries/{id} calls instead.
+// Plan 15's multi-select UX never selects more than a screen's worth
+// of rows in practice (~50), so the fan-out cost is acceptable.
+//
+// Optimistic update mirrors useToggleRead: we flip `read` on every
+// cached list before the server replies, snapshot the prior state
+// for rollback, and invalidate after settle.
+export function useBulkUpdate() {
+	const qc = useQueryClient();
+	return createMutation(() => ({
+		mutationFn: async ({ ids, read }: { ids: number[]; read: boolean }) => {
+			await Promise.all(ids.map((id) => putJSON<Entry>(`/entries/${id}`, { read })));
+		},
+		onMutate: async ({ ids, read }) => {
+			await qc.cancelQueries({ queryKey: keys.entriesList() });
+			const prev = qc.getQueriesData<{ data: Entry[] }>({ queryKey: keys.entriesList() });
+			const idSet = new Set(ids);
+			qc.setQueriesData<{ data: Entry[] }>({ queryKey: keys.entriesList() }, (old) =>
+				old ? { ...old, data: old.data.map((e) => (idSet.has(e.id) ? { ...e, read } : e)) } : old
+			);
+			for (const id of ids) {
+				qc.setQueryData<Entry>(keys.entry(id), (old) => (old ? { ...old, read } : old));
+			}
+			return { prev };
+		},
+		onError: (_err, _vars, ctx) => {
+			ctx?.prev?.forEach(([key, data]) => qc.setQueryData(key, data));
+		},
+		onSettled: () => {
+			qc.invalidateQueries({ queryKey: keys.entriesAll() });
+		}
+	}));
+}
+
 export function useToggleSaved() {
 	const qc = useQueryClient();
 	return createMutation(() => ({
