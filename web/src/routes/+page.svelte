@@ -205,8 +205,6 @@
 		<div class="col">
 			<TopBar
 				title="Unread"
-				unread={total}
-				total={total}
 				onMarkAllRead={openMarkAllConfirm}
 				onRefresh={refresh}
 				{refreshing}
