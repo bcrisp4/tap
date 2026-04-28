@@ -204,16 +204,35 @@ export function useBulkUpdate() {
 	}));
 }
 
-export function useToggleSaved() {
-	const qc = useQueryClient();
-	return createMutation(() => ({
+export function toggleSavedMutationOptions(qc: QueryClient) {
+	return {
 		mutationFn: async ({ id, saved }: { id: number; saved: boolean }) =>
 			await putJSON<Entry>(`/entries/${id}`, { saved }),
-		onSettled: (_data, _err, { id }) => {
-			qc.invalidateQueries({ queryKey: keys.entriesAll() });
-			qc.invalidateQueries({ queryKey: keys.entry(id) });
+		onMutate: async ({ id, saved }: { id: number; saved: boolean }) => {
+			await cancelLists(qc);
+			const previous = snapshotLists(qc);
+			patchEntryEverywhere(qc, id, { saved });
+			qc.setQueryData<Entry>(keys.entry(id), (old) => (old ? { ...old, saved } : old));
+			return { previous };
+		},
+		onError: (_err: unknown, _vars: unknown, ctx: { previous: ListSnapshot } | undefined) => {
+			if (!ctx?.previous) return;
+			restoreLists(qc, ctx.previous);
+		},
+		onSettled: (
+			_data: unknown,
+			_err: unknown,
+			vars: { id: number; saved: boolean }
+		) => {
+			invalidateLists(qc);
+			qc.invalidateQueries({ queryKey: keys.entry(vars.id) });
 		}
-	}));
+	};
+}
+
+export function useToggleSaved() {
+	const qc = useQueryClient();
+	return createMutation(() => toggleSavedMutationOptions(qc));
 }
 
 export function useCategories() {

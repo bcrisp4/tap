@@ -10,7 +10,7 @@
 
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { MutationObserver, QueryClient } from '@tanstack/svelte-query';
-import { keys, toggleReadMutationOptions } from './queries';
+import { keys, toggleReadMutationOptions, toggleSavedMutationOptions } from './queries';
 import type { Entry, FeedPatch } from './types';
 
 describe('query keys', () => {
@@ -171,6 +171,48 @@ describe('useToggleRead', () => {
 
 		const hist = qc.getQueryData(['history', 'list', 100]) as { data: Entry[] };
 		expect(hist.data[0].read).toBe(false);
+	});
+});
+
+describe('useToggleSaved', () => {
+	it('drops the entry from a saved=true list and patches it elsewhere', async () => {
+		stubFetchOk({ id: 1, saved: false });
+		const qc = new QueryClient({ defaultOptions: { mutations: { retry: 0 } } });
+		qc.setQueryData(['entries', 'list', { status: 'all', saved: 'true' }], {
+			data: [entry(1, { saved: true })],
+			pagination: { limit: 50, offset: 0, total: 1 }
+		});
+		qc.setQueryData(['history', 'list', 100], {
+			data: [entry(1, { saved: true })],
+			pagination: { limit: 100, offset: 0, total: 1 }
+		});
+
+		await runMutation(qc, toggleSavedMutationOptions(qc), { id: 1, saved: false });
+
+		expect(
+			(
+				qc.getQueryData(['entries', 'list', { status: 'all', saved: 'true' }]) as {
+					data: Entry[];
+				}
+			).data
+		).toEqual([]);
+		const hist = qc.getQueryData(['history', 'list', 100]) as { data: Entry[] };
+		expect(hist.data[0].saved).toBe(false);
+		expect(qc.getQueryState(['history', 'list', 100])?.isInvalidated).toBe(true);
+	});
+
+	it('rolls back on error', async () => {
+		stubFetchError();
+		const qc = new QueryClient({ defaultOptions: { mutations: { retry: 0 } } });
+		qc.setQueryData(['history', 'list', 100], {
+			data: [entry(1, { saved: true })],
+			pagination: { limit: 100, offset: 0, total: 1 }
+		});
+
+		await runMutation(qc, toggleSavedMutationOptions(qc), { id: 1, saved: false });
+
+		const hist = qc.getQueryData(['history', 'list', 100]) as { data: Entry[] };
+		expect(hist.data[0].saved).toBe(true);
 	});
 });
 
