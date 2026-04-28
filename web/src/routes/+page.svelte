@@ -16,7 +16,6 @@
 	import TopBar from '$lib/components/TopBar.svelte';
 	import PollStrip from '$lib/components/PollStrip.svelte';
 	import RiverList from '$lib/components/RiverList.svelte';
-	import KeyboardHints from '$lib/components/KeyboardHints.svelte';
 	import MobileTopBar from '$lib/components/MobileTopBar.svelte';
 	import MobileTabBar from '$lib/components/MobileTabBar.svelte';
 	import { bindKeyboard } from '$lib/keyboard.svelte';
@@ -140,7 +139,6 @@
 				showSummary={true}
 				onSelect={(id) => (userSelectedId = id)}
 			/>
-			<KeyboardHints />
 		</div>
 	</div>
 {/if}

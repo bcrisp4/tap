@@ -5,6 +5,8 @@
 	import { theme, applyThemeClasses } from '$lib/theme.svelte';
 	import { bindOnlineManager } from '$lib/offline/online';
 	import { prefetchRecent } from '$lib/offline/prefetch';
+	import { hotkeysModal } from '$lib/hotkeys-modal.svelte';
+	import HotkeysModal from '$lib/components/HotkeysModal.svelte';
 	import '../app.css';
 
 	const client = makeQueryClient();
@@ -48,8 +50,27 @@
 			unbindOnline();
 		};
 	});
+
+	// Global `?` toggle. We mirror the suppression rule used by the
+	// per-route handlers in $lib/keyboard.svelte.ts (no shortcuts while
+	// typing) so this stays consistent with the rest of the app.
+	function onGlobalKey(ev: KeyboardEvent) {
+		if (ev.key !== '?') return;
+		const t = ev.target as HTMLElement | null;
+		if (
+			t &&
+			(t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
+		) {
+			return;
+		}
+		ev.preventDefault();
+		hotkeysModal.toggle();
+	}
 </script>
+
+<svelte:window onkeydown={onGlobalKey} />
 
 <QueryClientProvider {client}>
 	{@render children()}
+	<HotkeysModal />
 </QueryClientProvider>

@@ -21,6 +21,10 @@ export interface Feed {
 	description?: string | null;
 	category_id?: number | null;
 	icon_id?: number | null;
+	// SHA-256 hex of the cached favicon bytes; the SPA fetches the
+	// image at /api/v1/icons/<hash>. Optional: set after the poller's
+	// favicon scrape lands. Plan 17.
+	icon_hash?: string | null;
 	last_polled_at?: number | null;
 	next_poll_at?: number | null;
 	poll_interval?: number;

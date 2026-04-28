@@ -1,11 +1,16 @@
 <script lang="ts">
-	// Desktop sidebar: brand + navigation groups (Reading / Feeds /
-	// System). The unread + saved badge counts are driven by live
-	// queries — calling `useEntries` with `limit: 1` is sufficient
-	// because we only consume `pagination.total` from the response.
+	// Desktop sidebar: brand + Reading nav + Feeds list + footer icon
+	// strip. The unread + saved badge counts are driven by live queries
+	// — calling `useEntries` with `limit: 1` is sufficient because we
+	// only consume `pagination.total` from the response.
+	//
+	// Settings, theme switcher, and hotkeys help live in `SidebarFooter`
+	// at the bottom — they're secondary chrome controls, not primary
+	// nav. "Add feed" lives as a small `+` next to the FEEDS heading.
 	import { useFeeds, useEntries } from '$api/queries';
 	import Wordmark from '$brand/Wordmark.svelte';
-	import { swatchFor } from './EntryRow.svelte';
+	import FeedIcon from './FeedIcon.svelte';
+	import SidebarFooter from './SidebarFooter.svelte';
 
 	let { active }: { active?: 'unread' | 'history' | 'saved' } = $props();
 
@@ -30,27 +35,31 @@
 		<span class="badge mono">{saved.data?.pagination.total ?? 0}</span>
 	</a>
 
-	<div class="group-title">Feeds</div>
+	<div class="group-title group-title-row">
+		<span>Feeds</span>
+		<a class="add-feed" href="/feeds/add" aria-label="Add feed" title="Add feed">+</a>
+	</div>
 	{#each feeds.data?.data ?? [] as f (f.id)}
 		<a href={'/feeds/' + f.id} class="feed-row">
-			<span class="ico" style="background: {swatchFor(f.title)}" aria-hidden="true"></span>
+			<FeedIcon feed={f} />
 			<span class="name">{f.title}</span>
 		</a>
 	{/each}
 
-	<div class="group-title">System</div>
-	<a href="/feeds/add" class="nav-item"><span>Add feed</span></a>
-	<a href="/settings" class="nav-item"><span>Settings</span></a>
+	<div class="footer-spacer"></div>
+	<SidebarFooter />
 </aside>
 
 <style>
 	.tap-sidebar {
 		width: 240px;
 		border-right: 1px solid var(--rule);
-		padding: 20px 0;
+		padding: 20px 0 0;
 		background: var(--bg);
 		overflow-y: auto;
 		flex-shrink: 0;
+		display: flex;
+		flex-direction: column;
 	}
 	.brand {
 		padding: 0 20px 18px;
@@ -65,6 +74,28 @@
 		text-transform: uppercase;
 		color: var(--ink-3);
 		padding: 16px 20px 6px;
+	}
+	.group-title-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+	}
+	.add-feed {
+		font-family: var(--mono);
+		font-size: 14px;
+		line-height: 1;
+		color: var(--ink-3);
+		text-decoration: none;
+		padding: 0 6px;
+		border-radius: 3px;
+	}
+	.add-feed:hover {
+		color: var(--ink);
+		background: var(--surface);
+	}
+	.footer-spacer {
+		flex: 1;
+		min-height: 12px;
 	}
 	.nav-item {
 		display: flex;
@@ -105,13 +136,6 @@
 	}
 	.feed-row:hover {
 		color: var(--ink);
-	}
-	.feed-row .ico {
-		width: 12px;
-		height: 12px;
-		border-radius: 2px;
-		flex-shrink: 0;
-		display: inline-block;
 	}
 	.feed-row .name {
 		overflow: hidden;

@@ -40,10 +40,6 @@
 			<a class="btn ghost" href="/search">Search</a>
 		</div>
 	</div>
-
-	<footer class="foot mono">
-		tap · self-hosted river of unread
-	</footer>
 </main>
 
 <style>
@@ -53,7 +49,7 @@
 		color: var(--ink);
 		font-family: var(--serif);
 		display: grid;
-		grid-template-rows: auto 1fr auto;
+		grid-template-rows: auto 1fr;
 		padding: 24px 32px;
 	}
 	.brand {
@@ -137,11 +133,5 @@
 	.btn.ghost:hover {
 		color: var(--ink);
 		border-color: var(--ink-4);
-	}
-	.foot {
-		font-size: 10px;
-		color: var(--ink-3);
-		letter-spacing: 0.06em;
-		text-transform: uppercase;
 	}
 </style>
