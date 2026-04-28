@@ -138,7 +138,7 @@
 		}
 	}
 
-	function toggleRowSelect(id: number, _ev: MouseEvent) {
+	function toggleRowSelect(id: number) {
 		if (selectedIds.has(id)) selectedIds.delete(id);
 		else selectedIds.add(id);
 	}

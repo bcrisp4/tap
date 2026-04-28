@@ -70,8 +70,8 @@
 			{multiSelect}
 			multiSelected={selectedIds.has(e.id)}
 			onclick={(ev) => rowClick(e.id, ev)}
-			onToggleRead={(id, read) => onToggleRead(id, read)}
-			onToggleSelect={(id, ev) => onToggleSelect(id, ev)}
+			{onToggleRead}
+			{onToggleSelect}
 		/>
 	{/each}
 	{#if entries.length === 0}
