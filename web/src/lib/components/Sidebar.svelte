@@ -45,13 +45,13 @@
 			<FeedIcon feed={f} />
 			<span class="name">{f.title}</span>
 			{#if f.error_count > 0}
-				<AlertTriangle
+				<span
 					class="feed-warn"
-					size="12"
-					aria-hidden="false"
-					aria-label={`Feed has errors: ${f.last_error ?? ''}`}
 					title={f.last_error ?? ''}
-				/>
+					aria-label={`Feed has errors: ${f.last_error ?? ''}`}
+				>
+					<AlertTriangle size="12" aria-hidden="true" />
+				</span>
 			{/if}
 		</a>
 	{/each}
@@ -159,7 +159,9 @@
 		white-space: nowrap;
 		flex: 1;
 	}
-	.feed-row :global(.feed-warn) {
+	.feed-warn {
+		display: inline-flex;
+		align-items: center;
 		color: var(--accent-warn, #c33);
 		flex-shrink: 0;
 		margin-left: 4px;

@@ -34,11 +34,13 @@ describe('OpmlMenu (Plan 21 T4)', () => {
 		expect(SRC).toMatch(/Export OPML/);
 	});
 
-	it('Import POSTs the raw file body to /api/v1/opml/import', () => {
+	it('Import POSTs the raw file body to /opml/import via the typed client', () => {
 		// The Go handler reads r.Body directly and parses it as XML —
 		// NOT multipart. Sending FormData would have the server try to
-		// xml.Unmarshal a `--boundary` header instead of <opml/>.
-		expect(SRC).toMatch(/fetch\(['"]\/api\/v1\/opml\/import['"]/);
+		// xml.Unmarshal a `--boundary` header instead of <opml/>. We go
+		// through the shared `getJSON` helper to inherit ApiError
+		// unwrapping and the /api/v1 base prefix.
+		expect(SRC).toMatch(/getJSON[^(]*\(['"]\/opml\/import['"]/);
 		expect(SRC).toMatch(/method:\s*['"]POST['"]/);
 		// The body is the file itself, not a FormData wrapper.
 		expect(SRC).not.toMatch(/new\s+FormData\(/);

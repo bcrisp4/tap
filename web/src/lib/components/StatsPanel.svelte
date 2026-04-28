@@ -4,7 +4,7 @@
 	// removes the equivalent strip from the unread-top in favour of
 	// this canonical home.
 	import { useStatus, useFeeds } from '$api/queries';
-	import { formatAgo } from './EntryRow.svelte';
+	import { formatAgo } from '$lib/format';
 
 	const status = useStatus();
 	const feeds = useFeeds();

@@ -13,6 +13,7 @@
 	import { FolderInput } from 'lucide-svelte';
 	import { useQueryClient } from '@tanstack/svelte-query';
 	import { keys } from '$api/queries';
+	import { getJSON } from '$api/client';
 	import { toast } from '$lib/toast.svelte';
 
 	let open = $state(false);
@@ -20,16 +21,11 @@
 
 	async function importOpml(file: File) {
 		try {
-			const res = await fetch('/api/v1/opml/import', {
+			const body = await getJSON<{ imported?: number }>('/opml/import', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/xml' },
 				body: file
 			});
-			if (!res.ok) {
-				const body = await res.json().catch(() => null);
-				throw new Error(body?.error?.message ?? `import failed: ${res.status}`);
-			}
-			const body = (await res.json()) as { imported?: number };
 			const n = body.imported ?? 0;
 			toast.push(`Imported ${n} feed${n === 1 ? '' : 's'}`, 'info');
 			void qc.invalidateQueries({ queryKey: keys.feeds() });
