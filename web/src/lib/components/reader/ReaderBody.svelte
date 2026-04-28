@@ -51,12 +51,14 @@
 </script>
 
 <!-- The article's only click handler is a delegated open-lightbox
-     that fires only on <img> targets. The article itself is not
-     focusable, so the equivalent keyboard activation lives on the
-     image elements via Tab + Enter when alt text or wrapping links
-     promote them to focusable. The whole-article click hook is the
-     simplest sound place to delegate from given the body comes in
-     via {@html}; we'd otherwise need a post-render walk. -->
+     that fires only on <img> targets. <img> elements aren't focusable
+     by default, so this path is mouse / touch only — keyboard-only
+     users can't open the lightbox for unlinked inline images. That's
+     a deliberate scope limit for this plan: the delegate lives here
+     (rather than in a post-render walk that adds tabindex="0" to every
+     <img>) because the body HTML is injected via {@html} and any
+     per-element rebinding would have to re-run on every render. The
+     a11y_ignore directives encode that tradeoff. -->
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <article class="reader-body" data-testid="reader-body" onclick={onArticleClick}>

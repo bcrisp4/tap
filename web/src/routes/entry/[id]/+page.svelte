@@ -48,24 +48,32 @@
 	// Loop guard: the optimistic update inside `useToggleRead` flips
 	// the cached `entry.data.read` to true the moment we call mutate(),
 	// which would re-trigger any effect that depends on `entry.data.read`.
-	// We track which IDs this component instance has already fired for
-	// in a plain Set (no reactivity needed) so the effect re-evaluates
-	// only when the route param `id` changes — not when the cache flips.
-	const firedFor = new Set<number>();
+	// We track per-id attempt counts in a plain Map (no reactivity
+	// needed) so the effect re-evaluates only when the route param
+	// `id` changes — not when the cache flips.
+	//
+	// On mutation success the guard becomes a no-op (read flag is
+	// already true). On error the optimistic update reverts and
+	// `entry.data.read` flips back to false, which would naturally
+	// re-trigger the effect — we cap re-attempts at MAX_RETRIES so
+	// a persistent server error doesn't turn into an infinite mutate
+	// loop, while still letting one transient failure self-heal.
+	const MAX_AUTO_MARK_ATTEMPTS = 2;
+	const autoMarkAttempts = new Map<number, number>();
 
 	$effect(() => {
 		const e = entry.data;
 		if (!e) return;
-		if (firedFor.has(e.id)) return;
-		if (e.read) {
-			// Already read on the server — nothing to do, but mark this
-			// id as handled so a later refetch that briefly returns
-			// `read=false` (extremely unlikely) doesn't double-fire.
-			firedFor.add(e.id);
-			return;
-		}
-		firedFor.add(e.id);
+		if (e.read) return;
+		const attempts = autoMarkAttempts.get(e.id) ?? 0;
+		if (attempts >= MAX_AUTO_MARK_ATTEMPTS) return;
+		autoMarkAttempts.set(e.id, attempts + 1);
 		toggleRead.mutate({ id: e.id, read: true });
+		// If the mutation fails, useToggleRead's onError reverts the
+		// optimistic cache update — `entry.data.read` flips back to
+		// false and this effect runs again. The bumped attempt counter
+		// caps the loop at MAX_AUTO_MARK_ATTEMPTS; after that the user
+		// can press `m` to take over manually.
 	});
 
 	function back() {

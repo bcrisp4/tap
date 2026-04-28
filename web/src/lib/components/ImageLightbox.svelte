@@ -19,6 +19,32 @@
 
 	const open = $derived(src !== null);
 
+	// Tracks the element that had focus when the lightbox opened so
+	// we can restore it when it closes. Without this, closing leaves
+	// focus on document.body, which is jarring for keyboard users
+	// (their next Tab starts at the top of the page).
+	let priorFocus: HTMLElement | null = null;
+	let backdropEl: HTMLDivElement | null = $state(null);
+
+	$effect(() => {
+		if (!open) return;
+		// On open: capture and move focus to the backdrop. The
+		// `tabindex="-1"` on the backdrop accepts programmatic focus
+		// without joining the tab order, which is what makes the
+		// `onkeydown` handler reachable for Enter/Space-to-dismiss
+		// AND ensures screen readers announce the dialog reliably.
+		priorFocus = document.activeElement as HTMLElement | null;
+		// Defer one frame so the {#if open} insertion has hit the DOM.
+		requestAnimationFrame(() => backdropEl?.focus());
+		return () => {
+			// On close: bounce focus back where it was. We deliberately
+			// don't trap focus while open — the reader body is read-only
+			// chrome, and a trap would make Esc-then-back jarring.
+			priorFocus?.focus?.();
+			priorFocus = null;
+		};
+	});
+
 	function onKey(ev: KeyboardEvent) {
 		if (!open) return;
 		if (ev.key === 'Escape') {
@@ -56,6 +82,7 @@
 	     tabindex=-1 satisfies the dialog-must-be-focusable a11y rule
 	     without inserting the dialog into the tab order. -->
 	<div
+		bind:this={backdropEl}
 		class="lightbox-backdrop"
 		role="dialog"
 		aria-modal="true"

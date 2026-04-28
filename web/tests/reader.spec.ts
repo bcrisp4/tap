@@ -173,7 +173,12 @@ test('image click opens the lightbox; Esc closes it (Plan 16 T4)', async ({
 	await expect(dialog).toBeVisible();
 
 	await page.keyboard.press('Escape');
+	// Esc closes the lightbox AND must NOT propagate to the reader
+	// route's Esc-to-back handler (regression guard for Plan 16's
+	// dialog-gate in +page.svelte's onKey).
 	await expect(dialog).toHaveCount(0);
+	await expect(page).toHaveURL(new RegExp(`/entry/${id}$`));
+	await expect(page.getByTestId('reader-body')).toBeVisible();
 });
 
 test('m keyboard shortcut toggles read state', async ({ page, request }) => {
