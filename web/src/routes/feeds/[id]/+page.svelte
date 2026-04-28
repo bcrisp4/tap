@@ -1,6 +1,5 @@
 <script lang="ts">
 	// /feeds/[id] — feed detail + edit + refresh + delete.
-	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import {
@@ -12,6 +11,7 @@
 	} from '$api/queries';
 	import { ApiError } from '$api/client';
 	import type { FeedPatch } from '$api/types';
+	import { isMobile } from '$lib/breakpoints.svelte';
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import TopBar from '$lib/components/TopBar.svelte';
 	import RiverList from '$lib/components/RiverList.svelte';
@@ -91,16 +91,7 @@
 		});
 	}
 
-	let isMobile = $state(false);
-	onMount(() => {
-		const mq = window.matchMedia('(max-width: 720px)');
-		const apply = () => {
-			isMobile = mq.matches;
-		};
-		apply();
-		mq.addEventListener('change', apply);
-		return () => mq.removeEventListener('change', apply);
-	});
+	const mobile = $derived(isMobile());
 </script>
 
 <svelte:head>
@@ -251,9 +242,9 @@
 	{/if}
 {/snippet}
 
-{#if isMobile}
+{#if mobile}
 	<div class="tap is-mobile">
-		<MobileTopBar />
+		<MobileTopBar label={feed.data?.title ?? 'feed'} />
 		<div class="m-wrap">{@render content()}</div>
 		<MobileTabBar />
 	</div>
@@ -497,18 +488,5 @@
 		display: flex;
 		gap: 10px;
 		justify-content: flex-end;
-	}
-
-	.tap :global(*::-webkit-scrollbar) {
-		width: 8px;
-		height: 8px;
-	}
-	.tap :global(*::-webkit-scrollbar-thumb) {
-		background: var(--ink-4);
-		border-radius: 4px;
-	}
-	.tap :global(*:focus-visible) {
-		outline: 2px solid var(--accent);
-		outline-offset: 2px;
 	}
 </style>

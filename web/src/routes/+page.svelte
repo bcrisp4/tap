@@ -107,7 +107,7 @@
 
 {#if isMobile}
 	<div class="tap is-mobile">
-		<MobileTopBar unread={total} />
+		<MobileTopBar label="unread" count={total} />
 		<div class="m-river-wrap">
 			<RiverList
 				entries={visible}

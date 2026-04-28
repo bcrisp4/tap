@@ -1,10 +1,10 @@
 <script lang="ts">
 	// /feeds/add — discover and subscribe to a new feed.
-	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { useDiscoverFeed, useSubscribeFeed } from '$api/queries';
 	import { ApiError } from '$api/client';
 	import type { DiscoverCandidate } from '$api/types';
+	import { isMobile } from '$lib/breakpoints.svelte';
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import TopBar from '$lib/components/TopBar.svelte';
 	import FeedForm from '$lib/components/FeedForm.svelte';
@@ -51,16 +51,7 @@
 		});
 	}
 
-	let isMobile = $state(false);
-	onMount(() => {
-		const mq = window.matchMedia('(max-width: 720px)');
-		const apply = () => {
-			isMobile = mq.matches;
-		};
-		apply();
-		mq.addEventListener('change', apply);
-		return () => mq.removeEventListener('change', apply);
-	});
+	const mobile = $derived(isMobile());
 </script>
 
 <svelte:head>
@@ -89,9 +80,9 @@
 	</div>
 {/snippet}
 
-{#if isMobile}
+{#if mobile}
 	<div class="tap is-mobile">
-		<MobileTopBar />
+		<MobileTopBar label="add feed" />
 		<div class="m-wrap">{@render content()}</div>
 		<MobileTabBar />
 	</div>
@@ -150,17 +141,5 @@
 		line-height: 1.5;
 		color: var(--ink-3);
 		margin: 0;
-	}
-	.tap :global(*::-webkit-scrollbar) {
-		width: 8px;
-		height: 8px;
-	}
-	.tap :global(*::-webkit-scrollbar-thumb) {
-		background: var(--ink-4);
-		border-radius: 4px;
-	}
-	.tap :global(*:focus-visible) {
-		outline: 2px solid var(--accent);
-		outline-offset: 2px;
 	}
 </style>

@@ -6,10 +6,10 @@
 	// shareable/bookmarkable. SearchBox debounces input by 250 ms;
 	// useSearch gates network calls until the trimmed query is at
 	// least two characters.
-	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { useFeeds, useSearch } from '$api/queries';
+	import { isMobile } from '$lib/breakpoints.svelte';
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import RiverList from '$lib/components/RiverList.svelte';
 	import SearchBox from '$lib/components/SearchBox.svelte';
@@ -39,17 +39,7 @@
 	const trimmed = $derived(committed.trim());
 	const visible = $derived(results.data?.data ?? []);
 	const total = $derived(results.data?.pagination.total ?? 0);
-
-	let isMobile = $state(false);
-	onMount(() => {
-		const mq = window.matchMedia('(max-width: 720px)');
-		const apply = () => {
-			isMobile = mq.matches;
-		};
-		apply();
-		mq.addEventListener('change', apply);
-		return () => mq.removeEventListener('change', apply);
-	});
+	const mobile = $derived(isMobile());
 </script>
 
 <svelte:head>
@@ -58,7 +48,7 @@
 
 {#snippet searchPanel()}
 	<header class="search-head">
-		{#if !isMobile}
+		{#if !mobile}
 			<Wordmark />
 		{/if}
 		<SearchBox bind:value={inputText} placeholder="search the river…" onCommit={commit} />
@@ -90,9 +80,9 @@
 	</div>
 {/snippet}
 
-{#if isMobile}
+{#if mobile}
 	<div class="tap is-mobile">
-		<MobileTopBar unread={total} />
+		<MobileTopBar label="search" count={total} showSearch={false} />
 		<div class="m-search-wrap">
 			{@render searchPanel()}
 		</div>
@@ -161,17 +151,5 @@
 		font-size: 11px;
 		letter-spacing: 0.06em;
 		text-transform: uppercase;
-	}
-	.tap :global(*::-webkit-scrollbar) {
-		width: 8px;
-		height: 8px;
-	}
-	.tap :global(*::-webkit-scrollbar-thumb) {
-		background: var(--ink-4);
-		border-radius: 4px;
-	}
-	.tap :global(*:focus-visible) {
-		outline: 2px solid var(--accent);
-		outline-offset: 2px;
 	}
 </style>

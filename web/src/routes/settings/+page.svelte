@@ -3,8 +3,8 @@
 	// stacked in the main column so each section breathes; the
 	// theme/font runes already persist to localStorage (Plan 09), so
 	// this page is essentially a presentation of those state machines.
-	import { onMount } from 'svelte';
 	import { theme, type Theme, type Font } from '$lib/theme.svelte';
+	import { isMobile } from '$lib/breakpoints.svelte';
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import TopBar from '$lib/components/TopBar.svelte';
 	import StatsPanel from '$lib/components/StatsPanel.svelte';
@@ -23,16 +23,7 @@
 		{ id: 'sans', label: 'Sans', hint: 'Inter Tight' }
 	];
 
-	let isMobile = $state(false);
-	onMount(() => {
-		const mq = window.matchMedia('(max-width: 720px)');
-		const apply = () => {
-			isMobile = mq.matches;
-		};
-		apply();
-		mq.addEventListener('change', apply);
-		return () => mq.removeEventListener('change', apply);
-	});
+	const mobile = $derived(isMobile());
 </script>
 
 <svelte:head>
@@ -110,9 +101,9 @@
 	</div>
 {/snippet}
 
-{#if isMobile}
+{#if mobile}
 	<div class="tap is-mobile">
-		<MobileTopBar />
+		<MobileTopBar label="settings" />
 		<div class="m-wrap">{@render content()}</div>
 		<MobileTabBar active="settings" />
 	</div>
@@ -252,18 +243,5 @@
 	}
 	.about a:hover {
 		border-bottom-color: var(--accent);
-	}
-
-	.tap :global(*::-webkit-scrollbar) {
-		width: 8px;
-		height: 8px;
-	}
-	.tap :global(*::-webkit-scrollbar-thumb) {
-		background: var(--ink-4);
-		border-radius: 4px;
-	}
-	.tap :global(*:focus-visible) {
-		outline: 2px solid var(--accent);
-		outline-offset: 2px;
 	}
 </style>

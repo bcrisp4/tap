@@ -144,16 +144,4 @@
 		letter-spacing: 0.06em;
 		text-transform: uppercase;
 	}
-	.err :global(*:focus-visible) {
-		outline: 2px solid var(--accent);
-		outline-offset: 2px;
-	}
-
-	/* The SvelteKit fallback HTML uses `body { color-scheme: dark }`;
-	   force the theme variables into a sane default before the layout
-	   class lands in case the error page renders before app boot. */
-	.err {
-		background: var(--bg, #fafaf7);
-		color: var(--ink, #1a1a1a);
-	}
 </style>

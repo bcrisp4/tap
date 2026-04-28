@@ -5,9 +5,9 @@
 	// shortcuts (those are owned by the unread river and the reader),
 	// just a chronologically-by-read time list. Tapping an entry
 	// navigates to the reader, the same pattern as the rest of Tap.
-	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { useFeeds, useHistory } from '$api/queries';
+	import { isMobile } from '$lib/breakpoints.svelte';
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import TopBar from '$lib/components/TopBar.svelte';
 	import RiverList from '$lib/components/RiverList.svelte';
@@ -19,26 +19,16 @@
 
 	const visible = $derived(history.data?.data ?? []);
 	const total = $derived(history.data?.pagination.total ?? 0);
-
-	let isMobile = $state(false);
-	onMount(() => {
-		const mq = window.matchMedia('(max-width: 720px)');
-		const apply = () => {
-			isMobile = mq.matches;
-		};
-		apply();
-		mq.addEventListener('change', apply);
-		return () => mq.removeEventListener('change', apply);
-	});
+	const mobile = $derived(isMobile());
 </script>
 
 <svelte:head>
 	<title>History — tap</title>
 </svelte:head>
 
-{#if isMobile}
+{#if mobile}
 	<div class="tap is-mobile">
-		<MobileTopBar unread={total} />
+		<MobileTopBar label="history" count={total} />
 		<div class="m-river-wrap">
 			{#if visible.length === 0 && !history.isLoading}
 				<p class="empty mono">no history yet · entries you've read appear here</p>
@@ -108,20 +98,5 @@
 		font-size: 11px;
 		letter-spacing: 0.06em;
 		text-transform: uppercase;
-	}
-	.tap :global(*::-webkit-scrollbar) {
-		width: 8px;
-		height: 8px;
-	}
-	.tap :global(*::-webkit-scrollbar-thumb) {
-		background: var(--ink-4);
-		border-radius: 4px;
-	}
-	.tap :global(*::-webkit-scrollbar-track) {
-		background: transparent;
-	}
-	.tap :global(*:focus-visible) {
-		outline: 2px solid var(--accent);
-		outline-offset: 2px;
 	}
 </style>
