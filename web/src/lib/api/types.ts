@@ -18,12 +18,19 @@ export interface Feed {
 	title: string;
 	feed_url: string;
 	site_url?: string | null;
+	description?: string | null;
 	category_id?: number | null;
 	icon_id?: number | null;
+	last_polled_at?: number | null;
+	next_poll_at?: number | null;
+	poll_interval?: number;
 	error_count: number;
 	last_error?: string | null;
 	crawler: boolean;
+	scraper_rules?: string | null;
 	disabled: boolean;
+	ignore_entry_updates?: boolean;
+	user_agent?: string | null;
 	weekly_entry_count: number;
 }
 
