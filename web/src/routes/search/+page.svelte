@@ -17,23 +17,46 @@
 	import MobileTabBar from '$lib/components/MobileTabBar.svelte';
 	import Wordmark from '$brand/Wordmark.svelte';
 
-	// Visible input text (mirrors keystrokes). `committed` is the
-	// version that drives the query — debounced by SearchBox.
-	const initialQ = page.url.searchParams.get('q') ?? '';
-	let inputText = $state(initialQ);
-	let committed = $state(initialQ);
+	// `inputText` mirrors keystrokes; `committed` is the trimmed query
+	// that drives the actual search.
+	//
+	// The committed query is mirrored to the URL (?q=…) and — crucially
+	// — we drive `committed` *from* `page.url.searchParams` reactively.
+	// That way the browser's back/forward buttons (or any external URL
+	// change like a deep link) re-sync the input and re-run the query
+	// without a remount. SearchBox is debounced (250ms idle) so each
+	// `commit()` call corresponds to a real user-completed search, not
+	// a keystroke; we therefore push a new history entry per commit so
+	// browser back walks through prior searches as advertised.
+	let inputText = $state('');
+	let committed = $state('');
+
+	// External URL changes (back/forward, deep link) take precedence:
+	// resync local state when they don't match what we last committed.
+	// This also handles the initial mount — `committed` starts empty
+	// and gets seeded from the URL on the first effect pass.
+	$effect(() => {
+		const urlQ = (page.url.searchParams.get('q') ?? '').trim();
+		if (urlQ !== committed) {
+			committed = urlQ;
+			inputText = urlQ;
+		}
+	});
 
 	const feeds = useFeeds();
 	const results = useSearch(() => committed);
 
 	function commit(q: string) {
-		committed = q;
-		// Replace the URL silently so back/forward feel natural and
-		// every keystroke doesn't push a new history entry.
+		const next = q.trim();
+		if (next === committed) return;
+		committed = next;
+		// Push a new history entry per committed search so the back
+		// button walks through prior queries. Debouncing in SearchBox
+		// ensures one entry per finished search, not per keystroke.
 		const url = new URL(window.location.href);
-		if (q) url.searchParams.set('q', q);
+		if (next) url.searchParams.set('q', next);
 		else url.searchParams.delete('q');
-		void goto(url.pathname + url.search, { replaceState: true, keepFocus: true, noScroll: true });
+		void goto(url.pathname + url.search, { keepFocus: true, noScroll: true });
 	}
 
 	const trimmed = $derived(committed.trim());
