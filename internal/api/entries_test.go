@@ -145,6 +145,49 @@ func TestEntries_BulkRead_ByFeed(t *testing.T) {
 	require.Empty(t, unread)
 }
 
+// TestEntries_List_OrderReadAt verifies that ?order=read_at lists read
+// entries in read_at DESC order — the wire path that powers /history.
+func TestEntries_List_OrderReadAt(t *testing.T) {
+	f := newAPIFixture(t)
+	feedID := seedEntries(t, f)
+	_ = feedID
+
+	// Mark entries read with explicit, monotonically increasing read_at
+	// timestamps. The read_at DESC ordering should mirror that order
+	// regardless of the default created_at sort.
+	entries, _ := f.store.ListEntries(context.Background(), 1, storage.EntriesFilter{Limit: 10})
+	require.Len(t, entries, 3)
+	for i, e := range entries {
+		_, err := f.store.DB().Exec(
+			`UPDATE entries SET read = 1, read_at = ?, changed_at = unixepoch() WHERE id = ?`,
+			int64(100+i*10), e.ID,
+		)
+		require.NoError(t, err)
+	}
+
+	w := f.do(t, "GET", "/api/v1/entries?status=read&order=read_at&limit=10", "")
+	require.Equal(t, http.StatusOK, w.Code)
+	var got struct {
+		Data []map[string]any `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+	require.Len(t, got.Data, 3)
+	for i := 1; i < len(got.Data); i++ {
+		prev, _ := got.Data[i-1]["read_at"].(float64)
+		cur, _ := got.Data[i]["read_at"].(float64)
+		require.GreaterOrEqual(t, prev, cur, "read_at must be DESC")
+	}
+}
+
+// TestEntries_List_OrderInvalid asserts unknown order values get
+// rejected at the API edge with the design §6 bad_query envelope.
+func TestEntries_List_OrderInvalid(t *testing.T) {
+	f := newAPIFixture(t)
+	w := f.do(t, "GET", "/api/v1/entries?order=garbage", "")
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	require.Contains(t, w.Body.String(), `"code":"bad_query"`)
+}
+
 func TestEntries_BulkRead_All(t *testing.T) {
 	f := newAPIFixture(t)
 	seedEntries(t, f)
