@@ -2,8 +2,14 @@
 // the query keys here keeps cache invalidation predictable across
 // pages.
 
-import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
+import {
+	createQuery,
+	createMutation,
+	useQueryClient,
+	type QueryClient
+} from '@tanstack/svelte-query';
 import { deleteResource, getList, getJSON, postJSON, putJSON } from './client';
+import { patchEntryEverywhere } from './cache-patch';
 import type { Entry, Feed, Category, SystemStatus, FeedPatch, DiscoverResult } from './types';
 
 // Query keys are namespaced with an explicit 'list' / 'byId' segment so
@@ -87,33 +93,76 @@ export function useEntry(id: number | (() => number)) {
 	});
 }
 
-export function useToggleRead() {
-	const qc = useQueryClient();
-	return createMutation(() => ({
+// Snapshot of every cached query under the three list-shaped roots that
+// `patchEntryEverywhere` walks, plus the per-entry single cache. The
+// mutation hooks capture this in `onMutate` so `onError` can restore
+// the user's view exactly when the server rejects an optimistic edit.
+type ListSnapshot = {
+	entries: ReturnType<QueryClient['getQueriesData']>;
+	history: ReturnType<QueryClient['getQueriesData']>;
+	search: ReturnType<QueryClient['getQueriesData']>;
+};
+
+function snapshotLists(qc: QueryClient): ListSnapshot {
+	return {
+		entries: qc.getQueriesData({ queryKey: ['entries'] }),
+		history: qc.getQueriesData({ queryKey: ['history'] }),
+		search: qc.getQueriesData({ queryKey: ['search'] })
+	};
+}
+
+function restoreLists(qc: QueryClient, snap: ListSnapshot): void {
+	for (const ns of ['entries', 'history', 'search'] as const) {
+		for (const [k, v] of snap[ns]) qc.setQueryData(k, v);
+	}
+}
+
+async function cancelLists(qc: QueryClient): Promise<void> {
+	await qc.cancelQueries({ queryKey: ['entries'] });
+	await qc.cancelQueries({ queryKey: ['history'] });
+	await qc.cancelQueries({ queryKey: ['search'] });
+}
+
+function invalidateLists(qc: QueryClient): void {
+	qc.invalidateQueries({ queryKey: ['entries'] });
+	qc.invalidateQueries({ queryKey: ['history'] });
+	qc.invalidateQueries({ queryKey: ['search'] });
+}
+
+// Mutation options for `useToggleRead`, exported as a pure function so
+// unit tests can drive the same options through MutationObserver
+// without a Svelte runtime. The hook is a thin wrapper that re-resolves
+// the client per render via `useQueryClient`.
+export function toggleReadMutationOptions(qc: QueryClient) {
+	return {
 		mutationFn: async ({ id, read }: { id: number; read: boolean }) =>
 			await putJSON<Entry>(`/entries/${id}`, { read }),
-		// Optimistic update: flip `read` on every cached entries list
-		// before the server replies, then revert on error. Scoped to
-		// the 'list' namespace so single-entry caches aren't touched.
-		onMutate: async ({ id, read }) => {
-			await qc.cancelQueries({ queryKey: keys.entriesList() });
-			const prev = qc.getQueriesData<{ data: Entry[] }>({ queryKey: keys.entriesList() });
-			qc.setQueriesData<{ data: Entry[] }>({ queryKey: keys.entriesList() }, (old) =>
-				old ? { ...old, data: old.data.map((e) => (e.id === id ? { ...e, read } : e)) } : old
-			);
-			// Also reflect the change in the single-entry cache for the
-			// reader pane.
+		onMutate: async ({ id, read }: { id: number; read: boolean }) => {
+			await cancelLists(qc);
+			const previous = snapshotLists(qc);
+			patchEntryEverywhere(qc, id, { read });
+			// Reflect the change in the single-entry cache for the reader pane.
 			qc.setQueryData<Entry>(keys.entry(id), (old) => (old ? { ...old, read } : old));
-			return { prev };
+			return { previous };
 		},
-		onError: (_err, _vars, ctx) => {
-			ctx?.prev?.forEach(([key, data]) => qc.setQueryData(key, data));
+		onError: (_err: unknown, _vars: unknown, ctx: { previous: ListSnapshot } | undefined) => {
+			if (!ctx?.previous) return;
+			restoreLists(qc, ctx.previous);
 		},
-		onSettled: (_data, _err, { id }) => {
-			qc.invalidateQueries({ queryKey: keys.entriesAll() });
-			qc.invalidateQueries({ queryKey: keys.entry(id) });
+		onSettled: (
+			_data: unknown,
+			_err: unknown,
+			vars: { id: number; read: boolean }
+		) => {
+			invalidateLists(qc);
+			qc.invalidateQueries({ queryKey: keys.entry(vars.id) });
 		}
-	}));
+	};
+}
+
+export function useToggleRead() {
+	const qc = useQueryClient();
+	return createMutation(() => toggleReadMutationOptions(qc));
 }
 
 // `useBulkUpdate` flips `read` on a list of entry ids. (No `saved`
