@@ -105,7 +105,7 @@
 	<div class="tap is-mobile">
 		<MobileTopBar label="settings" />
 		<div class="m-wrap">{@render content()}</div>
-		<MobileTabBar active="settings" />
+		<MobileTabBar />
 	</div>
 {:else}
 	<div class="tap">

@@ -42,7 +42,7 @@
 				/>
 			{/if}
 		</div>
-		<MobileTabBar />
+		<MobileTabBar active="history" />
 	</div>
 {:else}
 	<div class="tap">
