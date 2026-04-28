@@ -138,10 +138,12 @@
 	.reader-back {
 		padding: 6px 10px 6px 4px;
 	}
-	.reader-back:hover,
-	.reader-action:hover {
-		color: var(--ink);
-		background: var(--bg-soft);
+	@media (hover: hover) {
+		.reader-back:hover,
+		.reader-action:hover {
+			color: var(--ink);
+			background: var(--bg-soft);
+		}
 	}
 	.reader-action.is-saved {
 		color: var(--accent);

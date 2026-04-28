@@ -84,7 +84,9 @@
 		cursor: pointer;
 		text-decoration: none;
 	}
-	.iconbtn:hover {
-		color: var(--ink);
+	@media (hover: hover) {
+		.iconbtn:hover {
+			color: var(--ink);
+		}
 	}
 </style>

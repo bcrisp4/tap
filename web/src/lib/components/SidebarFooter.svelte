@@ -114,8 +114,10 @@
 		text-decoration: none;
 		padding: 0;
 	}
-	.icon-btn:hover {
-		color: var(--ink);
-		background: var(--surface);
+	@media (hover: hover) {
+		.icon-btn:hover {
+			color: var(--ink);
+			background: var(--surface);
+		}
 	}
 </style>

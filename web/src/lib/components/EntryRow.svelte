@@ -160,8 +160,10 @@
 		color: inherit;
 		box-sizing: border-box;
 	}
-	.entry:hover {
-		background: var(--bg-soft);
+	@media (hover: hover) {
+		.entry:hover {
+			background: var(--bg-soft);
+		}
 	}
 	.entry.is-selected {
 		background: var(--accent-soft);
@@ -211,8 +213,10 @@
 		cursor: pointer;
 		color: inherit;
 	}
-	.read-dot:hover {
-		background: var(--bg-soft);
+	@media (hover: hover) {
+		.read-dot:hover {
+			background: var(--bg-soft);
+		}
 	}
 	.read-dot .dot {
 		width: 6px;
