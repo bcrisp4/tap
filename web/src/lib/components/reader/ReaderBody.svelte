@@ -105,8 +105,6 @@
 		<span class="reader-end-dot"></span>
 		<span class="reader-end-line"></span>
 	</div>
-
-	<div class="reader-foot mono">Cached locally</div>
 </article>
 
 <ImageLightbox src={lightboxSrc} alt={lightboxAlt} onClose={closeLightbox} />
@@ -325,14 +323,6 @@
 		height: 6px;
 		border-radius: 50%;
 		background: var(--ink-4);
-	}
-
-	.reader-foot {
-		font-size: 10px;
-		letter-spacing: 0.06em;
-		text-transform: uppercase;
-		color: var(--ink-3);
-		text-align: center;
 	}
 
 	:global(.is-mobile) .reader-body {
