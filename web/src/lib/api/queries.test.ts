@@ -110,10 +110,17 @@ function entry(id: number, overrides: Partial<Entry> = {}): Entry {
 
 function runMutation<TVars>(
 	qc: QueryClient,
-	options: ReturnType<typeof toggleReadMutationOptions>,
+	// Accept any of the mutation-options shapes — they all satisfy the
+	// MutationObserverOptions contract that the constructor needs, but
+	// the discriminated mutationKey makes the union too narrow for a
+	// shared signature without this widening cast.
+	options: object,
 	vars: TVars
 ): Promise<unknown> {
-	const obs = new MutationObserver(qc, options as Parameters<typeof obs.setOptions>[0]);
+	const obs = new MutationObserver(
+		qc,
+		options as ConstructorParameters<typeof MutationObserver>[1]
+	);
 	return obs.mutate(vars).catch(() => undefined);
 }
 

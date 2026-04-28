@@ -143,15 +143,25 @@ function rollback(qc: QueryClient, snap: ListSnapshot): void {
 }
 
 async function cancelLists(qc: QueryClient): Promise<void> {
-	await qc.cancelQueries({ queryKey: ['entries'] });
-	await qc.cancelQueries({ queryKey: ['history'] });
-	await qc.cancelQueries({ queryKey: ['search'] });
+	await Promise.all([
+		qc.cancelQueries({ queryKey: ['entries'] }),
+		qc.cancelQueries({ queryKey: ['history'] }),
+		qc.cancelQueries({ queryKey: ['search'] })
+	]);
 }
 
 function invalidateLists(qc: QueryClient): void {
 	qc.invalidateQueries({ queryKey: ['entries'] });
 	qc.invalidateQueries({ queryKey: ['history'] });
 	qc.invalidateQueries({ queryKey: ['search'] });
+}
+
+// Apply a partial patch to the single-entry cache (the reader pane's
+// source). The check guards against patching an entry the reader has
+// not yet pulled — overwriting `undefined` here would synthesize a
+// half-baked Entry and mislead the reader on next mount.
+function patchEntryCache(qc: QueryClient, id: number, patch: Partial<Entry>): void {
+	qc.setQueryData<Entry>(keys.entry(id), (old) => (old ? { ...old, ...patch } : old));
 }
 
 // Mutation options for `useToggleRead`, exported as a pure function so
@@ -167,8 +177,7 @@ export function toggleReadMutationOptions(qc: QueryClient) {
 			await cancelLists(qc);
 			const previous = snapshotLists(qc);
 			patchEntryEverywhere(qc, id, { read });
-			// Reflect the change in the single-entry cache for the reader pane.
-			qc.setQueryData<Entry>(keys.entry(id), (old) => (old ? { ...old, read } : old));
+			patchEntryCache(qc, id, { read });
 			return { previous };
 		},
 		onError: (_err: unknown, _vars: unknown, ctx: { previous: ListSnapshot } | undefined) => {
@@ -214,7 +223,7 @@ export function bulkUpdateMutationOptions(qc: QueryClient) {
 			const previous = snapshotLists(qc);
 			for (const id of ids) {
 				patchEntryEverywhere(qc, id, { read });
-				qc.setQueryData<Entry>(keys.entry(id), (old) => (old ? { ...old, read } : old));
+				patchEntryCache(qc, id, { read });
 			}
 			return { previous };
 		},
@@ -242,7 +251,7 @@ export function toggleSavedMutationOptions(qc: QueryClient) {
 			await cancelLists(qc);
 			const previous = snapshotLists(qc);
 			patchEntryEverywhere(qc, id, { saved });
-			qc.setQueryData<Entry>(keys.entry(id), (old) => (old ? { ...old, saved } : old));
+			patchEntryCache(qc, id, { saved });
 			return { previous };
 		},
 		onError: (_err: unknown, _vars: unknown, ctx: { previous: ListSnapshot } | undefined) => {
@@ -340,6 +349,9 @@ export function useUpdateFeed() {
 	}));
 }
 
+type FeedsSnapshot = ReturnType<QueryClient['getQueriesData']>;
+type DeleteFeedContext = { previous: ListSnapshot & { feeds: FeedsSnapshot } };
+
 // `useDeleteFeed` removes the feed from every cache it appears in —
 // the byId one (gone), the feeds list (sidebar/menu), and any
 // entries lists (the deleted feed's entries are FK-cascaded). The
@@ -351,9 +363,8 @@ export function deleteFeedMutationOptions(qc: QueryClient) {
 	return {
 		mutationKey: mutationKeys.deleteFeed,
 		mutationFn: (id: number) => deleteResource(`/feeds/${id}`),
-		onMutate: async (id: number) => {
-			await cancelLists(qc);
-			await qc.cancelQueries({ queryKey: ['feeds'] });
+		onMutate: async (id: number): Promise<DeleteFeedContext> => {
+			await Promise.all([cancelLists(qc), qc.cancelQueries({ queryKey: ['feeds'] })]);
 
 			const previous = {
 				...snapshotLists(qc),
@@ -364,17 +375,7 @@ export function deleteFeedMutationOptions(qc: QueryClient) {
 			qc.removeQueries({ queryKey: keys.feed(id) });
 			return { previous };
 		},
-		onError: (
-			_err: unknown,
-			_vars: unknown,
-			ctx:
-				| {
-						previous: ListSnapshot & {
-							feeds: ReturnType<QueryClient['getQueriesData']>;
-						};
-				  }
-				| undefined
-		) => {
+		onError: (_err: unknown, _vars: unknown, ctx: DeleteFeedContext | undefined) => {
 			if (!ctx?.previous) return;
 			rollback(qc, ctx.previous);
 			for (const [k, v] of ctx.previous.feeds) qc.setQueryData(k, v);
