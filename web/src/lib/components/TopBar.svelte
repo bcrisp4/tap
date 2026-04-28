@@ -14,6 +14,11 @@
 	//     otherwise the affordance disappears entirely (no clickable
 	//     no-op buttons).
 	//
+	// Plan 15 wires Refresh for real (Plan 10's stub TODO) and adds a
+	// `refreshing` flag so the parent can disable the button + show a
+	// loading state while the fan-out POST /feeds/[id]/refresh calls
+	// are in flight.
+	//
 	// The Search affordance still renders disabled — it advertises a
 	// future capability without pretending to work today.
 	let {
@@ -21,13 +26,15 @@
 		unread,
 		total,
 		onMarkAllRead,
-		onRefresh
+		onRefresh,
+		refreshing = false
 	}: {
 		title?: string;
 		unread?: number;
 		total?: number;
 		onMarkAllRead?: () => void;
 		onRefresh?: () => void;
+		refreshing?: boolean;
 	} = $props();
 </script>
 
@@ -63,8 +70,11 @@
 		<button
 			type="button"
 			class="icon-btn"
+			class:is-spinning={refreshing}
 			title="Refresh"
 			aria-label="Refresh"
+			disabled={refreshing}
+			data-testid="refresh-button"
 			onclick={onRefresh}
 		>
 			<svg
@@ -89,6 +99,7 @@
 			class="icon-btn"
 			title="Mark all read"
 			aria-label="Mark all read"
+			data-testid="mark-all-read-button"
 			onclick={onMarkAllRead}
 		>
 			<svg
@@ -160,5 +171,20 @@
 	.icon-btn:disabled:hover {
 		background: transparent;
 		color: var(--ink-4);
+	}
+	.icon-btn.is-spinning svg {
+		animation: tb-spin 0.9s linear infinite;
+	}
+	.icon-btn.is-spinning:disabled {
+		color: var(--accent);
+		cursor: progress;
+	}
+	@keyframes tb-spin {
+		from {
+			transform: rotate(0deg);
+		}
+		to {
+			transform: rotate(360deg);
+		}
 	}
 </style>
