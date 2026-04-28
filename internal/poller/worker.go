@@ -204,38 +204,65 @@ func (w *Worker) filterAndExtract(ctx context.Context, f *storage.Feed, parsed [
 		fresh = append(fresh, e)
 	}
 
-	if !f.Crawler || w.cfg.Pipeline == nil || len(fresh) == 0 {
-		// Still fill reading_time from the feed-supplied content/summary.
-		for _, e := range fresh {
-			e.ReadingTime = readingTimeFor(e)
-		}
+	if len(fresh) == 0 {
 		return fresh, nil
 	}
 
-	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(extractionConcurrency)
-	rules := stringOr(f.ScraperRules)
-	for _, e := range fresh {
-		if e.URL == nil || *e.URL == "" {
-			continue
-		}
-		g.Go(func() error {
-			content, ok := w.fetchAndExtract(gctx, f, *e.URL, rules)
-			if !ok {
-				e.ExtractionFailed = true
-				if e.Summary != nil && (e.Content == nil || *e.Content == "") {
-					sum := *e.Summary
-					e.Content = &sum
-				}
-				return nil
+	if f.Crawler && w.cfg.Pipeline != nil {
+		g, gctx := errgroup.WithContext(ctx)
+		g.SetLimit(extractionConcurrency)
+		rules := stringOr(f.ScraperRules)
+		for _, e := range fresh {
+			if e.URL == nil || *e.URL == "" {
+				continue
 			}
-			e.Content = &content
-			return nil
-		})
+			g.Go(func() error {
+				content, ok := w.fetchAndExtract(gctx, f, *e.URL, rules)
+				if !ok {
+					e.ExtractionFailed = true
+					if e.Summary != nil && (e.Content == nil || *e.Content == "") {
+						sum := *e.Summary
+						e.Content = &sum
+					}
+					return nil
+				}
+				e.Content = &content
+				return nil
+			})
+		}
+		if err := g.Wait(); err != nil {
+			return nil, err
+		}
 	}
-	if err := g.Wait(); err != nil {
-		return nil, err
+
+	// Universal pass: every entry's stored content goes through
+	// RewriteAndSanitize so right-click→copy-image-URL yields a
+	// /api/v1/proxy/<token> URL and the sanitizer drops anything
+	// dangerous. Crawler entries already flowed through Pipeline.Process
+	// (which includes this step); we skip the second pass for them to
+	// avoid double-encoding proxy URLs. Non-crawler entries (whose
+	// Content came directly from the feed parser) get sanitised here.
+	if w.cfg.Pipeline != nil && !f.Crawler {
+		for _, e := range fresh {
+			source := stringOr(e.Content)
+			if source == "" {
+				source = stringOr(e.Summary)
+			}
+			if source == "" {
+				continue
+			}
+			articleURL := stringOr(e.URL)
+			if articleURL == "" {
+				articleURL = f.FeedURL
+			}
+			safe, err := w.cfg.Pipeline.RewriteAndSanitize(source, articleURL)
+			if err != nil {
+				continue
+			}
+			e.Content = &safe
+		}
 	}
+
 	for _, e := range fresh {
 		e.ReadingTime = readingTimeFor(e)
 	}
