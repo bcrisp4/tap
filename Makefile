@@ -5,7 +5,10 @@ PKG := github.com/bcrisp4/tap
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo 0.0.0-dev)
 LDFLAGS := -X $(PKG)/internal/version.Version=$(VERSION)
 
-.PHONY: web-build web-stage build test test-all run tidy clean
+IMAGE     ?= ghcr.io/bcrisp4/tap
+IMAGE_TAG ?= dev
+
+.PHONY: web-build web-stage build test test-all run tidy clean image image-smoke
 
 # Build the SvelteKit SPA into web/build/.
 web-build:
@@ -39,3 +42,17 @@ tidy:
 clean:
 	rm -f $(BIN)
 	rm -rf internal/web/build
+
+# Build the multi-stage OCI image. VERSION is forwarded as a build arg
+# so the in-image binary reports the same git-described version as the
+# native build.
+image:
+	docker build \
+		--build-arg VERSION=$(VERSION) \
+		-t $(IMAGE):$(IMAGE_TAG) \
+		.
+
+# Smoke-test a built image: boot it, hit /healthz, subscribe a feed,
+# poll, list entries, and assert the image size is sane.
+image-smoke:
+	./scripts/docker-smoke.sh $(IMAGE):$(IMAGE_TAG)
