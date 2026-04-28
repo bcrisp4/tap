@@ -19,14 +19,15 @@
 	import MobileTopBar from '$lib/components/MobileTopBar.svelte';
 	import MobileTabBar from '$lib/components/MobileTabBar.svelte';
 
-	// SvelteKit remounts the route component on dynamic-param changes,
-	// so capturing `page.params.id` once at mount time is safe — a
-	// navigation to a sibling /feeds/N gives a fresh evaluation. We
-	// still read `page.params.id` lazily inside the useFeed getter so
-	// the queryKey stays in sync with the URL within the same mount.
-	const feedId = Number(page.params.id);
-	const feed = useFeed(() => Number(page.params.id));
-	const entries = useEntries({ status: 'all', feed_id: feedId, limit: 50 });
+	// SvelteKit reuses the same component instance when navigating
+	// between sibling /feeds/[id] routes (only `page.params` updates),
+	// so every read of the id has to happen lazily. `useFeed` and
+	// `useEntries` both take getters so their queryKeys re-evaluate
+	// when the route param changes; mutations read `feedId()` at
+	// call-time so they hit the current URL's feed.
+	const feedId = $derived(Number(page.params.id));
+	const feed = useFeed(() => feedId);
+	const entries = useEntries(() => ({ status: 'all', feed_id: feedId, limit: 50 }));
 
 	const updateMut = useUpdateFeed();
 	const deleteMut = useDeleteFeed();
@@ -252,7 +253,7 @@
 	<div class="tap">
 		<Sidebar />
 		<div class="col">
-			<TopBar title={feed.data?.title ?? 'Feed'} />
+			<TopBar title={feed.data?.title ?? 'Feed'} onRefresh={refresh} />
 			<div class="scroll">{@render content()}</div>
 		</div>
 	</div>

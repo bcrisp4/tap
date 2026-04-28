@@ -36,20 +36,33 @@ export function useFeeds() {
 	}));
 }
 
+// `params` may be a static object (most callers) or a getter that the
+// query factory re-evaluates on each pass. The getter form lets a
+// route component re-key the query when one of its inputs changes
+// without remounting — e.g. `/feeds/[id]` navigating to a sibling
+// feed_id while the same `+page.svelte` instance stays alive. Without
+// it, the closure freezes the initial params and the query keeps
+// targeting the stale id.
 export function useEntries(
-	params: Record<string, string | number | undefined> = { status: 'unread' }
+	params:
+		| Record<string, string | number | undefined>
+		| (() => Record<string, string | number | undefined>) = { status: 'unread' }
 ) {
-	return createQuery(() => ({
-		queryKey: keys.entries(params),
-		queryFn: () => {
-			const qs = new URLSearchParams(
-				Object.entries(params)
-					.filter(([, v]) => v !== undefined)
-					.map(([k, v]) => [k, String(v)])
-			).toString();
-			return getList<Entry>('/entries' + (qs ? '?' + qs : ''));
-		}
-	}));
+	const getParams = typeof params === 'function' ? params : () => params;
+	return createQuery(() => {
+		const current = getParams();
+		return {
+			queryKey: keys.entries(current),
+			queryFn: () => {
+				const qs = new URLSearchParams(
+					Object.entries(current)
+						.filter(([, v]) => v !== undefined)
+						.map(([k, v]) => [k, String(v)])
+				).toString();
+				return getList<Entry>('/entries' + (qs ? '?' + qs : ''));
+			}
+		};
+	});
 }
 
 // `id` may be passed as a plain number (one-shot lookup) or as a getter
