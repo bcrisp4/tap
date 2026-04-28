@@ -69,3 +69,39 @@ export interface SystemStatus {
 		recent_errors?: string[];
 	};
 }
+
+// FeedPatch encodes credential-redaction discipline (Plan 08): the
+// API stores cookie/username/password/proxy_url but redacts them on
+// read (json:"-"). Sending an empty string would clobber the stored
+// value; the edit form must therefore *omit* the key when the input
+// is empty. Modelling those fields as optional (and only ever
+// assigning when a non-empty string is present) makes the contract
+// self-enforcing on the SPA side.
+export interface FeedPatch {
+	title?: string;
+	feed_url?: string;
+	site_url?: string | null;
+	category_id?: number | null;
+	crawler?: boolean;
+	disabled?: boolean;
+	scraper_rules?: string | null;
+	user_agent?: string | null;
+	cookie?: string;
+	username?: string;
+	password?: string;
+	proxy_url?: string;
+}
+
+// DiscoverCandidate / DiscoverResult mirror the
+// POST /api/v1/feeds/discover wire shape. The endpoint returns
+// `{candidates: [{href, title?, type?}]}` (NOT the design.md §6 list
+// envelope — discover predates that).
+export interface DiscoverCandidate {
+	href: string;
+	title?: string;
+	type?: string;
+}
+
+export interface DiscoverResult {
+	candidates: DiscoverCandidate[];
+}
