@@ -11,12 +11,23 @@
 	import Wordmark from '$brand/Wordmark.svelte';
 	import FeedIcon from './FeedIcon.svelte';
 	import SidebarFooter from './SidebarFooter.svelte';
+	import { AlertTriangle } from 'lucide-svelte';
 
 	let { active }: { active?: 'unread' | 'history' | 'saved' } = $props();
 
 	const feeds = useFeeds();
 	const unread = useEntries({ status: 'unread', limit: 1 });
 	const saved = useEntries({ saved: 'true', limit: 1 });
+
+	// Truncated copy for the warning tooltip/aria-label. Stack traces
+	// and TLS errors can run hundreds of characters; the tooltip just
+	// needs the gist. The full last_error stays visible on the feed
+	// detail page.
+	const WARN_MAX = 140;
+	function truncateError(s: string | null | undefined): string {
+		if (!s) return '';
+		return s.length > WARN_MAX ? s.slice(0, WARN_MAX - 1) + '…' : s;
+	}
 </script>
 
 <aside class="tap-sidebar">
@@ -43,6 +54,16 @@
 		<a href={'/feeds/' + f.id} class="feed-row">
 			<FeedIcon feed={f} />
 			<span class="name">{f.title}</span>
+			{#if f.error_count > 0}
+				{@const warn = truncateError(f.last_error)}
+				<span
+					class="feed-warn"
+					title={warn}
+					aria-label={`Feed has errors: ${warn}`}
+				>
+					<AlertTriangle size="12" aria-hidden="true" />
+				</span>
+			{/if}
 		</a>
 	{/each}
 
@@ -148,5 +169,12 @@
 		text-overflow: ellipsis;
 		white-space: nowrap;
 		flex: 1;
+	}
+	.feed-warn {
+		display: inline-flex;
+		align-items: center;
+		color: var(--accent-warn, #c33);
+		flex-shrink: 0;
+		margin-left: 4px;
 	}
 </style>

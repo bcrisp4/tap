@@ -1,14 +1,12 @@
 <script lang="ts" module>
 	// Module-level helpers: shared between the EntryRow component and
 	// any callers (e.g. Sidebar) that need a stable feed-color swatch.
-	export function formatAgo(unix?: number | null): string {
-		if (!unix) return 'recent';
-		const s = Math.max(0, Math.floor(Date.now() / 1000 - unix));
-		if (s < 60) return s + 's';
-		if (s < 3600) return Math.floor(s / 60) + 'm';
-		if (s < 86400) return Math.floor(s / 3600) + 'h';
-		return Math.floor(s / 86400) + 'd';
-	}
+	// `formatAgo` lives in `$lib/format.ts` so non-component callers
+	// (e.g. StatsPanel's recent-errors rows) can import without
+	// pulling the full EntryRow graph into their import chain; we
+	// re-export here so existing call-sites keep working.
+	import { formatAgo } from '$lib/format';
+	export { formatAgo };
 
 	export function swatchFor(seed: string): string {
 		// Deterministic 8-bit hash → HSL hue. Fixed lightness/saturation
