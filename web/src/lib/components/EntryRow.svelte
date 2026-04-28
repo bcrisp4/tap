@@ -53,15 +53,60 @@
 	// has no way of knowing why one row is shaded).
 	const showKeyboardHighlight = $derived(selected && inputMode.mode === 'keyboard');
 
+	// Tracks which entry-id was acted on by the most-recent pointerup so
+	// the synthesized click that follows a touch tap can be suppressed
+	// without affecting genuine mouse clicks (which deliver pointerup +
+	// click on the same target). On mobile the synthesized click after
+	// a touch tap can land on the stretched <a> sibling instead of the
+	// button, navigating into the reader instead of toggling read —
+	// pointerup + stopPropagation guarantees the toggle wins.
+	let suppressNextDotClick = false;
+	let suppressNextSelectClick = false;
+
+	function onReadDotPointerUp(ev: PointerEvent) {
+		// Only handle primary-button pointer ups. Mouse right-click and
+		// middle-click should fall through to the browser's defaults.
+		if (ev.button !== 0) return;
+		ev.stopPropagation();
+		ev.preventDefault();
+		suppressNextDotClick = true;
+		onToggleRead(entry.id, !entry.read);
+	}
+
 	function onReadDotClick(ev: MouseEvent) {
-		// Stop the row click; the read-dot has its own action and we
-		// don't want a click-to-open hijack.
+		// pointerup already handled the toggle; the click is the
+		// browser's compatibility echo. Swallow it so it doesn't
+		// double-fire (or, worse, retarget at the underlying anchor
+		// after a touch tap).
+		if (suppressNextDotClick) {
+			suppressNextDotClick = false;
+			ev.stopPropagation();
+			ev.preventDefault();
+			return;
+		}
+		// Fallback for environments that didn't dispatch pointerup —
+		// keyboard-activated clicks (Space / Enter) come in as a click
+		// without a preceding pointerup.
 		ev.stopPropagation();
 		ev.preventDefault();
 		onToggleRead(entry.id, !entry.read);
 	}
 
+	function onSelectBoxPointerUp(ev: PointerEvent) {
+		if (ev.button !== 0) return;
+		ev.stopPropagation();
+		ev.preventDefault();
+		suppressNextSelectClick = true;
+		onToggleSelect(entry.id, ev as unknown as MouseEvent);
+	}
+
 	function onSelectBoxClick(ev: MouseEvent) {
+		if (suppressNextSelectClick) {
+			suppressNextSelectClick = false;
+			ev.stopPropagation();
+			ev.preventDefault();
+			return;
+		}
 		ev.stopPropagation();
 		ev.preventDefault();
 		onToggleSelect(entry.id, ev);
@@ -99,6 +144,7 @@
 			class="select-box"
 			aria-label={multiSelected ? 'Deselect entry' : 'Select entry'}
 			aria-pressed={multiSelected}
+			onpointerup={onSelectBoxPointerUp}
 			onclick={onSelectBoxClick}
 		>
 			<span class="check" aria-hidden="true">{multiSelected ? '✓' : ''}</span>
@@ -110,6 +156,7 @@
 			aria-label={entry.read ? 'Mark unread' : 'Mark read'}
 			aria-pressed={!entry.read}
 			data-testid="row-read-toggle"
+			onpointerup={onReadDotPointerUp}
 			onclick={onReadDotClick}
 		>
 			<span class="dot" aria-hidden="true"></span>
@@ -196,7 +243,9 @@
 	}
 
 	/* Per-row mark-read button. Filled dot = unread, hollow ring =
-	   read. Hidden on mobile — Plan 18 swaps in swipe gestures. */
+	   read. `touch-action: manipulation` removes the 300ms tap-delay
+	   on touch devices; `pointer-events: auto` keeps the button live
+	   even though its parent .meta/.title use pointer-events:none. */
 	.read-dot {
 		position: absolute;
 		left: 16px;
@@ -212,6 +261,7 @@
 		padding: 0;
 		cursor: pointer;
 		color: inherit;
+		touch-action: manipulation;
 	}
 	@media (hover: hover) {
 		.read-dot:hover {
@@ -250,6 +300,7 @@
 		padding: 0;
 		cursor: pointer;
 		color: inherit;
+		touch-action: manipulation;
 	}
 	.entry.is-multi-selected .select-box {
 		background: var(--accent);
@@ -359,14 +410,14 @@
 	}
 
 	/* Mobile overrides cascade from the .is-mobile root applied in
-	   +page.svelte. Plan 18 will add swipe gestures; for now the
-	   per-row read dot is hidden on mobile to keep the row tappable. */
+	   +page.svelte. The read-dot stays visible on mobile (Plan 18 T3 +
+	   T4): T3 fixes its tap-vs-open conflict; T4 sizes it ≥44×44 via
+	   the dedicated `.read-dot` rules below so the underlying anchor
+	   never claims the tap. The swipe gesture (T5) is the secondary
+	   affordance, not the only one. */
 	:global(.is-mobile) .entry {
-		padding-left: 36px;
+		padding-left: 44px;
 		padding-right: 18px;
-	}
-	:global(.is-mobile) .entry .read-dot {
-		display: none;
 	}
 	:global(.is-mobile) .entry.is-multi .select-box {
 		left: 14px;

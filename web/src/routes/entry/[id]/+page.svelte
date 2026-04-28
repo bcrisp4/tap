@@ -42,23 +42,20 @@
 
 	let progress = $state(0);
 
-	// Auto-mark-read on reader open. The optimistic update in
-	// `useToggleRead` flips `entry.data.read` synchronously, so the
-	// effect's `if (e.read) return` short-circuits subsequent runs
-	// from the cache flip. On mutation error the cache reverts to
-	// false and the effect would re-fire — we cap the per-id attempts
-	// so a persistent server error doesn't loop. After the cap the
-	// user can press `m` to take over manually.
-	const MAX_AUTO_MARK_ATTEMPTS = 2;
-	const autoMarkAttempts = new Map<number, number>();
+	// Auto-mark-read on reader open. We fire exactly once per entry-id
+	// per page lifetime: the user's manual `m` press (or footbar tap on
+	// mobile) flips read=false, and the auto-effect must NOT re-fire
+	// against that — otherwise the manual unmark looks unresponsive
+	// (mobile flicker bug, Plan 18 T3 root cause). Once the auto-mutate
+	// has been issued, the user owns the read state.
+	const autoMarked = new Set<number>();
 
 	$effect(() => {
 		const e = entry.data;
 		if (!e) return;
 		if (e.read) return;
-		const attempts = autoMarkAttempts.get(e.id) ?? 0;
-		if (attempts >= MAX_AUTO_MARK_ATTEMPTS) return;
-		autoMarkAttempts.set(e.id, attempts + 1);
+		if (autoMarked.has(e.id)) return;
+		autoMarked.add(e.id);
 		toggleRead.mutate({ id: e.id, read: true });
 	});
 
