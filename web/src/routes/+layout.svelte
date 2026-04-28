@@ -3,14 +3,15 @@
 	import { QueryClientProvider } from '@tanstack/svelte-query';
 	import { makeQueryClient } from '$lib/query-client';
 	import { theme, applyThemeClasses } from '$lib/theme.svelte';
-	import { bindOnlineManager } from '$lib/offline/online';
+	import { bindOnlineManager, drainPausedMutations } from '$lib/offline/online';
 	import { prefetchRecent } from '$lib/offline/prefetch';
 	import { hotkeysModal } from '$lib/hotkeys-modal.svelte';
 	import { bindInputMode } from '$lib/inputmode.svelte';
 	import HotkeysModal from '$lib/components/HotkeysModal.svelte';
+	import Toast from '$lib/components/Toast.svelte';
 	import '../app.css';
 
-	const client = makeQueryClient();
+	const { client, restored } = makeQueryClient();
 
 	let { children } = $props();
 
@@ -46,6 +47,15 @@
 			navigator.serviceWorker.register('/service-worker.js').catch(() => undefined);
 		}
 		const unbindOnline = bindOnlineManager();
+		// Replay any mutations that paused while offline before the last
+		// reload. We await `restored` because the persisted mutation
+		// cache rehydrates asynchronously — calling drainPausedMutations
+		// before that promise settles would find an empty cache and
+		// no-op even if IDB held queued mutations. A failed restore
+		// (quota exceeded, IDB blocked, etc.) is non-fatal — swallow it
+		// so it doesn't surface as an unhandled rejection in the console
+		// without changing user-visible behaviour.
+		restored.then(() => drainPausedMutations(client)).catch(() => undefined);
 		const initialPrefetch = window.setTimeout(() => {
 			void prefetchRecent(200).catch(() => undefined);
 		}, 1_000);
@@ -80,4 +90,5 @@
 <QueryClientProvider {client}>
 	{@render children()}
 	<HotkeysModal />
+	<Toast />
 </QueryClientProvider>

@@ -2,9 +2,32 @@
 // the query keys here keeps cache invalidation predictable across
 // pages.
 
-import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
+import {
+	createQuery,
+	createMutation,
+	useQueryClient,
+	type QueryClient
+} from '@tanstack/svelte-query';
 import { deleteResource, getList, getJSON, postJSON, putJSON } from './client';
+import { patchEntryEverywhere, removeEntryEverywhere } from './cache-patch';
+import { toast } from '$lib/toast.svelte';
 import type { Entry, Feed, Category, SystemStatus, FeedPatch, DiscoverResult } from './types';
+
+// User-facing copy reused across every mutation rollback. Kept as a
+// single string so the wording stays consistent if a future plan
+// promotes it into a richer toast surface (multi-message, retry, etc.).
+const ROLLBACK_MESSAGE = "couldn't sync — change reverted";
+
+// Stable mutation keys. `query-client.ts` registers `setMutationDefaults`
+// against these so paused mutations rehydrated from IDB after a reload
+// can look up their `mutationFn` / `onMutate` / `onError` (functions
+// don't survive JSON dehydration; only the key + variables persist).
+export const mutationKeys = {
+	toggleRead: ['mutations', 'toggleRead'] as const,
+	toggleSaved: ['mutations', 'toggleSaved'] as const,
+	bulkUpdate: ['mutations', 'bulkUpdate'] as const,
+	deleteFeed: ['mutations', 'deleteFeed'] as const
+};
 
 // Query keys are namespaced with an explicit 'list' / 'byId' segment so
 // prefix-based filters (e.g. `setQueriesData({queryKey: ['entries','list']})`)
@@ -87,33 +110,94 @@ export function useEntry(id: number | (() => number)) {
 	});
 }
 
-export function useToggleRead() {
-	const qc = useQueryClient();
-	return createMutation(() => ({
+// Snapshot of every cached query under the three list-shaped roots that
+// `patchEntryEverywhere` walks, plus the per-entry single cache. The
+// mutation hooks capture this in `onMutate` so `onError` can restore
+// the user's view exactly when the server rejects an optimistic edit.
+type ListSnapshot = {
+	entries: ReturnType<QueryClient['getQueriesData']>;
+	history: ReturnType<QueryClient['getQueriesData']>;
+	search: ReturnType<QueryClient['getQueriesData']>;
+};
+
+function snapshotLists(qc: QueryClient): ListSnapshot {
+	return {
+		entries: qc.getQueriesData({ queryKey: ['entries'] }),
+		history: qc.getQueriesData({ queryKey: ['history'] }),
+		search: qc.getQueriesData({ queryKey: ['search'] })
+	};
+}
+
+function restoreLists(qc: QueryClient, snap: ListSnapshot): void {
+	for (const ns of ['entries', 'history', 'search'] as const) {
+		for (const [k, v] of snap[ns]) qc.setQueryData(k, v);
+	}
+}
+
+// Restore the captured snapshot AND notify the user that their edit
+// didn't stick. Centralising the wording here keeps every mutation's
+// rollback message in lockstep.
+function rollback(qc: QueryClient, snap: ListSnapshot): void {
+	restoreLists(qc, snap);
+	toast.push(ROLLBACK_MESSAGE, 'error');
+}
+
+async function cancelLists(qc: QueryClient): Promise<void> {
+	await Promise.all([
+		qc.cancelQueries({ queryKey: ['entries'] }),
+		qc.cancelQueries({ queryKey: ['history'] }),
+		qc.cancelQueries({ queryKey: ['search'] })
+	]);
+}
+
+function invalidateLists(qc: QueryClient): void {
+	qc.invalidateQueries({ queryKey: ['entries'] });
+	qc.invalidateQueries({ queryKey: ['history'] });
+	qc.invalidateQueries({ queryKey: ['search'] });
+}
+
+// Apply a partial patch to the single-entry cache (the reader pane's
+// source). The check guards against patching an entry the reader has
+// not yet pulled — overwriting `undefined` here would synthesize a
+// half-baked Entry and mislead the reader on next mount.
+function patchEntryCache(qc: QueryClient, id: number, patch: Partial<Entry>): void {
+	qc.setQueryData<Entry>(keys.entry(id), (old) => (old ? { ...old, ...patch } : old));
+}
+
+// Mutation options for `useToggleRead`, exported as a pure function so
+// unit tests can drive the same options through MutationObserver
+// without a Svelte runtime. The hook is a thin wrapper that re-resolves
+// the client per render via `useQueryClient`.
+export function toggleReadMutationOptions(qc: QueryClient) {
+	return {
+		mutationKey: mutationKeys.toggleRead,
 		mutationFn: async ({ id, read }: { id: number; read: boolean }) =>
 			await putJSON<Entry>(`/entries/${id}`, { read }),
-		// Optimistic update: flip `read` on every cached entries list
-		// before the server replies, then revert on error. Scoped to
-		// the 'list' namespace so single-entry caches aren't touched.
-		onMutate: async ({ id, read }) => {
-			await qc.cancelQueries({ queryKey: keys.entriesList() });
-			const prev = qc.getQueriesData<{ data: Entry[] }>({ queryKey: keys.entriesList() });
-			qc.setQueriesData<{ data: Entry[] }>({ queryKey: keys.entriesList() }, (old) =>
-				old ? { ...old, data: old.data.map((e) => (e.id === id ? { ...e, read } : e)) } : old
-			);
-			// Also reflect the change in the single-entry cache for the
-			// reader pane.
-			qc.setQueryData<Entry>(keys.entry(id), (old) => (old ? { ...old, read } : old));
-			return { prev };
+		onMutate: async ({ id, read }: { id: number; read: boolean }) => {
+			await cancelLists(qc);
+			const previous = snapshotLists(qc);
+			patchEntryEverywhere(qc, id, { read });
+			patchEntryCache(qc, id, { read });
+			return { previous };
 		},
-		onError: (_err, _vars, ctx) => {
-			ctx?.prev?.forEach(([key, data]) => qc.setQueryData(key, data));
+		onError: (_err: unknown, _vars: unknown, ctx: { previous: ListSnapshot } | undefined) => {
+			if (!ctx?.previous) return;
+			rollback(qc, ctx.previous);
 		},
-		onSettled: (_data, _err, { id }) => {
-			qc.invalidateQueries({ queryKey: keys.entriesAll() });
-			qc.invalidateQueries({ queryKey: keys.entry(id) });
+		onSettled: (
+			_data: unknown,
+			_err: unknown,
+			vars: { id: number; read: boolean }
+		) => {
+			invalidateLists(qc);
+			qc.invalidateQueries({ queryKey: keys.entry(vars.id) });
 		}
-	}));
+	};
+}
+
+export function useToggleRead() {
+	const qc = useQueryClient();
+	return createMutation(() => toggleReadMutationOptions(qc));
 }
 
 // `useBulkUpdate` flips `read` on a list of entry ids. (No `saved`
@@ -125,46 +209,69 @@ export function useToggleRead() {
 // Plan 15's multi-select UX never selects more than a screen's worth
 // of rows in practice (~50), so the fan-out cost is acceptable.
 //
-// Optimistic update mirrors useToggleRead: we flip `read` on every
-// cached list before the server replies, snapshot the prior state
-// for rollback, and invalidate after settle.
-export function useBulkUpdate() {
-	const qc = useQueryClient();
-	return createMutation(() => ({
+// Optimistic update mirrors useToggleRead: we patch each id across
+// every cached list (entries / history / search), snapshot the prior
+// state for rollback, and invalidate after settle.
+export function bulkUpdateMutationOptions(qc: QueryClient) {
+	return {
+		mutationKey: mutationKeys.bulkUpdate,
 		mutationFn: async ({ ids, read }: { ids: number[]; read: boolean }) => {
 			await Promise.all(ids.map((id) => putJSON<Entry>(`/entries/${id}`, { read })));
 		},
-		onMutate: async ({ ids, read }) => {
-			await qc.cancelQueries({ queryKey: keys.entriesList() });
-			const prev = qc.getQueriesData<{ data: Entry[] }>({ queryKey: keys.entriesList() });
-			const idSet = new Set(ids);
-			qc.setQueriesData<{ data: Entry[] }>({ queryKey: keys.entriesList() }, (old) =>
-				old ? { ...old, data: old.data.map((e) => (idSet.has(e.id) ? { ...e, read } : e)) } : old
-			);
+		onMutate: async ({ ids, read }: { ids: number[]; read: boolean }) => {
+			await cancelLists(qc);
+			const previous = snapshotLists(qc);
 			for (const id of ids) {
-				qc.setQueryData<Entry>(keys.entry(id), (old) => (old ? { ...old, read } : old));
+				patchEntryEverywhere(qc, id, { read });
+				patchEntryCache(qc, id, { read });
 			}
-			return { prev };
+			return { previous };
 		},
-		onError: (_err, _vars, ctx) => {
-			ctx?.prev?.forEach(([key, data]) => qc.setQueryData(key, data));
+		onError: (_err: unknown, _vars: unknown, ctx: { previous: ListSnapshot } | undefined) => {
+			if (!ctx?.previous) return;
+			rollback(qc, ctx.previous);
 		},
 		onSettled: () => {
-			qc.invalidateQueries({ queryKey: keys.entriesAll() });
+			invalidateLists(qc);
 		}
-	}));
+	};
+}
+
+export function useBulkUpdate() {
+	const qc = useQueryClient();
+	return createMutation(() => bulkUpdateMutationOptions(qc));
+}
+
+export function toggleSavedMutationOptions(qc: QueryClient) {
+	return {
+		mutationKey: mutationKeys.toggleSaved,
+		mutationFn: async ({ id, saved }: { id: number; saved: boolean }) =>
+			await putJSON<Entry>(`/entries/${id}`, { saved }),
+		onMutate: async ({ id, saved }: { id: number; saved: boolean }) => {
+			await cancelLists(qc);
+			const previous = snapshotLists(qc);
+			patchEntryEverywhere(qc, id, { saved });
+			patchEntryCache(qc, id, { saved });
+			return { previous };
+		},
+		onError: (_err: unknown, _vars: unknown, ctx: { previous: ListSnapshot } | undefined) => {
+			if (!ctx?.previous) return;
+			rollback(qc, ctx.previous);
+		},
+		onSettled: (
+			_data: unknown,
+			_err: unknown,
+			vars: { id: number; saved: boolean }
+		) => {
+			invalidateLists(qc);
+			qc.invalidateQueries({ queryKey: keys.entry(vars.id) });
+		}
+	};
 }
 
 export function useToggleSaved() {
 	const qc = useQueryClient();
-	return createMutation(() => ({
-		mutationFn: async ({ id, saved }: { id: number; saved: boolean }) =>
-			await putJSON<Entry>(`/entries/${id}`, { saved }),
-		onSettled: (_data, _err, { id }) => {
-			qc.invalidateQueries({ queryKey: keys.entriesAll() });
-			qc.invalidateQueries({ queryKey: keys.entry(id) });
-		}
-	}));
+	return createMutation(() => toggleSavedMutationOptions(qc));
 }
 
 export function useCategories() {
@@ -242,19 +349,49 @@ export function useUpdateFeed() {
 	}));
 }
 
-// `useDeleteFeed` removes the feed from every cache it appears in —
-// the byId one (gone), the feeds list (sidebar/menu), and any
-// entries lists (the deleted feed's entries are FK-cascaded).
+type FeedsSnapshot = ReturnType<QueryClient['getQueriesData']>;
+type DeleteFeedContext = { previous: ListSnapshot & { feeds: FeedsSnapshot } };
+
+// `useDeleteFeed` clears the feed from caches that show its entries.
+// Optimistically: the byId cache is dropped via `removeQueries`, and
+// any entries-list / history / search rows belonging to the feed are
+// pruned via `removeEntryEverywhere` so the UI doesn't show stale rows
+// during the server roundtrip. The feeds-list cache (sidebar/menu) is
+// refreshed by the `onSettled` invalidation rather than patched
+// optimistically — patching the list synchronously is doable but
+// duplicates the invalidation cost for no measurable user benefit
+// (the sidebar refetch is cheap and lands within one paint).
+export function deleteFeedMutationOptions(qc: QueryClient) {
+	return {
+		mutationKey: mutationKeys.deleteFeed,
+		mutationFn: (id: number) => deleteResource(`/feeds/${id}`),
+		onMutate: async (id: number): Promise<DeleteFeedContext> => {
+			await Promise.all([cancelLists(qc), qc.cancelQueries({ queryKey: ['feeds'] })]);
+
+			const previous = {
+				...snapshotLists(qc),
+				feeds: qc.getQueriesData({ queryKey: ['feeds'] })
+			};
+
+			removeEntryEverywhere(qc, (e) => e.feed_id === id);
+			qc.removeQueries({ queryKey: keys.feed(id) });
+			return { previous };
+		},
+		onError: (_err: unknown, _vars: unknown, ctx: DeleteFeedContext | undefined) => {
+			if (!ctx?.previous) return;
+			rollback(qc, ctx.previous);
+			for (const [k, v] of ctx.previous.feeds) qc.setQueryData(k, v);
+		},
+		onSettled: () => {
+			invalidateLists(qc);
+			qc.invalidateQueries({ queryKey: keys.feeds() });
+		}
+	};
+}
+
 export function useDeleteFeed() {
 	const qc = useQueryClient();
-	return createMutation(() => ({
-		mutationFn: (id: number) => deleteResource(`/feeds/${id}`),
-		onSuccess: (_v, id) => {
-			qc.removeQueries({ queryKey: keys.feed(id) });
-			void qc.invalidateQueries({ queryKey: keys.feeds() });
-			void qc.invalidateQueries({ queryKey: keys.entriesAll() });
-		}
-	}));
+	return createMutation(() => deleteFeedMutationOptions(qc));
 }
 
 // `useDiscoverFeed` POSTs the candidate URL and returns RSS/Atom
