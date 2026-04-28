@@ -11,7 +11,6 @@
 	} from '$api/queries';
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import OfflineIndicator from '$lib/components/OfflineIndicator.svelte';
-	import ReaderRail from '$lib/components/reader/ReaderRail.svelte';
 	import ReaderHeader from '$lib/components/reader/ReaderHeader.svelte';
 	import ReaderBody from '$lib/components/reader/ReaderBody.svelte';
 	import MobileReaderTopBar from '$lib/components/reader/MobileReaderTopBar.svelte';
@@ -33,7 +32,6 @@
 	const feed = $derived(
 		(feeds.data?.data ?? []).find((f) => f.id === entry.data?.feed_id)
 	);
-	const railEntries = $derived(entries.data?.data ?? []);
 
 	// Mobile breakpoint follows the design handoff's `.is-mobile` rules
 	// (≤ 720 px viewport). Using Svelte's built-in MediaQuery so the
@@ -207,12 +205,6 @@
 	<div class="tap reader-shell">
 		<OfflineIndicator />
 		<Sidebar />
-		<ReaderRail
-			entries={railEntries}
-			selectedId={entry.data.id}
-			collapsed
-			onBack={back}
-		/>
 		<div class="reader-pane">
 			<ReaderHeader
 				read={entry.data.read}
