@@ -21,6 +21,7 @@
 		showSummary = true,
 		multiSelect = false,
 		selectedIds = new Set<number>(),
+		dimRead = true,
 		onSelect = (_id: number) => {},
 		onOpen = (_id: number) => {},
 		onToggleRead = (_id: number, _read: boolean) => {},
@@ -33,6 +34,9 @@
 		showSummary?: boolean;
 		multiSelect?: boolean;
 		selectedIds?: Set<number>;
+		// Forwarded to EntryRow — `/history` opts out (all-read by
+		// definition); the unread river keeps the default dim.
+		dimRead?: boolean;
 		onSelect?: (id: number) => void;
 		onOpen?: (id: number) => void;
 		onToggleRead?: (id: number, read: boolean) => void;
@@ -75,6 +79,7 @@
 			{showSummary}
 			{multiSelect}
 			multiSelected={selectedIds.has(e.id)}
+			{dimRead}
 			onclick={(ev) => rowClick(e.id, ev)}
 			{onToggleRead}
 			{onToggleSelect}

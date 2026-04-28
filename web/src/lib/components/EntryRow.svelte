@@ -31,6 +31,7 @@
 		showSummary = true,
 		multiSelect = false,
 		multiSelected = false,
+		dimRead = true,
 		onclick = (_ev: MouseEvent) => {},
 		onToggleRead = (_id: number, _read: boolean) => {},
 		onToggleSelect = (_id: number, _ev: MouseEvent) => {}
@@ -41,6 +42,12 @@
 		showSummary?: boolean;
 		multiSelect?: boolean;
 		multiSelected?: boolean;
+		// Most lists (the unread river) want a read entry to fade so
+		// the user has a visual cue after pressing `m`. `/history` is
+		// all-read by definition; dimming there reads as broken
+		// (everything looks faded), so history opts out via
+		// `dimRead={false}`.
+		dimRead?: boolean;
 		onclick?: (e: MouseEvent) => void;
 		onToggleRead?: (id: number, read: boolean) => void;
 		onToggleSelect?: (id: number, ev: MouseEvent) => void;
@@ -113,13 +120,18 @@
 </script>
 
 <article
-	class="entry"
-	class:is-read={entry.read}
-	class:is-saved={entry.saved}
-	class:is-selected={showKeyboardHighlight}
-	class:is-multi={multiSelect}
-	class:is-multi-selected={multiSelected}
-	class:is-swiping={swipe.swipeDx !== 0}
+	class={[
+		'entry',
+		{
+			'is-read': entry.read,
+			'no-dim': !dimRead,
+			'is-saved': entry.saved,
+			'is-selected': showKeyboardHighlight,
+			'is-multi': multiSelect,
+			'is-multi-selected': multiSelected,
+			'is-swiping': swipe.swipeDx !== 0
+		}
+	]}
 	style:transform={swipe.swipeDx !== 0 ? `translateX(${swipe.swipeDx}px)` : undefined}
 	ontouchstart={swipe.onTouchStart}
 	ontouchmove={swipe.onTouchMove}
@@ -222,11 +234,14 @@
 	.entry.is-multi-selected {
 		background: var(--accent-soft);
 	}
-	.entry.is-read .title {
+	/* `.no-dim` opts out of the read-state fade — see /history. The
+	   read-dot's hollow ring (further down) keeps rendering either
+	   way; only the title + meta colour are gated. */
+	.entry.is-read:not(.no-dim) .title {
 		color: var(--ink-3);
 		font-weight: 400;
 	}
-	.entry.is-read .meta {
+	.entry.is-read:not(.no-dim) .meta {
 		color: var(--ink-3);
 	}
 
