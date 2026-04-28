@@ -1,4 +1,6 @@
 import { test, expect, request } from '@playwright/test';
+// @ts-expect-error -- Node Buffer is available at Playwright runtime; types aren't pulled in.
+import { Buffer } from 'node:buffer';
 
 // Plan 21 — sidebar/footer/settings + OPML wiring.
 //
