@@ -33,14 +33,22 @@ func NewPipeline(cfg PipelineConfig) *Pipeline {
 	return &Pipeline{cfg: cfg}
 }
 
-// Process runs extract → media rewrite → sanitize and returns the
-// final body HTML, ready for storage in entries.content.
-func (p *Pipeline) Process(entryHTML, articleURL, scraperRules string) (string, error) {
-	extracted, err := Extract(entryHTML, articleURL, scraperRules)
-	if err != nil {
-		return "", err
-	}
-	rewritten, err := RewriteMedia(extracted, articleURL, p.cfg.Encode)
+// Extract runs the optional extraction layer (CSS rules → go-readability
+// fallback) over a fetched article HTML. Plan 15 splits this from the
+// universal media-rewrite + sanitize so callers that already have body
+// HTML (e.g. feed-supplied summaries) can skip extraction and still
+// benefit from the proxy + sanitiser.
+func (p *Pipeline) Extract(entryHTML, articleURL, scraperRules string) (string, error) {
+	return Extract(entryHTML, articleURL, scraperRules)
+}
+
+// RewriteAndSanitize rewrites <img>/<source> URLs through the proxy
+// encoder and sanitizes the result via the bluemonday policy. Universal:
+// every entry's content (extracted or feed-supplied) flows through this
+// step before storage so right-click→copy-image-URL always yields a
+// /api/v1/proxy/<token> URL.
+func (p *Pipeline) RewriteAndSanitize(entryHTML, articleURL string) (string, error) {
+	rewritten, err := RewriteMedia(entryHTML, articleURL, p.cfg.Encode)
 	if err != nil {
 		return "", err
 	}
@@ -48,4 +56,15 @@ func (p *Pipeline) Process(entryHTML, articleURL, scraperRules string) (string, 
 		ArticleURL:      articleURL,
 		IframeAllowlist: p.cfg.IframeAllowlist,
 	})
+}
+
+// Process runs Extract → RewriteAndSanitize and returns the final body
+// HTML, ready for storage in entries.content. Convenience wrapper for
+// callers that want the full crawler-mode pipeline.
+func (p *Pipeline) Process(entryHTML, articleURL, scraperRules string) (string, error) {
+	extracted, err := p.Extract(entryHTML, articleURL, scraperRules)
+	if err != nil {
+		return "", err
+	}
+	return p.RewriteAndSanitize(extracted, articleURL)
 }
