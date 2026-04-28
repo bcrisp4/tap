@@ -17,6 +17,7 @@ import {
 	bulkUpdateMutationOptions,
 	deleteFeedMutationOptions
 } from './queries';
+import { toast } from '../toast.svelte';
 import type { Entry, FeedPatch } from './types';
 
 describe('query keys', () => {
@@ -167,6 +168,7 @@ describe('useToggleRead', () => {
 
 	it('rolls back on error', async () => {
 		stubFetchError();
+		toast.dismiss();
 		const qc = new QueryClient({ defaultOptions: { mutations: { retry: 0 } } });
 		qc.setQueryData(['history', 'list', 100], {
 			data: [entry(1)],
@@ -177,6 +179,7 @@ describe('useToggleRead', () => {
 
 		const hist = qc.getQueryData(['history', 'list', 100]) as { data: Entry[] };
 		expect(hist.data[0].read).toBe(false);
+		expect(toast.current?.kind).toBe('error');
 	});
 });
 

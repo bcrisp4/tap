@@ -10,7 +10,13 @@ import {
 } from '@tanstack/svelte-query';
 import { deleteResource, getList, getJSON, postJSON, putJSON } from './client';
 import { patchEntryEverywhere, removeEntryEverywhere } from './cache-patch';
+import { toast } from '$lib/toast.svelte';
 import type { Entry, Feed, Category, SystemStatus, FeedPatch, DiscoverResult } from './types';
+
+// User-facing copy reused across every mutation rollback. Kept as a
+// single string so the wording stays consistent if a future plan
+// promotes it into a richer toast surface (multi-message, retry, etc.).
+const ROLLBACK_MESSAGE = "couldn't sync — change reverted";
 
 // Query keys are namespaced with an explicit 'list' / 'byId' segment so
 // prefix-based filters (e.g. `setQueriesData({queryKey: ['entries','list']})`)
@@ -117,6 +123,14 @@ function restoreLists(qc: QueryClient, snap: ListSnapshot): void {
 	}
 }
 
+// Restore the captured snapshot AND notify the user that their edit
+// didn't stick. Centralising the wording here keeps every mutation's
+// rollback message in lockstep.
+function rollback(qc: QueryClient, snap: ListSnapshot): void {
+	restoreLists(qc, snap);
+	toast.push(ROLLBACK_MESSAGE, 'error');
+}
+
 async function cancelLists(qc: QueryClient): Promise<void> {
 	await qc.cancelQueries({ queryKey: ['entries'] });
 	await qc.cancelQueries({ queryKey: ['history'] });
@@ -147,7 +161,7 @@ export function toggleReadMutationOptions(qc: QueryClient) {
 		},
 		onError: (_err: unknown, _vars: unknown, ctx: { previous: ListSnapshot } | undefined) => {
 			if (!ctx?.previous) return;
-			restoreLists(qc, ctx.previous);
+			rollback(qc, ctx.previous);
 		},
 		onSettled: (
 			_data: unknown,
@@ -193,7 +207,7 @@ export function bulkUpdateMutationOptions(qc: QueryClient) {
 		},
 		onError: (_err: unknown, _vars: unknown, ctx: { previous: ListSnapshot } | undefined) => {
 			if (!ctx?.previous) return;
-			restoreLists(qc, ctx.previous);
+			rollback(qc, ctx.previous);
 		},
 		onSettled: () => {
 			invalidateLists(qc);
@@ -219,7 +233,7 @@ export function toggleSavedMutationOptions(qc: QueryClient) {
 		},
 		onError: (_err: unknown, _vars: unknown, ctx: { previous: ListSnapshot } | undefined) => {
 			if (!ctx?.previous) return;
-			restoreLists(qc, ctx.previous);
+			rollback(qc, ctx.previous);
 		},
 		onSettled: (
 			_data: unknown,
@@ -347,7 +361,7 @@ export function deleteFeedMutationOptions(qc: QueryClient) {
 				| undefined
 		) => {
 			if (!ctx?.previous) return;
-			restoreLists(qc, ctx.previous);
+			rollback(qc, ctx.previous);
 			for (const [k, v] of ctx.previous.feeds) qc.setQueryData(k, v);
 		},
 		onSettled: () => {
