@@ -35,17 +35,6 @@ func TestSystem_Status(t *testing.T) {
 	require.Greater(t, got.RunState.LastPollAt, int64(0))
 }
 
-func TestSystem_Status_IncludesRecentErrors(t *testing.T) {
-	f := newAPIFixture(t)
-	f.state.PollStarted()
-	f.state.PollFinished(0, "", errors.New("boom"))
-
-	w := f.do(t, "GET", "/api/v1/system/status", "")
-	require.Equal(t, http.StatusOK, w.Code)
-	require.Contains(t, w.Body.String(), `"recent_errors"`)
-	require.Contains(t, w.Body.String(), "boom")
-}
-
 func TestSystem_Status_RecentErrorsShape(t *testing.T) {
 	f := newAPIFixture(t)
 	f.state.PollStarted()
