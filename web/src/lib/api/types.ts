@@ -71,13 +71,25 @@ export interface Entry {
 	enclosures?: Enclosure[];
 }
 
+// Plan 19 enriched recent_errors from string[] to a structured row
+// carrying feed metadata (id, title, unix timestamp). The settings UI
+// renders each row as a link to /feeds/{feed_id} so a user can jump
+// straight to the failing feed; rows with feed_id=0 are process-wide
+// errors (archival sweep, dispatcher panics) and render as plain text.
+export interface PollerError {
+	feed_id: number;
+	feed_title: string;
+	error: string;
+	at: number; // unix seconds
+}
+
 export interface SystemStatus {
 	version: string;
 	uptime_seconds: number;
 	run_state: {
 		active_polls: number;
 		last_poll_at: number;
-		recent_errors?: string[];
+		recent_errors?: PollerError[];
 	};
 }
 

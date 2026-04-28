@@ -4,6 +4,7 @@
 	// removes the equivalent strip from the unread-top in favour of
 	// this canonical home.
 	import { useStatus, useFeeds } from '$api/queries';
+	import { formatAgo } from './EntryRow.svelte';
 
 	const status = useStatus();
 	const feeds = useFeeds();
@@ -84,9 +85,17 @@
 {#if recentErrors.length > 0}
 	<details class="errors">
 		<summary>Recent poller errors ({recentErrors.length})</summary>
-		<ul>
-			{#each recentErrors as err, i (i)}
-				<li class="mono">{err}</li>
+		<ul class="recent-errors">
+			{#each recentErrors as e, i (i)}
+				<li class="recent-error mono">
+					{#if e.feed_id}
+						<a class="error-feed" href={`/feeds/${e.feed_id}`}>{e.feed_title}</a>
+					{:else}
+						<span class="error-feed">{e.feed_title || '—'}</span>
+					{/if}
+					<span class="error-msg" title={e.error}>{e.error}</span>
+					<span class="error-time">{formatAgo(e.at)}</span>
+				</li>
 			{/each}
 		</ul>
 	</details>
@@ -165,13 +174,36 @@
 		flex-direction: column;
 		gap: 4px;
 	}
-	.errors li {
+	.recent-error {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) auto;
+		gap: 8px;
+		align-items: baseline;
 		font-size: 11px;
 		color: var(--ink-3);
 		padding: 4px 8px;
 		background: var(--bg-soft);
 		border-radius: 3px;
 		border-left: 2px solid var(--ink-4);
-		word-break: break-all;
+	}
+	.error-feed {
+		color: var(--ink);
+		text-decoration: none;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	@media (hover: hover) {
+		.error-feed:hover {
+			text-decoration: underline;
+		}
+	}
+	.error-msg {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.error-time {
+		color: var(--ink-3);
 	}
 </style>

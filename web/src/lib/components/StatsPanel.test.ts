@@ -43,3 +43,27 @@ describe('StatsPanel recent-errors empty state (Plan 21 T8)', () => {
 		expect(SRC).toMatch(/{#if\s+recentErrors\.length\s*>\s*0\s*}/);
 	});
 });
+
+describe('StatsPanel linked poller-error rows (Plan 21 T9)', () => {
+	it('renders feed_title as a link to /feeds/{feed_id} when feed_id > 0', () => {
+		// Plan 19 enriched the `recent_errors` payload from string[] to
+		// PollerError[]. The settings UI surfaces each row with the feed
+		// title as a link to the feed page, the (truncated) error
+		// message, and a relative-time stamp.
+		expect(SRC).toMatch(/href=\{[^}]*\/feeds\//);
+		expect(SRC).toMatch(/e\.feed_title/);
+	});
+
+	it('shows the error message and a relative timestamp', () => {
+		// The error string itself + a `formatAgo`-style relative time.
+		expect(SRC).toMatch(/e\.error/);
+		expect(SRC).toMatch(/formatAgo\(e\.at\)/);
+	});
+
+	it('falls back to plain text when feed_id is 0 (process-wide errors)', () => {
+		// PollerError zeros FeedID for archival/dispatcher errors that
+		// aren't tied to a specific feed; we render those as plain text
+		// to avoid a 404 link.
+		expect(SRC).toMatch(/{#if\s+e\.feed_id/);
+	});
+});
