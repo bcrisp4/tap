@@ -33,11 +33,22 @@ describe('Sidebar feed warning indicator (Plan 21 T2)', () => {
 		expect(SRC).toMatch(/<AlertTriangle\b/);
 	});
 
-	it('surfaces last_error via the title (tooltip) and aria-label attributes', () => {
+	it('surfaces a truncated last_error via title (tooltip) and aria-label', () => {
 		// The truncated last_error is the user's one-line clue about why
 		// the feed is unhealthy. It needs to reach assistive tech AND
-		// hover users.
-		expect(SRC).toMatch(/title=\{f\.last_error[^}]*\}/);
-		expect(SRC).toMatch(/aria-label=\{[^}]*f\.last_error[^}]*\}/);
+		// hover users; very long stack traces / TLS errors are clipped
+		// so the tooltip stays readable. The full string lives on the
+		// feed detail page.
+		expect(SRC).toMatch(/truncateError\(f\.last_error\)/);
+		expect(SRC).toMatch(/title=\{warn\}/);
+		expect(SRC).toMatch(/aria-label=\{[^}]*warn[^}]*\}/);
+	});
+
+	it('caps the truncated copy at a sensible length with an ellipsis', () => {
+		// The exact cap is a tuning knob; lock the contract via the
+		// presence of a numeric WARN_MAX constant + an ellipsis suffix
+		// so a future drive-by edit doesn't accidentally drop the cap.
+		expect(SRC).toMatch(/WARN_MAX\s*=\s*\d+/);
+		expect(SRC).toMatch(/'…'/);
 	});
 });
