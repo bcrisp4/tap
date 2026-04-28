@@ -2,6 +2,8 @@ package poller
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/bcrisp4/tap/internal/feedparse"
 	"github.com/bcrisp4/tap/internal/httpclient"
+	"github.com/bcrisp4/tap/internal/iconfetch"
 	"github.com/bcrisp4/tap/internal/limiter"
 	"github.com/bcrisp4/tap/internal/reader"
 	"github.com/bcrisp4/tap/internal/storage"
@@ -36,13 +39,16 @@ const extractionConcurrency = 8
 // WorkerConfig wires the worker's deps. Pipeline is optional — when
 // nil (or feed.Crawler == false), content extraction is skipped.
 // RunState is optional; when set, the worker bumps it around each poll.
+// IconFetcher is optional; when nil, favicon scraping is skipped (the
+// existing tests don't need it and don't want to mock the network).
 type WorkerConfig struct {
-	Store      *storage.Store
-	Client     *httpclient.Client
-	Limiter    *limiter.HostLimiter
-	Pipeline   *reader.Pipeline
-	RunState   *RunState
-	PollFactor float64
+	Store       *storage.Store
+	Client      *httpclient.Client
+	Limiter     *limiter.HostLimiter
+	Pipeline    *reader.Pipeline
+	RunState    *RunState
+	PollFactor  float64
+	IconFetcher *iconfetch.Fetcher
 }
 
 // Worker handles one feed end-to-end. Construct once via NewWorker; the
@@ -155,7 +161,93 @@ func (w *Worker) PollOne(ctx context.Context, feedID int64) error {
 		out.ErrorCount, out.NextPollAt); err != nil {
 		pollErr = err
 	}
+
+	// Best-effort favicon scrape on first successful poll. Errors are
+	// intentionally silent — a missing favicon must never affect the
+	// poll status, and the next successful poll will retry naturally
+	// (the IconID-nil guard is the only gate).
+	w.maybeFetchIcon(ctx, feed, parsed.Meta.SiteURL)
+
 	return nil
+}
+
+// maybeFetchIcon scrapes a favicon for feeds that don't yet have an
+// icon attached. Runs after CommitPollSuccess on every successful
+// poll — the cheap path (IconID != nil) bails immediately, so we
+// only pay the network cost once per feed.
+func (w *Worker) maybeFetchIcon(ctx context.Context, feed *storage.Feed, parsedSiteURL string) {
+	if w.cfg.IconFetcher == nil {
+		return
+	}
+	if feed.IconID != nil {
+		return
+	}
+	siteURL := parsedSiteURL
+	if siteURL == "" && feed.SiteURL != nil {
+		siteURL = *feed.SiteURL
+	}
+	if siteURL == "" {
+		// No site URL means we can't even build the /favicon.ico
+		// fallback. Skip silently; we'll retry next poll if the
+		// site URL ever lands.
+		return
+	}
+	// Pull the site HTML so we can find <link rel="icon"> hints.
+	// A failure here just means we go straight to the /favicon.ico
+	// fallback — Discover handles that order.
+	htmlBody := w.fetchSiteHTML(ctx, siteURL)
+	candidates := iconfetch.CandidatesFor(htmlBody, siteURL)
+	if len(candidates) == 0 {
+		return
+	}
+	res, err := w.cfg.IconFetcher.Discover(ctx, candidates)
+	if err != nil {
+		// ErrNoIcon (or any sub-error) — silent; retry on next poll.
+		return
+	}
+	hash := sha256Hex(res.Bytes)
+	iconID, err := w.cfg.Store.InsertIcon(ctx, hash, res.MIME, res.Bytes)
+	if err != nil {
+		// Hash collision means another feed already cached the same
+		// bytes — look up the existing row and reuse its id.
+		existing, gerr := w.cfg.Store.GetIconByHash(ctx, hash)
+		if gerr != nil || existing == nil {
+			return
+		}
+		iconID = existing.ID
+	}
+	// The feed could have been deleted mid-poll (ErrNotFound), or hit
+	// any other transient write error. Either way the next successful
+	// poll will retry — the gate is feed.IconID == nil, which we
+	// haven't actually mutated.
+	_ = w.cfg.Store.SetFeedIcon(ctx, feed.ID, &iconID)
+}
+
+// fetchSiteHTML returns the response body for siteURL, or nil on any
+// error / non-2xx. A nil return tells iconfetch.CandidatesFor it has
+// no HTML to mine, which is fine — it'll just produce the
+// /favicon.ico fallback.
+func (w *Worker) fetchSiteHTML(ctx context.Context, siteURL string) []byte {
+	resp, err := w.cfg.Client.Get(ctx, siteURL, nil)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		return nil
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil
+	}
+	return body
+}
+
+// sha256Hex returns the lowercase hex-encoded sha256 of b. Used as
+// the content-addressable key into the icons table.
+func sha256Hex(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
 }
 
 // fetchFeed performs the conditional GET against feed.FeedURL.

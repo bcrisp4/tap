@@ -34,6 +34,12 @@ type Feed struct {
 
 	WeeklyEntryCount int `json:"weekly_entry_count"`
 
+	// IconHash mirrors icons.hash for the feed's IconID; populated by
+	// scanFeed via a LEFT JOIN. It's a derived/read-only convenience
+	// for the SPA — writes flow through SetFeedIcon, not through this
+	// field.
+	IconHash *string `json:"icon_hash,omitempty"`
+
 	Crawler      bool    `json:"crawler"`
 	ScraperRules *string `json:"scraper_rules"`
 
@@ -60,11 +66,17 @@ type Feed struct {
 	UpdatedAt int64 `json:"updated_at"`
 }
 
-const feedSelectCols = `id, user_id, category_id, icon_id, title, feed_url, site_url, description,
-		etag, last_modified, last_polled_at, next_poll_at, poll_interval, error_count, last_error,
-		weekly_entry_count, crawler, scraper_rules, disabled, ignore_entry_updates,
-		user_agent, cookie, username, password, proxy_url, disable_http2, allow_self_signed_certs,
-		created_at, updated_at`
+// feedSelectCols is the column list used for every Feed read. The
+// `f.` prefix is required because every read goes through a LEFT JOIN
+// against icons (so we can surface icons.hash as Feed.IconHash without
+// a second round-trip).
+const feedSelectCols = `f.id, f.user_id, f.category_id, f.icon_id, f.title, f.feed_url, f.site_url, f.description,
+		f.etag, f.last_modified, f.last_polled_at, f.next_poll_at, f.poll_interval, f.error_count, f.last_error,
+		f.weekly_entry_count, f.crawler, f.scraper_rules, f.disabled, f.ignore_entry_updates,
+		f.user_agent, f.cookie, f.username, f.password, f.proxy_url, f.disable_http2, f.allow_self_signed_certs,
+		f.created_at, f.updated_at, i.hash`
+
+const feedFromJoin = `feeds f LEFT JOIN icons i ON i.id = f.icon_id`
 
 func scanFeed(row interface{ Scan(...any) error }) (*Feed, error) {
 	f := &Feed{}
@@ -74,7 +86,7 @@ func scanFeed(row interface{ Scan(...any) error }) (*Feed, error) {
 		&f.ETag, &f.LastModified, &f.LastPolledAt, &f.NextPollAt, &f.PollInterval, &f.ErrorCount, &f.LastError,
 		&f.WeeklyEntryCount, &crawler, &f.ScraperRules, &disabled, &ignoreUpd,
 		&f.UserAgent, &f.Cookie, &f.Username, &f.Password, &f.ProxyURL, &dh2, &ssc,
-		&f.CreatedAt, &f.UpdatedAt,
+		&f.CreatedAt, &f.UpdatedAt, &f.IconHash,
 	)
 	if err != nil {
 		return nil, err
@@ -89,7 +101,7 @@ func scanFeed(row interface{ Scan(...any) error }) (*Feed, error) {
 
 func (s *Store) GetFeed(ctx context.Context, userID, id int64) (*Feed, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT `+feedSelectCols+` FROM feeds WHERE id = ? AND user_id = ?`, id, userID)
+		`SELECT `+feedSelectCols+` FROM `+feedFromJoin+` WHERE f.id = ? AND f.user_id = ?`, id, userID)
 	f, err := scanFeed(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -99,7 +111,7 @@ func (s *Store) GetFeed(ctx context.Context, userID, id int64) (*Feed, error) {
 
 func (s *Store) ListFeeds(ctx context.Context, userID int64) ([]*Feed, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT `+feedSelectCols+` FROM feeds WHERE user_id = ? ORDER BY title COLLATE NOCASE`, userID)
+		`SELECT `+feedSelectCols+` FROM `+feedFromJoin+` WHERE f.user_id = ? ORDER BY f.title COLLATE NOCASE`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -162,6 +174,21 @@ func (s *Store) UpdateFeed(ctx context.Context, f *Feed) error {
 
 func (s *Store) DeleteFeed(ctx context.Context, userID, id int64) error {
 	res, err := s.db.ExecContext(ctx, `DELETE FROM feeds WHERE id = ? AND user_id = ?`, id, userID)
+	if err != nil {
+		return err
+	}
+	return rowsOrNotFound(res)
+}
+
+// SetFeedIcon attaches an icon (by primary-key id) to a feed. The
+// poller calls this once it has hashed + inserted the favicon bytes
+// into the icons table; nil clears the link. Pinpoint-narrow on
+// purpose so the favicon scrape can't race CommitPollSuccess by
+// rewriting the rest of the row.
+func (s *Store) SetFeedIcon(ctx context.Context, feedID int64, iconID *int64) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE feeds SET icon_id = ?, updated_at = unixepoch() WHERE id = ?`,
+		iconID, feedID)
 	if err != nil {
 		return err
 	}

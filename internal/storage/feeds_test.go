@@ -204,6 +204,46 @@ func TestFeeds_CommitPollFailure(t *testing.T) {
 	require.Equal(t, int64(5000), *got.NextPollAt)
 }
 
+func TestFeeds_SetFeedIcon_LinksAndExposesHash(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	feedID, err := s.CreateFeed(ctx, newFeed("F", "https://f/feed.xml"))
+	require.NoError(t, err)
+
+	// Before linking: icon_hash must be nil (LEFT JOIN miss).
+	got, err := s.GetFeed(ctx, 1, feedID)
+	require.NoError(t, err)
+	require.Nil(t, got.IconHash)
+	require.Nil(t, got.IconID)
+
+	iconID, err := s.InsertIcon(ctx, "abcd1234", "image/png", []byte{1, 2, 3})
+	require.NoError(t, err)
+
+	require.NoError(t, s.SetFeedIcon(ctx, feedID, &iconID))
+
+	got, err = s.GetFeed(ctx, 1, feedID)
+	require.NoError(t, err)
+	require.NotNil(t, got.IconID)
+	require.Equal(t, iconID, *got.IconID)
+	require.NotNil(t, got.IconHash)
+	require.Equal(t, "abcd1234", *got.IconHash)
+
+	// Clearing must work too.
+	require.NoError(t, s.SetFeedIcon(ctx, feedID, nil))
+	got, err = s.GetFeed(ctx, 1, feedID)
+	require.NoError(t, err)
+	require.Nil(t, got.IconID)
+	require.Nil(t, got.IconHash)
+}
+
+func TestFeeds_SetFeedIcon_UnknownFeedReturnsNotFound(t *testing.T) {
+	s := newTestStore(t)
+	id := int64(1)
+	err := s.SetFeedIcon(context.Background(), 9999, &id)
+	require.True(t, errors.Is(err, storage.ErrNotFound))
+}
+
 func TestFeeds_CommitPoll_UnknownFeedReturnsNotFound(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
