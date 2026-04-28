@@ -238,12 +238,21 @@ func (w *Worker) filterAndExtract(ctx context.Context, f *storage.Feed, parsed [
 	// Universal pass: every entry's stored content goes through
 	// RewriteAndSanitize so right-click→copy-image-URL yields a
 	// /api/v1/proxy/<token> URL and the sanitizer drops anything
-	// dangerous. Crawler entries already flowed through Pipeline.Process
-	// (which includes this step); we skip the second pass for them to
-	// avoid double-encoding proxy URLs. Non-crawler entries (whose
-	// Content came directly from the feed parser) get sanitised here.
-	if w.cfg.Pipeline != nil && !f.Crawler {
+	// dangerous. Successful crawler entries already flowed through
+	// Pipeline.Process (which includes this step), so we skip the
+	// second pass for them to avoid double-encoding proxy URLs. Two
+	// other shapes also need sanitising here:
+	//   - non-crawler entries (Content came from the feed parser);
+	//   - crawler entries whose extraction failed and fell back to
+	//     the feed-supplied summary (which never went through Process).
+	// The frontend renders content via `{@html entry.content}` so any
+	// untrusted HTML reaching storage is a stored-XSS vector — this
+	// pass is the security boundary, not a nice-to-have.
+	if w.cfg.Pipeline != nil {
 		for _, e := range fresh {
+			if f.Crawler && !e.ExtractionFailed {
+				continue
+			}
 			source := stringOr(e.Content)
 			if source == "" {
 				source = stringOr(e.Summary)
@@ -257,6 +266,13 @@ func (w *Worker) filterAndExtract(ctx context.Context, f *storage.Feed, parsed [
 			}
 			safe, err := w.cfg.Pipeline.RewriteAndSanitize(source, articleURL)
 			if err != nil {
+				// Sanitisation must never silently leak unsafe HTML to
+				// storage. If even RewriteAndSanitize's degraded
+				// fallback path fails (would be a bluemonday
+				// programming bug), drop the content rather than
+				// store the original.
+				empty := ""
+				e.Content = &empty
 				continue
 			}
 			e.Content = &safe

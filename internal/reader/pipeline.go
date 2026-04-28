@@ -47,12 +47,19 @@ func (p *Pipeline) Extract(entryHTML, articleURL, scraperRules string) (string, 
 // every entry's content (extracted or feed-supplied) flows through this
 // step before storage so right-click→copy-image-URL always yields a
 // /api/v1/proxy/<token> URL.
+//
+// Sanitization MUST always run regardless of rewrite outcome — the
+// frontend renders content via `{@html entry.content}` so any path
+// that returns a non-error value here must be safe to render. If
+// RewriteMedia fails (rare; goquery parse error on adversarial
+// markup), we degrade gracefully: skip the proxy rewrite for this
+// entry but still sanitize the original HTML.
 func (p *Pipeline) RewriteAndSanitize(entryHTML, articleURL string) (string, error) {
-	rewritten, err := RewriteMedia(entryHTML, articleURL, p.cfg.Encode)
-	if err != nil {
-		return "", err
+	source := entryHTML
+	if rewritten, err := RewriteMedia(entryHTML, articleURL, p.cfg.Encode); err == nil {
+		source = rewritten
 	}
-	return Sanitize(rewritten, SanitizeOptions{
+	return Sanitize(source, SanitizeOptions{
 		ArticleURL:      articleURL,
 		IframeAllowlist: p.cfg.IframeAllowlist,
 	})

@@ -73,6 +73,29 @@ func TestPipeline_RewriteAndSanitize_Standalone(t *testing.T) {
 	require.NotContains(t, out, "alert(1)")
 }
 
+// TestPipeline_RewriteAndSanitize_AlwaysSanitizes guards the security
+// invariant baked into the pipeline split: any path that returns a
+// non-error value from RewriteAndSanitize MUST have run through the
+// sanitizer, even if RewriteMedia internally errored. The frontend
+// renders content with `{@html entry.content}` so a path that bypasses
+// sanitisation on the rewrite-error fallback would be a stored-XSS
+// vector. We can't easily force RewriteMedia to fail (goquery is
+// lenient) so we exercise the success path and assert the script tag
+// is dropped — the regression we'd worry about is RewriteAndSanitize
+// returning unsanitised output on its degraded fallback path.
+func TestPipeline_RewriteAndSanitize_AlwaysSanitizes(t *testing.T) {
+	html := `<p>x</p><script>alert(1)</script><img src="/img/y.png">`
+	p := reader.NewPipeline(reader.PipelineConfig{
+		Encode:          stubEncode,
+		IframeAllowlist: reader.DefaultIframeHosts(),
+	})
+	out, err := p.RewriteAndSanitize(html, "https://example.com/post")
+	require.NoError(t, err)
+	require.NotContains(t, out, "<script")
+	require.NotContains(t, out, "alert(1)")
+	require.Contains(t, out, "/p/https://example.com/img/y.png")
+}
+
 func TestPipeline_Extract_Standalone(t *testing.T) {
 	// Extract is exposed as a method so callers can compose the pipeline
 	// piecewise (crawler-only extraction, then universal sanitize).
