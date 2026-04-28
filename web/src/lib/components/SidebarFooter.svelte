@@ -6,6 +6,7 @@
 	import { theme, cycleTheme, type Theme } from '$lib/theme.svelte';
 	import { hotkeysModal } from '$lib/hotkeys-modal.svelte';
 	import { Settings } from 'lucide-svelte';
+	import OpmlMenu from './OpmlMenu.svelte';
 
 	function themeLabel(t: Theme): string {
 		switch (t) {
@@ -61,6 +62,8 @@
 			<rect x="4" y="9" width="8" height="1.25" rx="0.5" fill="currentColor" />
 		</svg>
 	</button>
+
+	<OpmlMenu />
 
 	<a class="icon-btn" href="/settings" aria-label="Settings" title="Settings">
 		<Settings size="16" aria-hidden="true" />
