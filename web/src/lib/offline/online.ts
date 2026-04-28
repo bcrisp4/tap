@@ -10,7 +10,7 @@
 // cache — see queries.ts (useToggleRead etc.) for the mutation factories
 // that benefit. We do not roll our own queue.
 
-import { onlineManager } from '@tanstack/svelte-query';
+import { onlineManager, type QueryClient } from '@tanstack/svelte-query';
 
 export function bindOnlineManager(): () => void {
 	if (typeof window === 'undefined') return () => undefined;
@@ -23,4 +23,16 @@ export function bindOnlineManager(): () => void {
 		window.removeEventListener('online', apply);
 		window.removeEventListener('offline', apply);
 	};
+}
+
+// Drain any paused mutations that survived a reload. Paired with the
+// `shouldDehydrateMutation` predicate in `query-client.ts`: the
+// persister writes paused mutations to IDB on suspend; on next boot
+// `persistQueryClient` rehydrates them into the mutation cache, but
+// query-core only auto-resumes when `onlineManager` flips offline →
+// online. If the user is already online at boot, nothing fires unless
+// we kick the cache explicitly.
+export function drainPausedMutations(client: QueryClient): void {
+	if (typeof window === 'undefined') return;
+	void client.getMutationCache().resumePausedMutations();
 }

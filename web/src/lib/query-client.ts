@@ -54,10 +54,19 @@ export function makeQueryClient(): QueryClient {
 
 	if (typeof window !== 'undefined') {
 		const persister = createAsyncStoragePersister({ storage: idbStorage });
+		// `shouldDehydrateMutation` lets paused mutations (queued while
+		// the user was offline) survive a tab reload — without it the
+		// cache persister only writes queries, so a mark-read fired
+		// offline → tab refreshed offline → reconnect would never replay
+		// the PUT. `state.isPaused` is the canonical predicate that
+		// query-core sets when `onlineManager` reports offline.
 		persistQueryClient({
 			queryClient: client,
 			persister,
-			maxAge: 7 * 24 * 60 * 60 * 1000
+			maxAge: 7 * 24 * 60 * 60 * 1000,
+			dehydrateOptions: {
+				shouldDehydrateMutation: (m) => m.state.isPaused
+			}
 		});
 	}
 	return client;

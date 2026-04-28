@@ -3,7 +3,7 @@
 	import { QueryClientProvider } from '@tanstack/svelte-query';
 	import { makeQueryClient } from '$lib/query-client';
 	import { theme, applyThemeClasses } from '$lib/theme.svelte';
-	import { bindOnlineManager } from '$lib/offline/online';
+	import { bindOnlineManager, drainPausedMutations } from '$lib/offline/online';
 	import { prefetchRecent } from '$lib/offline/prefetch';
 	import { hotkeysModal } from '$lib/hotkeys-modal.svelte';
 	import { bindInputMode } from '$lib/inputmode.svelte';
@@ -47,6 +47,10 @@
 			navigator.serviceWorker.register('/service-worker.js').catch(() => undefined);
 		}
 		const unbindOnline = bindOnlineManager();
+		// Replay any mutations that paused while offline before the last
+		// reload. Safe to call even if the cache is empty — it's a no-op
+		// when the mutation cache contains no paused entries.
+		drainPausedMutations(client);
 		const initialPrefetch = window.setTimeout(() => {
 			void prefetchRecent(200).catch(() => undefined);
 		}, 1_000);
