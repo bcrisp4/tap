@@ -45,18 +45,21 @@
 	const bulkUpdate = useBulkUpdate();
 
 	// `userSelectedId` is the explicit user choice (null until they
-	// move with j/k). `selectedId` is what the UI actually displays —
-	// it falls through to the first visible entry while the user
-	// hasn't picked one OR when the previously-picked entry no longer
-	// matches anything in the current list (e.g. they just pressed
-	// `m` and the entry dropped off the unread filter).
+	// move with j/k). `selectedId` mirrors that pick directly — there
+	// is no fallthrough to `visible[0]`, so the first paint shows no
+	// highlight and the first j/k press is what *picks* the first row
+	// (handled in onNext / onPrev below). This matches the user's
+	// mental model: "I haven't moved yet → nothing should look chosen."
+	// If the previously-picked entry drops off the list (e.g. the user
+	// just pressed `m`), selectedId resolves back to null and the
+	// next j/k re-picks visible[0].
 	let userSelectedId = $state<number | null>(null);
 	const visible = $derived(entries.data?.data ?? []);
 	const total = $derived(entries.data?.pagination.total ?? 0);
 	const selectedId = $derived(
 		userSelectedId !== null && visible.some((e) => e.id === userSelectedId)
 			? userSelectedId
-			: (visible[0]?.id ?? null)
+			: null
 	);
 
 	// Multi-select state. The set is reactive via $state — rebuilding
@@ -80,10 +83,20 @@
 
 	bindKeyboard({
 		onNext: () => {
+			// First press picks visible[0]; subsequent presses advance.
+			// `selectedId` is null until the user has moved (Plan 22 / T2).
+			if (selectedId === null) {
+				userSelectedId = visible[0]?.id ?? null;
+				return;
+			}
 			const i = indexOfSelected();
 			if (i >= 0 && i < visible.length - 1) userSelectedId = visible[i + 1].id;
 		},
 		onPrev: () => {
+			if (selectedId === null) {
+				userSelectedId = visible[0]?.id ?? null;
+				return;
+			}
 			const i = indexOfSelected();
 			if (i > 0) userSelectedId = visible[i - 1].id;
 		},

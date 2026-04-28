@@ -49,11 +49,15 @@ test('j/k advance the selected entry', async ({ page }) => {
 	// Plan 18: the keyboard-selection highlight is gated on input mode
 	// being 'keyboard'. Before the first keystroke we're still in
 	// 'mouse' mode (the safe default) so no row paints highlighted.
+	// Plan 22 / T2: `selectedId` no longer falls through to visible[0],
+	// so even after switching to keyboard mode the first row only
+	// highlights once the user has actually pressed j/k.
 	await expect(rows.first()).not.toHaveClass(/is-selected/);
 
-	// First j puts us in keyboard mode AND advances the selection from
-	// the default first row (selectedId resolves through the user-pick
-	// fallback) → second row.
+	// First j picks the first entry (Plan 22 / T2).
+	await page.keyboard.press('j');
+	await expect(rows.first()).toHaveClass(/is-selected/);
+	// Second j advances to the second entry.
 	await page.keyboard.press('j');
 	await expect(rows.nth(1)).toHaveClass(/is-selected/);
 	await page.keyboard.press('k');
@@ -72,6 +76,10 @@ test('m toggles read on the selected entry', async ({ page }) => {
 	// behaviour we care about (the marked entry drops off the river).
 	const firstRowHandle = await rows.first().elementHandle();
 	expect(firstRowHandle).not.toBeNull();
+
+	// Plan 22 / T2: pick the first row before pressing `m`. Selection is
+	// no longer implicit on first paint, so a bare `m` would no-op.
+	await page.keyboard.press('j');
 
 	await page.keyboard.press('m');
 	await expect
