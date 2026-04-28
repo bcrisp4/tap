@@ -69,10 +69,13 @@ func (w *Worker) PollOne(ctx context.Context, feedID int64) error {
 	if w.cfg.RunState != nil {
 		w.cfg.RunState.PollStarted()
 	}
-	var pollErr error
+	var (
+		pollErr   error
+		feedTitle string
+	)
 	defer func() {
 		if w.cfg.RunState != nil {
-			w.cfg.RunState.PollFinished(pollErr)
+			w.cfg.RunState.PollFinished(feedID, feedTitle, pollErr)
 		}
 	}()
 
@@ -81,6 +84,7 @@ func (w *Worker) PollOne(ctx context.Context, feedID int64) error {
 		pollErr = err
 		return nil
 	}
+	feedTitle = feed.Title
 
 	host := hostOf(feed.FeedURL)
 	if err := w.cfg.Limiter.Acquire(ctx, host); err != nil {

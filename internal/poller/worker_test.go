@@ -124,6 +124,46 @@ func TestWorker_FailureIncrementsErrorCount(t *testing.T) {
 	require.NotNil(t, f.NextPollAt)
 }
 
+// TestWorker_RecordsFeedMetadataOnError verifies that worker errors
+// flow through to RunState with the failing feed's id + title, so
+// /system/status can name the feed in its recent_errors output.
+func TestWorker_RecordsFeedMetadataOnError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tap.db")
+	d, err := db.Open(path)
+	require.NoError(t, err)
+	require.NoError(t, db.Migrate(context.Background(), d))
+	t.Cleanup(func() { d.Close() })
+	store := storage.New(d)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+
+	state := poller.NewRunState(8)
+	worker := poller.NewWorker(poller.WorkerConfig{
+		Store:      store,
+		Client:     httpclient.NewClient(httpclient.Config{Timeout: 2 * time.Second, MaxBodyBytes: 1 << 20, AllowPrivate: true}),
+		Limiter:    limiter.NewHostLimiter(1),
+		RunState:   state,
+		PollFactor: 1.0,
+	})
+
+	feedID, err := store.CreateFeed(context.Background(), &storage.Feed{
+		UserID: 1, Title: "Hacker News", FeedURL: srv.URL, PollInterval: 3600,
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, worker.PollOne(context.Background(), feedID))
+
+	recent := state.Snapshot().RecentErrors
+	require.Len(t, recent, 1)
+	require.Equal(t, feedID, recent[0].FeedID)
+	require.Equal(t, "Hacker News", recent[0].FeedTitle)
+	require.NotEmpty(t, recent[0].Error)
+	require.NotZero(t, recent[0].At)
+}
+
 func TestWorker_RetryAfterHonouredOnNon2xx(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "tap.db")
 	d, err := db.Open(path)

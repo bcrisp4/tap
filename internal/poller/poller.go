@@ -105,7 +105,7 @@ func (p *Poller) runArchival(ctx context.Context) {
 		// (Plan 08) shows them; otherwise a broken sweep is invisible.
 		if err := ArchiveOnce(ctx, p.cfg.Store,
 			time.Duration(p.cfg.ArchiveDays)*24*time.Hour, ps); err != nil {
-			p.state.RecordError(err)
+			p.state.RecordError(0, "", err)
 		}
 	}
 

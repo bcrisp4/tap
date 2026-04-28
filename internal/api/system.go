@@ -15,11 +15,13 @@ type systemHandlers struct {
 
 // runStateOut is the wire shape of the run_state field. Mirrors
 // poller.RunStateSnapshot but with explicit JSON tags + an omitempty
-// on RecentErrors so a clean process emits a tidy payload.
+// on RecentErrors so a clean process emits a tidy payload. The
+// recent_errors entries carry feed metadata (id, title, unix
+// timestamp) so the Settings UI can name the failing feed.
 type runStateOut struct {
-	ActivePolls  int      `json:"active_polls"`
-	LastPollAt   int64    `json:"last_poll_at"`
-	RecentErrors []string `json:"recent_errors,omitempty"`
+	ActivePolls  int                  `json:"active_polls"`
+	LastPollAt   int64                `json:"last_poll_at"`
+	RecentErrors []poller.PollerError `json:"recent_errors,omitempty"`
 }
 
 type statusResponse struct {

@@ -10,11 +10,22 @@ import (
 	"time"
 )
 
+// PollerError is a single recorded poll failure, exposed via
+// /api/v1/system/status so the UI can name the failing feed and link
+// to its page. FeedID/FeedTitle are zero/empty for process-wide errors
+// (archival sweep, dispatcher panics) that aren't tied to one feed.
+type PollerError struct {
+	FeedID    int64  `json:"feed_id"`
+	FeedTitle string `json:"feed_title"`
+	Error     string `json:"error"`
+	At        int64  `json:"at"` // unix seconds
+}
+
 // RunStateSnapshot is the read-only view returned by Snapshot.
 type RunStateSnapshot struct {
 	ActivePolls  int
 	LastPollAt   int64
-	RecentErrors []string
+	RecentErrors []PollerError
 }
 
 // RunState tracks live poller counters. Safe for concurrent use.
@@ -22,7 +33,7 @@ type RunState struct {
 	mu     sync.Mutex
 	active int
 	lastAt int64
-	errs   []string
+	errs   []PollerError
 	cap    int
 }
 
@@ -43,32 +54,40 @@ func (r *RunState) PollStarted() {
 }
 
 // PollFinished decrements the active-poll counter, stamps LastPollAt,
-// and (when err != nil) appends the error message to the ring buffer.
-func (r *RunState) PollFinished(err error) {
+// and (when err != nil) appends the error to the ring buffer with
+// feed metadata. Pass feedID=0 / feedTitle="" when the error isn't
+// tied to a specific feed.
+func (r *RunState) PollFinished(feedID int64, feedTitle string, err error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.active--
 	r.lastAt = time.Now().Unix()
-	r.appendErrLocked(err)
+	r.appendErrLocked(feedID, feedTitle, err)
 }
 
-// RecordError appends an out-of-band error (archival sweep, etc.) to
-// the ring buffer without touching the active-poll counter or
-// LastPollAt. Nil is a no-op.
-func (r *RunState) RecordError(err error) {
+// RecordError appends an out-of-band error (archival sweep, dispatcher
+// panic, etc.) to the ring buffer without touching the active-poll
+// counter or LastPollAt. Nil is a no-op. Pass feedID=0 / feedTitle=""
+// when the error isn't tied to a specific feed.
+func (r *RunState) RecordError(feedID int64, feedTitle string, err error) {
 	if err == nil {
 		return
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.appendErrLocked(err)
+	r.appendErrLocked(feedID, feedTitle, err)
 }
 
-func (r *RunState) appendErrLocked(err error) {
+func (r *RunState) appendErrLocked(feedID int64, feedTitle string, err error) {
 	if err == nil {
 		return
 	}
-	r.errs = append(r.errs, err.Error())
+	r.errs = append(r.errs, PollerError{
+		FeedID:    feedID,
+		FeedTitle: feedTitle,
+		Error:     err.Error(),
+		At:        time.Now().Unix(),
+	})
 	if len(r.errs) > r.cap {
 		r.errs = r.errs[len(r.errs)-r.cap:]
 	}
@@ -80,7 +99,7 @@ func (r *RunState) Snapshot() RunStateSnapshot {
 	defer r.mu.Unlock()
 	out := RunStateSnapshot{ActivePolls: r.active, LastPollAt: r.lastAt}
 	if len(r.errs) > 0 {
-		out.RecentErrors = append([]string(nil), r.errs...)
+		out.RecentErrors = append([]PollerError(nil), r.errs...)
 	}
 	return out
 }
