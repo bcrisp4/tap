@@ -84,20 +84,6 @@
 			</header>
 			<StatsPanel />
 		</section>
-
-		<section class="card">
-			<header>
-				<h2>About</h2>
-				<p class="hint">A self-hosted river of unread.</p>
-			</header>
-			<p class="about">
-				Tap is open source —
-				<a href="https://github.com/bcrisp4/tap" target="_blank" rel="noopener noreferrer"
-					>github.com/bcrisp4/tap</a
-				>
-				· Apache 2.0 · single binary · single SQLite file.
-			</p>
-		</section>
 	</div>
 {/snippet}
 
@@ -229,19 +215,4 @@
 		opacity: 0.85;
 	}
 
-	.about {
-		font-family: var(--serif);
-		font-size: 14px;
-		line-height: 1.55;
-		color: var(--ink-2);
-		margin: 0;
-	}
-	.about a {
-		color: var(--accent);
-		text-decoration: none;
-		border-bottom: 1px solid var(--accent-soft);
-	}
-	.about a:hover {
-		border-bottom-color: var(--accent);
-	}
 </style>
