@@ -47,9 +47,8 @@ func stripContent(entries []*storage.Entry) []*storage.Entry {
 // into an EntriesFilter. Defaults: status=unread, sort=published_at,
 // order=desc, limit=50, offset=0.
 //
-// The `order` param is overloaded for backward compatibility with the
-// pre-Plan-14 SPA: legacy values ("asc"/"desc") drive the sort
-// direction (Order); the new "read_at" / "created_at" values drive the
+// The `order` param is overloaded: legacy values ("asc"/"desc") drive
+// the sort direction (Order); the Plan 14 value "read_at" drives the
 // column choice (OrderBy) so /history can opt into read_at DESC. Any
 // other value yields a 400 bad_query so we never pass user input
 // through to the SQL builder. Returns ok=false after writing an error
@@ -63,13 +62,11 @@ func parseEntriesFilter(w http.ResponseWriter, r *http.Request) (storage.Entries
 	switch v := q.Get("order"); v {
 	case "", "desc", "asc":
 		f.Order = v
-	case "created_at":
-		// Default ordering — legal alias, no-op on the storage layer.
 	case "read_at":
 		f.OrderBy = "read_at"
 	default:
 		WriteError(w, http.StatusBadRequest, "bad_query",
-			"order must be asc, desc, created_at, or read_at")
+			"order must be asc, desc, or read_at")
 		return storage.EntriesFilter{}, false
 	}
 	if f.Status == "" {
