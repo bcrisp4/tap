@@ -41,6 +41,33 @@
 
 	let progress = $state(0);
 
+	// Plan 16 inverts Plan 11's "no auto-mark-read" rule. Opening the
+	// reader is the user's signal that they've engaged with the entry,
+	// so the read flag flips to true on mount.
+	//
+	// Loop guard: the optimistic update inside `useToggleRead` flips
+	// the cached `entry.data.read` to true the moment we call mutate(),
+	// which would re-trigger any effect that depends on `entry.data.read`.
+	// We track which IDs this component instance has already fired for
+	// in a plain Set (no reactivity needed) so the effect re-evaluates
+	// only when the route param `id` changes — not when the cache flips.
+	const firedFor = new Set<number>();
+
+	$effect(() => {
+		const e = entry.data;
+		if (!e) return;
+		if (firedFor.has(e.id)) return;
+		if (e.read) {
+			// Already read on the server — nothing to do, but mark this
+			// id as handled so a later refetch that briefly returns
+			// `read=false` (extremely unlikely) doesn't double-fire.
+			firedFor.add(e.id);
+			return;
+		}
+		firedFor.add(e.id);
+		toggleRead.mutate({ id: e.id, read: true });
+	});
+
 	function back() {
 		goto('/');
 	}
@@ -57,10 +84,10 @@
 		toggleSaved.mutate({ id: e.id, saved: !e.saved });
 	}
 
-	// Reader-specific keyboard shortcuts. We deliberately do NOT mark
-	// the entry read on mount — Plan 11's spec calls out "explicit
-	// only" and the Playwright e2e enforces it. `m` is the user's
-	// declarative "I'm done" signal.
+	// Reader-specific keyboard shortcuts. Plan 16 made `m` a manual
+	// override on top of the auto-mark-read-on-open behaviour above:
+	// the entry is already read by the time `m` lands, so pressing
+	// `m` will mark it unread (and pressing it again re-marks read).
 	function onKey(ev: KeyboardEvent) {
 		// Ignore shortcuts while typing in form controls.
 		const target = ev.target as HTMLElement | null;
