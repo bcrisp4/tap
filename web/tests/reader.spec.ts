@@ -93,25 +93,22 @@ test('auto-marks read on reader mount (Plan 16 invariant)', async ({ page, reque
 	await expect(toggle).toHaveAttribute('aria-pressed', 'true');
 });
 
-test('list rail collapses to a back-rail in the reader (Plan 16 T3)', async ({
+test('reader header back button returns to the unread river (Plan 22 T5)', async ({
 	page,
 	request
 }) => {
+	// Plan 22 / T5: the empty-grey collapsed rail between sidebar and
+	// reader pane is gone. The back-to-unread affordance is the
+	// `.reader-back` button in the ReaderHeader (it always was; the
+	// rail's `.rail-back` was a duplicate).
 	const id = await seedAndFetchEntryID(request);
 	await page.goto(`/entry/${id}`);
 	await expect(page.getByTestId('reader-body')).toBeVisible({ timeout: 15_000 });
 
-	// The expanded rail's row container is gone in collapsed mode...
+	await expect(page.locator('.reader-rail-collapsed')).toHaveCount(0);
 	await expect(page.locator('.rail-row')).toHaveCount(0);
-	// ...replaced by a thin back-only rail with the sibling-count
-	// hook for Plan 18 swipe-to-navigate.
-	const backRail = page.locator('.reader-rail-collapsed');
-	await expect(backRail).toBeVisible();
-	const count = await backRail.getAttribute('data-sibling-count');
-	expect(Number(count)).toBeGreaterThanOrEqual(0);
 
-	// Clicking the rail's back button returns to the river.
-	await backRail.locator('button.rail-back').click();
+	await page.locator('.reader-header .reader-back').click();
 	await expect(page).toHaveURL(/\/$/);
 });
 

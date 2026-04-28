@@ -74,7 +74,7 @@
 		{#if !mobile}
 			<Wordmark />
 		{/if}
-		<SearchBox bind:value={inputText} placeholder="search the river…" onCommit={commit} />
+		<SearchBox bind:value={inputText} placeholder="Search posts…" onCommit={commit} />
 		<p class="meta mono" aria-live="polite">
 			{#if trimmed.length < 2}
 				type at least two characters

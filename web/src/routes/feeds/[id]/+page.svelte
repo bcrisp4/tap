@@ -180,7 +180,7 @@
 			<section class="entries">
 				<h2>Recent entries · <span class="mono">{total}</span></h2>
 				{#if visible.length === 0}
-					<p class="empty mono">no entries yet · the poller may still be catching up</p>
+					<p class="empty mono">no entries</p>
 				{:else}
 					<RiverList
 						entries={visible}

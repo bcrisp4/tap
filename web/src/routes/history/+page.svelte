@@ -38,6 +38,7 @@
 					feeds={feeds.data?.data ?? []}
 					density="default"
 					showSummary={true}
+					dimRead={false}
 					onSelect={(id) => goto('/entry/' + id)}
 				/>
 			{/if}
@@ -57,6 +58,7 @@
 					feeds={feeds.data?.data ?? []}
 					density="default"
 					showSummary={true}
+					dimRead={false}
 					onSelect={(id) => goto('/entry/' + id)}
 				/>
 			{/if}

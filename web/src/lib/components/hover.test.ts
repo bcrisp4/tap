@@ -33,7 +33,6 @@ const COMPONENTS_WITH_HOVER: ReadonlyArray<string> = [
 	'MobileTopBar.svelte',
 	'reader/ReaderHeader.svelte',
 	'BulkActionStrip.svelte',
-	'reader/ReaderRail.svelte',
 	'Sidebar.svelte',
 	'SidebarFooter.svelte',
 	'TopBar.svelte'

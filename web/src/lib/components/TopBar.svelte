@@ -1,18 +1,14 @@
 <script lang="ts">
-	// Sticky header. The unread view needs the full chrome (counter +
-	// refresh + mark-all-read); other routes (Saved, History, Settings,
-	// Feeds, Search) only want the title crumb. To avoid forking into a
-	// second component, the counter and the two action buttons each
-	// only render when the route opts in:
+	// Sticky header. The unread view needs the action chrome (refresh +
+	// mark-all-read); other routes (Saved, History, Settings, Feeds,
+	// Search) only want the title crumb. To avoid forking into a second
+	// component, each action button only renders when the route passes
+	// a real handler — otherwise the affordance disappears entirely (no
+	// clickable no-op buttons).
 	//
-	//   - `unread`/`total` are optional. The counter renders only when
-	//     `total` is supplied (i.e. the page is making a meaningful
-	//     "n of m" claim). On `/saved`/`/history` we deliberately skip
-	//     it so the header doesn't read as an unread counter.
-	//   - `onRefresh`/`onMarkAllRead` are optional. The corresponding
-	//     button only renders when the route passes a real handler;
-	//     otherwise the affordance disappears entirely (no clickable
-	//     no-op buttons).
+	// Plan 22 / T3: the unread counter that used to live here was a
+	// duplicate of the sidebar's "Unread" badge — same number, less
+	// context. The sidebar is now the only place the count appears.
 	//
 	// Plan 15 wires Refresh for real (Plan 10's stub TODO) and adds a
 	// `refreshing` flag so the parent can disable the button + show a
@@ -23,15 +19,11 @@
 	// future capability without pretending to work today.
 	let {
 		title = 'Unread',
-		unread,
-		total,
 		onMarkAllRead,
 		onRefresh,
 		refreshing = false
 	}: {
 		title?: string;
-		unread?: number;
-		total?: number;
 		onMarkAllRead?: () => void;
 		onRefresh?: () => void;
 		refreshing?: boolean;
@@ -40,9 +32,6 @@
 
 <div class="tap-topbar">
 	<div class="crumb"><b>{title}</b></div>
-	{#if total !== undefined}
-		<span class="count mono">{unread ?? 0} of {total}</span>
-	{/if}
 	<div class="spacer"></div>
 	<button
 		type="button"
@@ -139,11 +128,6 @@
 	.crumb b {
 		color: var(--ink);
 		font-weight: 600;
-	}
-	.count {
-		font-size: 11px;
-		color: var(--ink-3);
-		letter-spacing: 0.02em;
 	}
 	.spacer {
 		flex: 1;
