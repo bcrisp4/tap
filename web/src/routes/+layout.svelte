@@ -11,7 +11,7 @@
 	import Toast from '$lib/components/Toast.svelte';
 	import '../app.css';
 
-	const client = makeQueryClient();
+	const { client, restored } = makeQueryClient();
 
 	let { children } = $props();
 
@@ -48,9 +48,11 @@
 		}
 		const unbindOnline = bindOnlineManager();
 		// Replay any mutations that paused while offline before the last
-		// reload. Safe to call even if the cache is empty — it's a no-op
-		// when the mutation cache contains no paused entries.
-		drainPausedMutations(client);
+		// reload. We await `restored` because the persisted mutation
+		// cache rehydrates asynchronously — calling drainPausedMutations
+		// before that promise settles would find an empty cache and
+		// no-op even if IDB held queued mutations.
+		void restored.then(() => drainPausedMutations(client));
 		const initialPrefetch = window.setTimeout(() => {
 			void prefetchRecent(200).catch(() => undefined);
 		}, 1_000);

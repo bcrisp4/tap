@@ -34,10 +34,12 @@ describe('persist mutation dehydration', () => {
 	});
 
 	it('makeQueryClient returns a working QueryClient', () => {
-		const client = makeQueryClient();
+		const { client, restored } = makeQueryClient();
 		expect(client).toBeInstanceOf(QueryClient);
 		// Mutation-cache and query-cache should be wired up.
 		expect(client.getMutationCache()).toBeTruthy();
 		expect(client.getQueryCache()).toBeTruthy();
+		// `restored` is always a thenable, even when persistence is off.
+		expect(typeof restored.then).toBe('function');
 	});
 });

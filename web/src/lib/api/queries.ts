@@ -18,6 +18,17 @@ import type { Entry, Feed, Category, SystemStatus, FeedPatch, DiscoverResult } f
 // promotes it into a richer toast surface (multi-message, retry, etc.).
 const ROLLBACK_MESSAGE = "couldn't sync — change reverted";
 
+// Stable mutation keys. `query-client.ts` registers `setMutationDefaults`
+// against these so paused mutations rehydrated from IDB after a reload
+// can look up their `mutationFn` / `onMutate` / `onError` (functions
+// don't survive JSON dehydration; only the key + variables persist).
+export const mutationKeys = {
+	toggleRead: ['mutations', 'toggleRead'] as const,
+	toggleSaved: ['mutations', 'toggleSaved'] as const,
+	bulkUpdate: ['mutations', 'bulkUpdate'] as const,
+	deleteFeed: ['mutations', 'deleteFeed'] as const
+};
+
 // Query keys are namespaced with an explicit 'list' / 'byId' segment so
 // prefix-based filters (e.g. `setQueriesData({queryKey: ['entries','list']})`)
 // don't accidentally hit single-entry caches whose value shape differs.
@@ -149,6 +160,7 @@ function invalidateLists(qc: QueryClient): void {
 // the client per render via `useQueryClient`.
 export function toggleReadMutationOptions(qc: QueryClient) {
 	return {
+		mutationKey: mutationKeys.toggleRead,
 		mutationFn: async ({ id, read }: { id: number; read: boolean }) =>
 			await putJSON<Entry>(`/entries/${id}`, { read }),
 		onMutate: async ({ id, read }: { id: number; read: boolean }) => {
@@ -193,6 +205,7 @@ export function useToggleRead() {
 // state for rollback, and invalidate after settle.
 export function bulkUpdateMutationOptions(qc: QueryClient) {
 	return {
+		mutationKey: mutationKeys.bulkUpdate,
 		mutationFn: async ({ ids, read }: { ids: number[]; read: boolean }) => {
 			await Promise.all(ids.map((id) => putJSON<Entry>(`/entries/${id}`, { read })));
 		},
@@ -222,6 +235,7 @@ export function useBulkUpdate() {
 
 export function toggleSavedMutationOptions(qc: QueryClient) {
 	return {
+		mutationKey: mutationKeys.toggleSaved,
 		mutationFn: async ({ id, saved }: { id: number; saved: boolean }) =>
 			await putJSON<Entry>(`/entries/${id}`, { saved }),
 		onMutate: async ({ id, saved }: { id: number; saved: boolean }) => {
@@ -335,6 +349,7 @@ export function useUpdateFeed() {
 // as a backstop in case the cache held entries we hadn't paged.
 export function deleteFeedMutationOptions(qc: QueryClient) {
 	return {
+		mutationKey: mutationKeys.deleteFeed,
 		mutationFn: (id: number) => deleteResource(`/feeds/${id}`),
 		onMutate: async (id: number) => {
 			await cancelLists(qc);
