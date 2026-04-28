@@ -28,9 +28,23 @@ async function ensureEmptyFeed(ctx: APIRequestContext): Promise<number> {
 			title: 'plan-22-empty (e2e)'
 		}
 	});
-	expect(created.ok() || created.status() === 409).toBeTruthy();
-	const body = (await created.json()) as { id: number };
-	return body.id;
+	if (created.ok()) {
+		const body = (await created.json()) as { id: number };
+		return body.id;
+	}
+	// 409 means another worker raced us to the create; re-fetch the
+	// list and pick up the existing id rather than crashing on a body
+	// that doesn't carry one.
+	expect(created.status()).toBe(409);
+	const refreshedList = await ctx.get('/api/v1/feeds');
+	const refreshed = (
+		(await refreshedList.json()) as { data: Array<{ id: number; feed_url: string }> }
+	).data;
+	const existing = refreshed.find(
+		(f) => f.feed_url === 'https://example.invalid/never-resolves.atom'
+	);
+	expect(existing, 'feed creation returned 409 but existing feed not found').toBeDefined();
+	return existing!.id;
 }
 
 async function ensureUnreadEntry(ctx: APIRequestContext): Promise<number> {

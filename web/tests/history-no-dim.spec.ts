@@ -16,12 +16,26 @@ test.beforeEach(async () => {
 			data: { feed_url: 'https://jvns.ca/atom.xml', title: 'jvns.ca (e2e)' }
 		});
 		expect(res.ok() || res.status() === 409).toBeTruthy();
-		// Make sure at least one entry is read so /history has a row.
-		const list = await ctx.get('/api/v1/entries?limit=1');
-		const body = (await list.json()) as { data: Array<{ id: number }> };
-		if (body.data && body.data.length > 0) {
-			await ctx.put(`/api/v1/entries/${body.data[0].id}`, { data: { read: true } });
+		// Poll until the dispatcher has ingested at least one entry,
+		// then explicitly mark it read so /history has a row to render.
+		// On a fresh DB the prior "if there's an entry, mark it read"
+		// shortcut would silently no-op and leave /history empty.
+		const deadline = Date.now() + 30_000;
+		let entryId: number | undefined;
+		while (Date.now() < deadline) {
+			const list = await ctx.get('/api/v1/entries?limit=1');
+			if (list.ok()) {
+				const body = (await list.json()) as { data: Array<{ id: number }> };
+				if (body.data && body.data.length > 0) {
+					entryId = body.data[0].id;
+					break;
+				}
+			}
+			await new Promise((r) => setTimeout(r, 500));
 		}
+		expect(entryId, 'no entries available within timeout').toBeDefined();
+		const markRead = await ctx.put(`/api/v1/entries/${entryId}`, { data: { read: true } });
+		expect(markRead.ok()).toBeTruthy();
 	} finally {
 		await ctx.dispose();
 	}
