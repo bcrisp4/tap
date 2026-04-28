@@ -5,31 +5,79 @@
 	// the reader pane that lets you skim adjacent unread entries without
 	// leaving the article. Selected row gets a Klein accent strip on the
 	// left edge; read rows fade to ink-3 with an empty dot.
+	//
+	// Plan 16 added a `collapsed` mode used by the reader route: only a
+	// thin "back to unread" rail renders, the article body gets the full
+	// width, but the sibling-IDs of `entries` stay in scope so Plan 18
+	// can wire swipe-to-navigate (forward/back through siblings) onto a
+	// derived `siblingIds` value here without re-architecting.
 	let {
 		entries,
-		selectedId
+		selectedId,
+		collapsed = false,
+		onBack
 	}: {
 		entries: Entry[];
 		selectedId: number;
+		collapsed?: boolean;
+		onBack?: () => void;
 	} = $props();
+
+	// Sibling-IDs hook reserved for Plan 18 swipe-to-navigate. The
+	// collapsed-rail aside still receives the full `entries` array,
+	// and we surface the count on `data-sibling-count` so a swipe
+	// handler can find the rail and read the live ids straight from
+	// the prop. Plan 18: derive `siblingIds = entries.map(e => e.id)`
+	// in this same script and bind whatever swipe action you need;
+	// no re-scaffolding required.
 </script>
 
-<aside class="reader-rail" aria-label="Adjacent unread entries">
-	<div class="rail-head mono">UNREAD · {entries.length}</div>
-	{#each entries as e (e.id)}
-		<a
-			class={['rail-row', { 'is-selected': e.id === selectedId, 'is-read': e.read }]}
-			href={'/entry/' + e.id}
-			aria-current={e.id === selectedId ? 'page' : undefined}
+{#if collapsed}
+	<aside
+		class="reader-rail-collapsed"
+		aria-label="Back to unread"
+		data-sibling-count={entries.length}
+	>
+		<button
+			type="button"
+			class="rail-back mono"
+			onclick={onBack}
+			title="Back to unread (Esc)"
+			aria-label="Back to unread list"
 		>
-			<span class="rail-dot" aria-hidden="true"></span>
-			<div class="rail-text">
-				<div class="rail-title">{e.title}</div>
-				<div class="rail-meta sans">{e.reading_time} min</div>
-			</div>
-		</a>
-	{/each}
-</aside>
+			<svg
+				width="14"
+				height="14"
+				viewBox="0 0 16 16"
+				fill="none"
+				stroke="currentColor"
+				stroke-width="1.5"
+				stroke-linecap="round"
+				stroke-linejoin="round"
+				aria-hidden="true"
+			>
+				<path d="M10 3 5 8l5 5" />
+			</svg>
+		</button>
+	</aside>
+{:else}
+	<aside class="reader-rail" aria-label="Adjacent unread entries">
+		<div class="rail-head mono">UNREAD · {entries.length}</div>
+		{#each entries as e (e.id)}
+			<a
+				class={['rail-row', { 'is-selected': e.id === selectedId, 'is-read': e.read }]}
+				href={'/entry/' + e.id}
+				aria-current={e.id === selectedId ? 'page' : undefined}
+			>
+				<span class="rail-dot" aria-hidden="true"></span>
+				<div class="rail-text">
+					<div class="rail-title">{e.title}</div>
+					<div class="rail-meta sans">{e.reading_time} min</div>
+				</div>
+			</a>
+		{/each}
+	</aside>
+{/if}
 
 <style>
 	.reader-rail {
@@ -101,5 +149,33 @@
 	.rail-meta {
 		font-size: 11px;
 		color: var(--ink-3);
+	}
+
+	/* Collapsed rail: a 56-px back-to-unread strip rendered while the
+	   reader is open. Mirrors the rail's bg-soft surface and ruled
+	   right edge so the focus-mode reader still feels framed, just
+	   tighter. The button is centred top-aligned to read as utility
+	   chrome rather than a full sidebar. */
+	.reader-rail-collapsed {
+		width: 56px;
+		border-right: 1px solid var(--rule);
+		background: var(--bg-soft);
+		flex-shrink: 0;
+		display: flex;
+		justify-content: center;
+		padding-top: 14px;
+	}
+	.rail-back {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 32px;
+		height: 32px;
+		border-radius: 4px;
+		color: var(--ink-2);
+	}
+	.rail-back:hover {
+		color: var(--ink);
+		background: var(--bg);
 	}
 </style>

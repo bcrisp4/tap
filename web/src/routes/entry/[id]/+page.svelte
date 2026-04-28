@@ -153,7 +153,12 @@
 {:else}
 	<div class="tap reader-shell">
 		<Sidebar />
-		<ReaderRail entries={railEntries} selectedId={entry.data.id} />
+		<ReaderRail
+			entries={railEntries}
+			selectedId={entry.data.id}
+			collapsed
+			onBack={back}
+		/>
 		<div class="reader-pane">
 			<ReaderHeader
 				read={entry.data.read}
