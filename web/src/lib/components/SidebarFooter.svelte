@@ -12,8 +12,15 @@
 	const CYCLE: readonly Theme[] = ['light', 'sepia', 'dark'] as const;
 
 	function cycleTheme() {
-		const current = theme.theme === 'system' ? 'light' : theme.theme;
-		const i = CYCLE.indexOf(current as (typeof CYCLE)[number]);
+		// First click out of 'system' should land on the cycle's
+		// starting palette ('light'). Without this short-circuit the
+		// indexOf below would resolve 'system' to light then advance
+		// to the next entry, jumping straight to 'sepia' on click 1.
+		if (theme.theme === 'system') {
+			theme.setTheme(CYCLE[0]);
+			return;
+		}
+		const i = CYCLE.indexOf(theme.theme as (typeof CYCLE)[number]);
 		const next = CYCLE[(i + 1) % CYCLE.length];
 		theme.setTheme(next);
 	}

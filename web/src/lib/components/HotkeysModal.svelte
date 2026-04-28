@@ -1,9 +1,10 @@
 <script lang="ts">
 	// Hotkeys help modal. Mounted once at the root layout so the
 	// global rune toggles a single instance regardless of route.
-	// Open via: the `?` keystroke (wired in $lib/keyboard.svelte.ts),
-	// or the keyboard icon in SidebarFooter. Close via Esc, the
-	// backdrop, or the explicit close button.
+	// Open via: the `?` keystroke (wired at window level in
+	// web/src/routes/+layout.svelte), or the keyboard icon in
+	// SidebarFooter. Close via Esc, the backdrop, or the explicit
+	// close button.
 	import { hotkeysModal } from '$lib/hotkeys-modal.svelte';
 
 	type Shortcut = { keys: string[]; description: string };
@@ -37,6 +38,12 @@
 <svelte:window onkeydown={hotkeysModal.open ? onKeydown : null} />
 
 {#if hotkeysModal.open}
+	<!-- Esc is wired at the window level above; keeping a second
+	     keydown listener on the dialog div would fire onKeydown twice
+	     per press. svelte-check still warns about the click handler
+	     having no keyboard equivalent — the window listener is the
+	     equivalent (Esc closes the modal regardless of focus). -->
+	<!-- svelte-ignore a11y_click_events_have_key_events -->
 	<div
 		class="backdrop"
 		role="dialog"
@@ -44,7 +51,6 @@
 		aria-labelledby="hotkeys-title"
 		tabindex="-1"
 		onclick={onBackdropClick}
-		onkeydown={onKeydown}
 	>
 		<div class="panel" role="document">
 			<header>
