@@ -9,7 +9,7 @@ import {
 	type QueryClient
 } from '@tanstack/svelte-query';
 import { deleteResource, getList, getJSON, postJSON, putJSON } from './client';
-import { patchEntryEverywhere } from './cache-patch';
+import { patchEntryEverywhere, removeEntryEverywhere } from './cache-patch';
 import type { Entry, Feed, Category, SystemStatus, FeedPatch, DiscoverResult } from './types';
 
 // Query keys are namespaced with an explicit 'list' / 'byId' segment so
@@ -314,17 +314,52 @@ export function useUpdateFeed() {
 
 // `useDeleteFeed` removes the feed from every cache it appears in —
 // the byId one (gone), the feeds list (sidebar/menu), and any
-// entries lists (the deleted feed's entries are FK-cascaded).
+// entries lists (the deleted feed's entries are FK-cascaded). The
+// optimistic `removeEntryEverywhere` walk drops the entries from
+// every cached list namespace synchronously so the UI doesn't show
+// stale rows during the server roundtrip; `onSettled` invalidates
+// as a backstop in case the cache held entries we hadn't paged.
+export function deleteFeedMutationOptions(qc: QueryClient) {
+	return {
+		mutationFn: (id: number) => deleteResource(`/feeds/${id}`),
+		onMutate: async (id: number) => {
+			await cancelLists(qc);
+			await qc.cancelQueries({ queryKey: ['feeds'] });
+
+			const previous = {
+				...snapshotLists(qc),
+				feeds: qc.getQueriesData({ queryKey: ['feeds'] })
+			};
+
+			removeEntryEverywhere(qc, (e) => e.feed_id === id);
+			qc.removeQueries({ queryKey: keys.feed(id) });
+			return { previous };
+		},
+		onError: (
+			_err: unknown,
+			_vars: unknown,
+			ctx:
+				| {
+						previous: ListSnapshot & {
+							feeds: ReturnType<QueryClient['getQueriesData']>;
+						};
+				  }
+				| undefined
+		) => {
+			if (!ctx?.previous) return;
+			restoreLists(qc, ctx.previous);
+			for (const [k, v] of ctx.previous.feeds) qc.setQueryData(k, v);
+		},
+		onSettled: () => {
+			invalidateLists(qc);
+			qc.invalidateQueries({ queryKey: keys.feeds() });
+		}
+	};
+}
+
 export function useDeleteFeed() {
 	const qc = useQueryClient();
-	return createMutation(() => ({
-		mutationFn: (id: number) => deleteResource(`/feeds/${id}`),
-		onSuccess: (_v, id) => {
-			qc.removeQueries({ queryKey: keys.feed(id) });
-			void qc.invalidateQueries({ queryKey: keys.feeds() });
-			void qc.invalidateQueries({ queryKey: keys.entriesAll() });
-		}
-	}));
+	return createMutation(() => deleteFeedMutationOptions(qc));
 }
 
 // `useDiscoverFeed` POSTs the candidate URL and returns RSS/Atom

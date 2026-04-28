@@ -14,7 +14,8 @@ import {
 	keys,
 	toggleReadMutationOptions,
 	toggleSavedMutationOptions,
-	bulkUpdateMutationOptions
+	bulkUpdateMutationOptions,
+	deleteFeedMutationOptions
 } from './queries';
 import type { Entry, FeedPatch } from './types';
 
@@ -239,6 +240,38 @@ describe('useBulkUpdate', () => {
 		expect(list.data.map((e) => e.id)).toEqual([3]);
 		expect(list.pagination.total).toBe(1);
 		expect(qc.getQueryState(['entries', 'list', { status: 'unread' }])?.isInvalidated).toBe(true);
+	});
+});
+
+describe('useDeleteFeed', () => {
+	it('removes every entry of the deleted feed across entries/history/search', async () => {
+		// DELETE /feeds/{id} returns 204 — stub fetch with a no-content response.
+		globalThis.fetch = vi.fn(
+			async () => new Response(null, { status: 204 })
+		) as unknown as typeof fetch;
+		const qc = new QueryClient({ defaultOptions: { mutations: { retry: 0 } } });
+		qc.setQueryData(['entries', 'list', { status: 'unread' }], {
+			data: [entry(1, { feed_id: 7 }), entry(2, { feed_id: 8 })],
+			pagination: { limit: 50, offset: 0, total: 2 }
+		});
+		qc.setQueryData(['history', 'list', 100], {
+			data: [entry(1, { feed_id: 7 })],
+			pagination: { limit: 100, offset: 0, total: 1 }
+		});
+		qc.setQueryData(['search', 'list', 'q'], {
+			data: [entry(1, { feed_id: 7 })],
+			pagination: { limit: 25, offset: 0, total: 1 }
+		});
+
+		await runMutation(qc, deleteFeedMutationOptions(qc), 7);
+
+		expect(
+			(qc.getQueryData(['entries', 'list', { status: 'unread' }]) as { data: Entry[] }).data.map(
+				(e) => e.id
+			)
+		).toEqual([2]);
+		expect((qc.getQueryData(['history', 'list', 100]) as { data: Entry[] }).data).toEqual([]);
+		expect((qc.getQueryData(['search', 'list', 'q']) as { data: Entry[] }).data).toEqual([]);
 	});
 });
 
