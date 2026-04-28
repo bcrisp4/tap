@@ -81,25 +81,23 @@
 		return visible.findIndex((e) => e.id === selectedId);
 	}
 
+	// First press of any nav key picks visible[0]; subsequent presses
+	// move by `delta`. `selectedId` is null until the user has moved
+	// (Plan 22 / T2: no implicit selection on first paint).
+	function moveSelection(delta: -1 | 1) {
+		if (selectedId === null) {
+			userSelectedId = visible[0]?.id ?? null;
+			return;
+		}
+		const i = indexOfSelected();
+		const next = i + delta;
+		if (next < 0 || next >= visible.length) return;
+		userSelectedId = visible[next].id;
+	}
+
 	bindKeyboard({
-		onNext: () => {
-			// First press picks visible[0]; subsequent presses advance.
-			// `selectedId` is null until the user has moved (Plan 22 / T2).
-			if (selectedId === null) {
-				userSelectedId = visible[0]?.id ?? null;
-				return;
-			}
-			const i = indexOfSelected();
-			if (i >= 0 && i < visible.length - 1) userSelectedId = visible[i + 1].id;
-		},
-		onPrev: () => {
-			if (selectedId === null) {
-				userSelectedId = visible[0]?.id ?? null;
-				return;
-			}
-			const i = indexOfSelected();
-			if (i > 0) userSelectedId = visible[i - 1].id;
-		},
+		onNext: () => moveSelection(1),
+		onPrev: () => moveSelection(-1),
 		onToggleRead: () => {
 			const cur = visible.find((e) => e.id === selectedId);
 			if (cur) toggleRead.mutate({ id: cur.id, read: !cur.read });
