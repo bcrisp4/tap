@@ -49,7 +49,7 @@
 	<div class="tap">
 		<Sidebar active="saved" />
 		<div class="col">
-			<TopBar title="Saved" unread={total} total={total} />
+			<TopBar title="Saved" />
 			{#if visible.length === 0 && !saved.isLoading}
 				<p class="empty mono">no saved entries · star one with the s key</p>
 			{:else}

@@ -1,13 +1,27 @@
 <script lang="ts">
-	// Sticky header for the desktop unread view: title crumb, count,
-	// and three icon buttons (search, refresh, mark-all-read). The
-	// search button is wired in Plan 12; we render the affordance now.
+	// Sticky header. The unread view needs the full chrome (counter +
+	// refresh + mark-all-read); other routes (Saved, History, Settings,
+	// Feeds, Search) only want the title crumb. To avoid forking into a
+	// second component, the counter and the two action buttons each
+	// only render when the route opts in:
+	//
+	//   - `unread`/`total` are optional. The counter renders only when
+	//     `total` is supplied (i.e. the page is making a meaningful
+	//     "n of m" claim). On `/saved`/`/history` we deliberately skip
+	//     it so the header doesn't read as an unread counter.
+	//   - `onRefresh`/`onMarkAllRead` are optional. The corresponding
+	//     button only renders when the route passes a real handler;
+	//     otherwise the affordance disappears entirely (no clickable
+	//     no-op buttons).
+	//
+	// The Search affordance still renders disabled — it advertises a
+	// future capability without pretending to work today.
 	let {
 		title = 'Unread',
-		unread = 0,
-		total = 0,
-		onMarkAllRead = () => {},
-		onRefresh = () => {}
+		unread,
+		total,
+		onMarkAllRead,
+		onRefresh
 	}: {
 		title?: string;
 		unread?: number;
@@ -19,7 +33,9 @@
 
 <div class="tap-topbar">
 	<div class="crumb"><b>{title}</b></div>
-	<span class="count mono">{unread} of {total}</span>
+	{#if total !== undefined}
+		<span class="count mono">{unread ?? 0} of {total}</span>
+	{/if}
 	<div class="spacer"></div>
 	<button
 		type="button"
@@ -43,49 +59,53 @@
 			<path d="m10.5 10.5 3 3" />
 		</svg>
 	</button>
-	<button
-		type="button"
-		class="icon-btn"
-		title="Refresh"
-		aria-label="Refresh"
-		onclick={onRefresh}
-	>
-		<svg
-			width="14"
-			height="14"
-			viewBox="0 0 16 16"
-			fill="none"
-			stroke="currentColor"
-			stroke-width="1.4"
-			stroke-linecap="round"
-			stroke-linejoin="round"
-			aria-hidden="true"
+	{#if onRefresh}
+		<button
+			type="button"
+			class="icon-btn"
+			title="Refresh"
+			aria-label="Refresh"
+			onclick={onRefresh}
 		>
-			<path d="M14 8a6 6 0 1 1-1.76-4.24" />
-			<path d="M14 2.5V6h-3.5" />
-		</svg>
-	</button>
-	<button
-		type="button"
-		class="icon-btn"
-		title="Mark all read"
-		aria-label="Mark all read"
-		onclick={onMarkAllRead}
-	>
-		<svg
-			width="14"
-			height="14"
-			viewBox="0 0 16 16"
-			fill="none"
-			stroke="currentColor"
-			stroke-width="1.4"
-			stroke-linecap="round"
-			stroke-linejoin="round"
-			aria-hidden="true"
+			<svg
+				width="14"
+				height="14"
+				viewBox="0 0 16 16"
+				fill="none"
+				stroke="currentColor"
+				stroke-width="1.4"
+				stroke-linecap="round"
+				stroke-linejoin="round"
+				aria-hidden="true"
+			>
+				<path d="M14 8a6 6 0 1 1-1.76-4.24" />
+				<path d="M14 2.5V6h-3.5" />
+			</svg>
+		</button>
+	{/if}
+	{#if onMarkAllRead}
+		<button
+			type="button"
+			class="icon-btn"
+			title="Mark all read"
+			aria-label="Mark all read"
+			onclick={onMarkAllRead}
 		>
-			<path d="m3 8 3.5 3.5L13 5" />
-		</svg>
-	</button>
+			<svg
+				width="14"
+				height="14"
+				viewBox="0 0 16 16"
+				fill="none"
+				stroke="currentColor"
+				stroke-width="1.4"
+				stroke-linecap="round"
+				stroke-linejoin="round"
+				aria-hidden="true"
+			>
+				<path d="m3 8 3.5 3.5L13 5" />
+			</svg>
+		</button>
+	{/if}
 </div>
 
 <style>

@@ -48,7 +48,7 @@
 	<div class="tap">
 		<Sidebar active="history" />
 		<div class="col">
-			<TopBar title="History" unread={total} total={total} />
+			<TopBar title="History" />
 			{#if visible.length === 0 && !history.isLoading}
 				<p class="empty mono">no history yet · entries you've read appear here</p>
 			{:else}
