@@ -7,7 +7,7 @@
 	import Wordmark from '$brand/Wordmark.svelte';
 	import { swatchFor } from './EntryRow.svelte';
 
-	let { active }: { active?: 'unread' | 'all' | 'saved' } = $props();
+	let { active }: { active?: 'unread' | 'history' | 'saved' } = $props();
 
 	const feeds = useFeeds();
 	const unread = useEntries({ status: 'unread', limit: 1 });
@@ -22,8 +22,8 @@
 		<span>Unread</span>
 		<span class="badge mono">{unread.data?.pagination.total ?? 0}</span>
 	</a>
-	<a href="/all" class="nav-item" class:active={active === 'all'}>
-		<span>All entries</span>
+	<a href="/history" class="nav-item" class:active={active === 'history'}>
+		<span>History</span>
 	</a>
 	<a href="/saved" class="nav-item" class:active={active === 'saved'}>
 		<span>Saved</span>
