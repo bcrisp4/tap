@@ -10,6 +10,7 @@
 		useToggleSaved
 	} from '$api/queries';
 	import Sidebar from '$lib/components/Sidebar.svelte';
+	import OfflineIndicator from '$lib/components/OfflineIndicator.svelte';
 	import ReaderRail from '$lib/components/reader/ReaderRail.svelte';
 	import ReaderHeader from '$lib/components/reader/ReaderHeader.svelte';
 	import ReaderBody from '$lib/components/reader/ReaderBody.svelte';
@@ -125,6 +126,7 @@
 	</div>
 {:else}
 	<div class="tap reader-shell">
+		<OfflineIndicator />
 		<Sidebar />
 		<ReaderRail entries={railEntries} selectedId={entry.data.id} />
 		<div class="reader-pane">
