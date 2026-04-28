@@ -34,3 +34,12 @@ describe('StatsPanel inline GitHub link (Plan 21 T7)', () => {
 		expect(SRC).toMatch(/<header[^>]*class="stats-header"/);
 	});
 });
+
+describe('StatsPanel recent-errors empty state (Plan 21 T8)', () => {
+	it('gates the recent-errors section on a non-empty list', () => {
+		// Empty `recent_errors` ⇒ the heading + list collapse entirely.
+		// Anything else (a 0-count badge, an empty <ul>) is noise on
+		// what's already a sparse settings page.
+		expect(SRC).toMatch(/{#if\s+recentErrors\.length\s*>\s*0\s*}/);
+	});
+});
