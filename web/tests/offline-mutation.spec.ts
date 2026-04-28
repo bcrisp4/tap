@@ -39,7 +39,10 @@ test('offline mark-read survives a tab reload before reconnect', async ({ page, 
 	expect(title.length).toBeGreaterThan(0);
 
 	// Capture every PUT against the entries collection so we can confirm
-	// the queued mutation drains exactly once after reconnect.
+	// the queued mutation drains after reconnect. We only assert at-
+	// least-once below — query-core may legitimately re-fire a paused
+	// mutation across the boot/onlineManager/drainPausedMutations paths
+	// so a strict equality check would be brittle.
 	const puts: string[] = [];
 	page.on('request', (req) => {
 		if (req.method() === 'PUT' && req.url().includes('/api/v1/entries/')) {

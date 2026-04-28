@@ -32,7 +32,16 @@ export function bindOnlineManager(): () => void {
 // query-core only auto-resumes when `onlineManager` flips offline →
 // online. If the user is already online at boot, nothing fires unless
 // we kick the cache explicitly.
+//
+// `resumePausedMutations()` returns a Promise that rejects if any
+// resumed mutation throws. We swallow it here because mutation errors
+// already trigger the rollback toast inside `onError` — propagating
+// the rejection further would just produce console noise without
+// adding any user-facing signal.
 export function drainPausedMutations(client: QueryClient): void {
 	if (typeof window === 'undefined') return;
-	void client.getMutationCache().resumePausedMutations();
+	client
+		.getMutationCache()
+		.resumePausedMutations()
+		.catch(() => undefined);
 }

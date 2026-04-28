@@ -352,13 +352,15 @@ export function useUpdateFeed() {
 type FeedsSnapshot = ReturnType<QueryClient['getQueriesData']>;
 type DeleteFeedContext = { previous: ListSnapshot & { feeds: FeedsSnapshot } };
 
-// `useDeleteFeed` removes the feed from every cache it appears in —
-// the byId one (gone), the feeds list (sidebar/menu), and any
-// entries lists (the deleted feed's entries are FK-cascaded). The
-// optimistic `removeEntryEverywhere` walk drops the entries from
-// every cached list namespace synchronously so the UI doesn't show
-// stale rows during the server roundtrip; `onSettled` invalidates
-// as a backstop in case the cache held entries we hadn't paged.
+// `useDeleteFeed` clears the feed from caches that show its entries.
+// Optimistically: the byId cache is dropped via `removeQueries`, and
+// any entries-list / history / search rows belonging to the feed are
+// pruned via `removeEntryEverywhere` so the UI doesn't show stale rows
+// during the server roundtrip. The feeds-list cache (sidebar/menu) is
+// refreshed by the `onSettled` invalidation rather than patched
+// optimistically — patching the list synchronously is doable but
+// duplicates the invalidation cost for no measurable user benefit
+// (the sidebar refetch is cheap and lands within one paint).
 export function deleteFeedMutationOptions(qc: QueryClient) {
 	return {
 		mutationKey: mutationKeys.deleteFeed,

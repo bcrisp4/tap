@@ -51,8 +51,11 @@
 		// reload. We await `restored` because the persisted mutation
 		// cache rehydrates asynchronously — calling drainPausedMutations
 		// before that promise settles would find an empty cache and
-		// no-op even if IDB held queued mutations.
-		void restored.then(() => drainPausedMutations(client));
+		// no-op even if IDB held queued mutations. A failed restore
+		// (quota exceeded, IDB blocked, etc.) is non-fatal — swallow it
+		// so it doesn't surface as an unhandled rejection in the console
+		// without changing user-visible behaviour.
+		restored.then(() => drainPausedMutations(client)).catch(() => undefined);
 		const initialPrefetch = window.setTimeout(() => {
 			void prefetchRecent(200).catch(() => undefined);
 		}, 1_000);
