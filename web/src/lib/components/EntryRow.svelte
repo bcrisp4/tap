@@ -51,25 +51,28 @@
 		// Stop the row click; the read-dot has its own action and we
 		// don't want a click-to-open hijack.
 		ev.stopPropagation();
+		ev.preventDefault();
 		onToggleRead(entry.id, !entry.read);
 	}
 
 	function onSelectBoxClick(ev: MouseEvent) {
 		ev.stopPropagation();
+		ev.preventDefault();
 		onToggleSelect(entry.id, ev);
+	}
+
+	function onLinkClick(ev: MouseEvent) {
+		// The parent owns navigation (RiverList → +page.svelte). Honour
+		// the same modifier-key contract the parent expects: shift /
+		// meta / ctrl get routed to multi-select toggle. The default
+		// path lets the parent's onclick handle navigation via the
+		// SPA router, so we preventDefault to suppress the link's
+		// native full-page-navigation.
+		ev.preventDefault();
+		onclick(ev);
 	}
 </script>
 
-<!--
-	Row is a plain article — NOT role="button" — because it nests
-	real <button> children (the read-dot and the multi-select box).
-	A button-in-button is invalid HTML and confuses screen readers.
-	Keyboard activation lives on the global j/k + o/Enter handler in
-	keyboard.svelte.ts; the click listener here is the desktop
-	mouse convenience.
--->
-<!-- svelte-ignore a11y_click_events_have_key_events -->
-<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <article
 	class="entry"
 	class:is-read={entry.read}
@@ -77,8 +80,13 @@
 	class:is-selected={selected}
 	class:is-multi={multiSelect}
 	class:is-multi-selected={multiSelected}
-	onclick={onclick}
 >
+	<!--
+		Per-row affordance. Real <button> with native keyboard /
+		focus / a11y semantics. Sits visually in the row gutter via
+		position:absolute; the stretched <a> link below covers the
+		rest of the row and is the click-to-open target.
+	-->
 	{#if multiSelect}
 		<button
 			type="button"
@@ -104,6 +112,20 @@
 	{#if entry.saved}
 		<span class="saved-mark mono">SAVED</span>
 	{/if}
+	<!--
+		Stretched link covers the row's clickable area. <a href> is
+		natively keyboard-focusable (Tab) and Enter activates it. The
+		parent owns SPA navigation, so we preventDefault and forward
+		the click to the parent's handler. The href is still set for
+		middle-click / cmd-click / "open in new tab" behaviour and for
+		assistive tech which announces the URL.
+	-->
+	<a
+		class="hit"
+		href={'/entry/' + entry.id}
+		aria-label={'Open entry: ' + entry.title}
+		onclick={onLinkClick}
+	></a>
 	<h3 class="title">{entry.title}</h3>
 	<div class="meta">
 		<span class="ico" style="background: {swatchColor}" aria-hidden="true"></span>
@@ -126,7 +148,6 @@
 		width: 100%;
 		padding: 14px 24px 14px 40px;
 		border-bottom: 1px solid var(--rule);
-		cursor: pointer;
 		background: transparent;
 		transition: background 120ms ease;
 		font-family: inherit;
@@ -150,6 +171,22 @@
 		color: var(--ink-3);
 	}
 
+	/* Stretched link: covers the row, sits BEHIND the action buttons
+	   (lower z-index) so the buttons get pointer events first.
+	   Visually invisible — the row's text shows through. */
+	.hit {
+		position: absolute;
+		inset: 0;
+		z-index: 0;
+		text-indent: -9999px;
+		overflow: hidden;
+		cursor: pointer;
+	}
+	.hit:focus-visible {
+		outline: 2px solid var(--accent);
+		outline-offset: -2px;
+	}
+
 	/* Per-row mark-read button. Filled dot = unread, hollow ring =
 	   read. Hidden on mobile — Plan 18 swaps in swipe gestures. */
 	.read-dot {
@@ -158,6 +195,7 @@
 		top: 16px;
 		width: 18px;
 		height: 18px;
+		z-index: 1;
 		display: inline-grid;
 		place-items: center;
 		background: transparent;
@@ -193,6 +231,7 @@
 		top: 14px;
 		width: 18px;
 		height: 18px;
+		z-index: 1;
 		display: inline-grid;
 		place-items: center;
 		background: var(--bg);
@@ -220,6 +259,8 @@
 		font-size: 10px;
 		letter-spacing: 0.04em;
 		color: var(--accent);
+		z-index: 1;
+		pointer-events: none;
 	}
 
 	.title {
@@ -230,6 +271,8 @@
 		color: var(--ink);
 		margin: 0 0 4px;
 		text-wrap: pretty;
+		position: relative;
+		pointer-events: none;
 	}
 	.meta {
 		font-family: var(--sans);
@@ -239,6 +282,8 @@
 		align-items: center;
 		gap: 10px;
 		margin-top: 5px;
+		position: relative;
+		pointer-events: none;
 	}
 	.meta .source {
 		color: var(--ink);
@@ -276,6 +321,8 @@
 		-webkit-box-orient: vertical;
 		overflow: hidden;
 		text-wrap: pretty;
+		position: relative;
+		pointer-events: none;
 	}
 
 	/* Density classes are applied to the .river container by RiverList,
