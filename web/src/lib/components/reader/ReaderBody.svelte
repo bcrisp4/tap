@@ -16,15 +16,47 @@
 <script lang="ts">
 	import type { Entry, Feed } from '$api/types';
 	import { swatchFor } from '$lib/components/swatch';
+	import ImageLightbox from '$lib/components/ImageLightbox.svelte';
 
 	let { entry, feed }: { entry: Entry; feed?: Feed } = $props();
 
 	const date = $derived(formatDate(entry.published_at ?? entry.created_at));
 	const sourceName = $derived(feed?.title ?? '—');
 	const sourceURL = $derived(feed?.site_url ?? feed?.feed_url ?? '');
+
+	// Lightbox open state. We use a single delegated click on the article
+	// rather than per-<img> listeners because the body HTML comes from
+	// {@html} and per-element rebinding would have to walk the DOM on
+	// every render.
+	let lightboxSrc = $state<string | null>(null);
+	let lightboxAlt = $state('');
+
+	function onArticleClick(ev: MouseEvent) {
+		const target = ev.target as HTMLElement | null;
+		if (!target || target.tagName !== 'IMG') return;
+		// Linked images keep their link behaviour — authors usually link
+		// to a higher-res version or an external destination on purpose.
+		if (target.closest('a')) return;
+		ev.preventDefault();
+		const img = target as HTMLImageElement;
+		lightboxSrc = img.currentSrc || img.src;
+		lightboxAlt = img.alt;
+	}
+
+	function closeLightbox() {
+		lightboxSrc = null;
+		lightboxAlt = '';
+	}
 </script>
 
-<article class="reader-body" data-testid="reader-body">
+<!-- Mouse/touch-only by design: <img> isn't focusable so unlinked
+     inline images can't be opened from the keyboard. Adding tabindex
+     after every {@html} render would mean a DOM walk on each update,
+     which the delegated handler avoids. The a11y_ignore directives
+     encode that tradeoff. -->
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+<!-- svelte-ignore a11y_click_events_have_key_events -->
+<article class="reader-body" data-testid="reader-body" onclick={onArticleClick}>
 	<div class="reader-source">
 		<span class="src-ico" style="background: {swatchFor(feed?.title ?? '')}"></span>
 		<span class="src-name">{sourceName}</span>
@@ -70,9 +102,9 @@
 		<span class="reader-end-dot"></span>
 		<span class="reader-end-line"></span>
 	</div>
-
-	<div class="reader-foot mono">Cached locally</div>
 </article>
+
+<ImageLightbox src={lightboxSrc} alt={lightboxAlt} onClose={closeLightbox} />
 
 <style>
 	.reader-body {
@@ -248,6 +280,14 @@
 		display: block;
 		margin: 0 auto 22px;
 	}
+	/* Cue that an inline image opens the lightbox; linked images keep
+	   the link cursor (the delegated handler yields to <a> closest). */
+	.reader-content :global(img) {
+		cursor: zoom-in;
+	}
+	.reader-content :global(a img) {
+		cursor: pointer;
+	}
 	.reader-content :global(ul),
 	.reader-content :global(ol) {
 		font-family: var(--serif);
@@ -277,14 +317,6 @@
 		height: 6px;
 		border-radius: 50%;
 		background: var(--ink-4);
-	}
-
-	.reader-foot {
-		font-size: 10px;
-		letter-spacing: 0.06em;
-		text-transform: uppercase;
-		color: var(--ink-3);
-		text-align: center;
 	}
 
 	:global(.is-mobile) .reader-body {

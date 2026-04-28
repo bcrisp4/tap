@@ -62,7 +62,10 @@ test('reader opens an entry and shows body + mono header', async ({ page, reques
 	await expect(page.locator('.reader-action').filter({ hasText: /SAVE/ })).toBeVisible();
 });
 
-test('does not auto-mark-read on reader mount', async ({ page, request }) => {
+test('auto-marks read on reader mount (Plan 16 invariant)', async ({ page, request }) => {
+	// Plan 16 deliberately INVERTS Plan 11's "no auto-mark-read" rule.
+	// Opening the reader is now treated as the user's signal that they
+	// have engaged with the entry, so the read flag flips on mount.
 	const id = await seedAndFetchEntryID(request);
 
 	// Reset to unread; the prior test may have toggled it.
@@ -73,12 +76,43 @@ test('does not auto-mark-read on reader mount', async ({ page, request }) => {
 	await page.goto(`/entry/${id}`);
 	await expect(page.getByTestId('reader-body')).toBeVisible({ timeout: 15_000 });
 
-	// Give the page a moment to settle in case any rogue effect tries
-	// to flip the bit on mount.
-	await page.waitForTimeout(800);
+	// Within ~250 ms of mount the reader's $effect should have fired
+	// the toggleRead mutation. Poll briefly so we don't race the
+	// optimistic update / network round-trip.
+	await expect
+		.poll(
+			async () => (await request.get(`/api/v1/entries/${id}`).then((r) => r.json())).read,
+			{ timeout: 3_000, intervals: [100, 150, 200, 300] }
+		)
+		.toBe(true);
 
-	const after = (await request.get(`/api/v1/entries/${id}`).then((r) => r.json())) as Entry;
-	expect(after.read).toBe(false);
+	// The header toggle button reflects the new state: copy "MARK UNREAD",
+	// aria-pressed=true, and the icon is filled (Plan 16 T2).
+	const toggle = page.locator('.reader-action').filter({ hasText: /MARK/ });
+	await expect(toggle).toHaveText(/MARK UNREAD/);
+	await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+});
+
+test('list rail collapses to a back-rail in the reader (Plan 16 T3)', async ({
+	page,
+	request
+}) => {
+	const id = await seedAndFetchEntryID(request);
+	await page.goto(`/entry/${id}`);
+	await expect(page.getByTestId('reader-body')).toBeVisible({ timeout: 15_000 });
+
+	// The expanded rail's row container is gone in collapsed mode...
+	await expect(page.locator('.rail-row')).toHaveCount(0);
+	// ...replaced by a thin back-only rail with the sibling-count
+	// hook for Plan 18 swipe-to-navigate.
+	const backRail = page.locator('.reader-rail-collapsed');
+	await expect(backRail).toBeVisible();
+	const count = await backRail.getAttribute('data-sibling-count');
+	expect(Number(count)).toBeGreaterThanOrEqual(0);
+
+	// Clicking the rail's back button returns to the river.
+	await backRail.locator('button.rail-back').click();
+	await expect(page).toHaveURL(/\/$/);
 });
 
 test('Esc returns to the unread list', async ({ page, request }) => {
@@ -109,18 +143,65 @@ test('Saved button in reader header turns Klein blue', async ({ page, request })
 	expect(color === 'rgb(0, 47, 167)' || color === 'rgb(90, 127, 220)').toBeTruthy();
 });
 
+test('image click opens the lightbox; Esc closes it (Plan 16 T4)', async ({
+	page,
+	request
+}) => {
+	const id = await seedAndFetchEntryID(request);
+	await page.goto(`/entry/${id}`);
+	await expect(page.getByTestId('reader-body')).toBeVisible({ timeout: 15_000 });
+
+	// Inject a synthetic <img> into the article body so the test
+	// works even when the seed feed's current entry happens to have
+	// no inline images. We deliberately use a 1×1 transparent PNG
+	// data URL — fast, no network, naturally clickable, no parent <a>.
+	const PNG =
+		'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgAAIAAAUAAeImBZsAAAAASUVORK5CYII=';
+	await page.evaluate((src) => {
+		const article = document.querySelector('[data-testid="reader-body"] .reader-content');
+		if (!article) throw new Error('reader-content missing');
+		const img = document.createElement('img');
+		img.src = src;
+		img.alt = 'test image';
+		img.dataset.testid = 'lightbox-trigger';
+		article.appendChild(img);
+	}, PNG);
+
+	await page.locator('[data-testid="lightbox-trigger"]').click();
+
+	const dialog = page.getByRole('dialog', { name: 'Image preview' });
+	await expect(dialog).toBeVisible();
+
+	await page.keyboard.press('Escape');
+	// Esc closes the lightbox AND must NOT propagate to the reader
+	// route's Esc-to-back handler (regression guard for Plan 16's
+	// dialog-gate in +page.svelte's onKey).
+	await expect(dialog).toHaveCount(0);
+	await expect(page).toHaveURL(new RegExp(`/entry/${id}$`));
+	await expect(page.getByTestId('reader-body')).toBeVisible();
+});
+
 test('m keyboard shortcut toggles read state', async ({ page, request }) => {
 	const id = await seedAndFetchEntryID(request);
 
-	// Reset to unread first so the test is order-independent.
+	// Reset to unread first so the auto-mark-read effect has a real
+	// transition to perform on mount.
 	await request.put(`/api/v1/entries/${id}`, { data: { read: false } });
 
 	await page.goto(`/entry/${id}`);
 	await expect(page.getByTestId('reader-body')).toBeVisible({ timeout: 15_000 });
 
+	// Auto-mark-read fires on mount (Plan 16). Wait for read=true to
+	// land before pressing `m`, otherwise `m` could race the auto-mark
+	// and the resulting state is non-deterministic.
+	await expect
+		.poll(async () => (await request.get(`/api/v1/entries/${id}`).then((r) => r.json())).read)
+		.toBe(true);
+
+	// `m` toggles back to unread.
 	await page.keyboard.press('m');
 
 	await expect
 		.poll(async () => (await request.get(`/api/v1/entries/${id}`).then((r) => r.json())).read)
-		.toBe(true);
+		.toBe(false);
 });

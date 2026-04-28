@@ -4,8 +4,12 @@
 	// here is a non-negotiable visual rule per the design handoff — these
 	// buttons must render in JetBrains Mono so they read as utility chrome,
 	// not as body content. Don't "fix" the casing or the family.
+	//
+	// `read` defaults true because the reader auto-marks on open; the
+	// route always passes a real value but the safer default is the one
+	// that matches first-paint reality.
 	let {
-		read = false,
+		read = true,
 		saved = false,
 		entryURL = null,
 		onBack,

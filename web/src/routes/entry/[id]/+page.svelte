@@ -42,6 +42,26 @@
 
 	let progress = $state(0);
 
+	// Auto-mark-read on reader open. The optimistic update in
+	// `useToggleRead` flips `entry.data.read` synchronously, so the
+	// effect's `if (e.read) return` short-circuits subsequent runs
+	// from the cache flip. On mutation error the cache reverts to
+	// false and the effect would re-fire — we cap the per-id attempts
+	// so a persistent server error doesn't loop. After the cap the
+	// user can press `m` to take over manually.
+	const MAX_AUTO_MARK_ATTEMPTS = 2;
+	const autoMarkAttempts = new Map<number, number>();
+
+	$effect(() => {
+		const e = entry.data;
+		if (!e) return;
+		if (e.read) return;
+		const attempts = autoMarkAttempts.get(e.id) ?? 0;
+		if (attempts >= MAX_AUTO_MARK_ATTEMPTS) return;
+		autoMarkAttempts.set(e.id, attempts + 1);
+		toggleRead.mutate({ id: e.id, read: true });
+	});
+
 	function back() {
 		goto('/');
 	}
@@ -58,10 +78,9 @@
 		toggleSaved.mutate({ id: e.id, saved: !e.saved });
 	}
 
-	// Reader-specific keyboard shortcuts. We deliberately do NOT mark
-	// the entry read on mount — Plan 11's spec calls out "explicit
-	// only" and the Playwright e2e enforces it. `m` is the user's
-	// declarative "I'm done" signal.
+	// Reader keyboard shortcuts. `m` is a manual override on top of the
+	// auto-mark-read effect: the entry is already read on first press,
+	// so `m` flips back to unread.
 	function onKey(ev: KeyboardEvent) {
 		// Ignore shortcuts while typing in form controls.
 		const target = ev.target as HTMLElement | null;
@@ -74,6 +93,11 @@
 			return;
 		}
 		if (ev.key === 'Escape') {
+			// Defer to any open modal (e.g. the image lightbox); Esc
+			// should close the dialog before popping the route.
+			if (document.querySelector('[role="dialog"][aria-modal="true"]')) {
+				return;
+			}
 			ev.preventDefault();
 			back();
 			return;
@@ -128,7 +152,12 @@
 	<div class="tap reader-shell">
 		<OfflineIndicator />
 		<Sidebar />
-		<ReaderRail entries={railEntries} selectedId={entry.data.id} />
+		<ReaderRail
+			entries={railEntries}
+			selectedId={entry.data.id}
+			collapsed
+			onBack={back}
+		/>
 		<div class="reader-pane">
 			<ReaderHeader
 				read={entry.data.read}
