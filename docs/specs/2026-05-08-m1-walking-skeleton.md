@@ -161,14 +161,31 @@ Plain Svelte 5 + Vite + TypeScript, package-managed with pnpm. Two routes manage
 
 Stdlib `log/slog`. Text handler in dev (`make dev`), JSON handler in production builds. Every poll start, success, failure, and recovered panic is logged with the feed identifier. No structured request-ID propagation yet — that ships in M12.
 
-### Tests
+### Tests and methodology
 
-Two smoke tests in M1:
+M1 is built **test-first**. Every function with conditional logic, branches, error handling, or state gets a failing test before its implementation. The discipline is the standard red–green–refactor loop:
 
-1. A unit test for the entry-hash computation, covering the GUID → URL → `title || published_at` fallback chain.
-2. An integration test that boots the full server (in-memory SQLite, `httptest.Server` for the API), POSTs a subscription pointing at a fixture HTTP server serving a small Atom feed, advances the scheduler, and asserts that entries appear via `GET /api/v1/entries`.
+- **RED** — write the failing test; run it; confirm it fails for the expected reason (compile error, assertion mismatch, etc.). A test that doesn't fail in red is a test that doesn't exercise real code.
+- **GREEN** — write the minimum implementation that turns the test green. No speculative features, no extra branches.
+- **REFACTOR** — clean up while green. Re-run the test after every refactor.
 
-We'll layer in comprehensive coverage as the architecture stabilises. M1 deliberately avoids over-testing throwaway scaffolding.
+Use the `superpowers:test-driven-development` skill on every implementation task in M1.
+
+The concrete test surface for M1:
+
+- The entry-hash computation, including its GUID → URL → `title || published_at` fallback chain.
+- The migrations runner, idempotent across re-runs.
+- The subscription and entry queries, including the composite-cursor pagination contract (a regression test pins the behaviour the bare-`id`-cursor design would have broken).
+- The conditional-GET feed fetch wrapper, covering 200 / 304 / 5xx paths.
+- The in-flight tracker, including the concurrent-acquire race.
+- The polling worker, covering success / 304 / error paths and panic recovery.
+- The polling scheduler, covering tick dispatch, the in-flight skip, and shutdown semantics.
+- Each REST handler, at minimum on its happy path; the entries handlers also cover the unread filter and the read-state mutation.
+- An end-to-end integration test that boots the full server (in-memory SQLite, `httptest.Server`), POSTs a subscription pointing at a fixture Atom feed, ticks the scheduler, and asserts entries appear via `GET /api/v1/entries`.
+
+**Exempt from TDD:** pure scaffolding — project init, file structure, Vite/Svelte config, Dockerfile, Makefile, design tokens, README, individual Svelte component templates. These have no behaviour to test. Visual verification of the SPA happens manually (or via Playwright MCP) in the definition-of-done checklist.
+
+The point is not test coverage as an end in itself; it is to make sure that every behaviour-bearing change in M1 has a reproducer that catches its regression in a later milestone.
 
 ## Out of scope (deferred)
 

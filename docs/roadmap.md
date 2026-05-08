@@ -41,7 +41,21 @@ For each milestone:
 
 1. **Brainstorm and write the spec** (this is what `superpowers:brainstorming` produces). The spec lives in `docs/specs/YYYY-MM-DD-<slug>.md` and gets committed.
 2. **Write the implementation plan** (this is what `superpowers:writing-plans` produces). The plan is *not* committed per the user's standing instruction.
-3. **Implement**. Test-driven where the design is well-understood; exploratory where it isn't.
-4. **Review and merge**. Each milestone ships as a coherent change before the next milestone's spec is written.
+3. **Implement test-first.** Every behaviour-bearing change follows the red–green–refactor cycle:
+   - **RED** — write the failing test first; run it and confirm it fails for the expected reason. A test that doesn't fail in red doesn't exercise real code.
+   - **GREEN** — write the minimum implementation that turns the test green. No speculative features, no "while you're in there" cleanup.
+   - **REFACTOR** — clean up while green. Run the test after every refactor.
+
+   Use the `superpowers:test-driven-development` skill on every implementation task. Pure scaffolding (project init, configs, CSS, design tokens) is exempt; anything with logic, branches, error handling, or state is in scope. **The discipline is non-negotiable.**
+4. **Review and merge.** Each milestone ships as a coherent change before the next milestone's spec is written.
 
 If a milestone turns out to be too big once we drill into the spec, we split it in place rather than power through. Better to have M6a + M6b than a milestone that loses the thread.
+
+## Why test-first across all milestones
+
+Two reasons specific to this project:
+
+- **Tap touches network, disk, and a database in every milestone.** Bugs in those regions are expensive to reproduce by hand. A failing test you wrote first is a reproducer you won't lose.
+- **Each milestone changes architecture-shaped code** (the polling pipeline in M4, the auth flow in M6, the offline queue in M10). Without tests written before the implementation, you can't tell whether a later milestone's changes regressed an earlier one. The test suite is the only durable record of "this used to work."
+
+If a milestone is going to skip TDD on a particular function, that's a decision that needs to be flagged in the milestone's spec and justified — never an accident.
