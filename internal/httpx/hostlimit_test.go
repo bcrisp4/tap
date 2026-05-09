@@ -196,3 +196,35 @@ func TestHostLimiter_DoubleCloseIdempotent(t *testing.T) {
 		t.Fatal("third request blocked — slot was double-released")
 	}
 }
+
+// TestHostLimiter_SameHostCasingAndTrailingDot verifies the limiter
+// normalises hostnames before keying the semaphore map. Without
+// normalisation, "Example.COM" / "example.com" / "example.com." would
+// each get their own slot, defeating the per-host cap.
+func TestHostLimiter_SameHostCasingAndTrailingDot(t *testing.T) {
+	inner := &fakeRT{block: make(chan struct{})}
+	h := newHostLimiter(inner, 1)
+
+	var wg sync.WaitGroup
+	for _, host := range []string{"example.com", "Example.COM", "example.com."} {
+		wg.Add(1)
+		go func(host string) {
+			defer wg.Done()
+			req := mustReq(t, context.Background(), "http://"+host+"/")
+			resp, err := h.RoundTrip(req)
+			if err == nil {
+				_ = resp.Body.Close()
+			}
+		}(host)
+	}
+
+	time.Sleep(20 * time.Millisecond)
+	if got := inner.inflight.Load(); got > 1 {
+		t.Errorf("inflight = %d; want 1 max — same host with different casing/trailing dot must share slot", got)
+	}
+	close(inner.block)
+	wg.Wait()
+	if got := inner.maxObserved.Load(); got != 1 {
+		t.Errorf("maxObserved = %d; want exactly 1 (same host)", got)
+	}
+}
