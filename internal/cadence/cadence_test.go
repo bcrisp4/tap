@@ -122,3 +122,32 @@ func TestParseRetryAfter(t *testing.T) {
 		})
 	}
 }
+
+func TestParseCacheMaxAge(t *testing.T) {
+	cases := []struct {
+		name   string
+		header string
+		wantOK bool
+		want   time.Duration
+	}{
+		{"empty -> false", "", false, 0},
+		{"max-age=600", "max-age=600", true, 600 * time.Second},
+		{"with other directives", "public, max-age=3600, must-revalidate", true, 3600 * time.Second},
+		{"no max-age -> false", "no-cache, no-store", false, 0},
+		{"max-age with whitespace", "  max-age=120  ", true, 120 * time.Second},
+		{"max-age=0", "max-age=0", true, 0},
+		{"negative rejected", "max-age=-5", false, 0},
+		{"non-numeric rejected", "max-age=foo", false, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := ParseCacheMaxAge(tc.header)
+			if ok != tc.wantOK {
+				t.Errorf("ok = %v; want %v", ok, tc.wantOK)
+			}
+			if ok && got != tc.want {
+				t.Errorf("duration = %v; want %v", got, tc.want)
+			}
+		})
+	}
+}
