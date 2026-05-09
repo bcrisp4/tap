@@ -43,7 +43,6 @@ func main() {
 
 		proxyCacheDir = flag.String("proxy-cache-dir", envOr("TAP_PROXY_CACHE_DIR", ""), "media cache directory (default: <data>/cache)")
 		proxyCacheCap = flag.Int64("proxy-cache-cap-bytes", envOrInt64("TAP_PROXY_CACHE_CAP_BYTES", 524288000), "media cache size cap in bytes")
-		proxyFetchTO  = flag.Duration("proxy-fetch-timeout", envOrDuration("TAP_PROXY_FETCH_TIMEOUT", 0), "DEPRECATED: alias for --http-timeout")
 		proxyBodyCap  = flag.Int64("proxy-body-cap-bytes", envOrInt64("TAP_PROXY_BODY_CAP_BYTES", 10485760), "per-response body cap for media proxy origin fetches")
 
 		ssrfAllow stringSlice
@@ -117,25 +116,8 @@ func main() {
 		slog.Warn("SSRF guard disabled — outbound HTTP unrestricted")
 	}
 
-	// Resolve the http-timeout, honouring the deprecated --proxy-fetch-timeout
-	// alias only when --http-timeout was not explicitly set (flag or env).
-	// Spec: "if both are set, --http-timeout wins."
-	httpTimeoutExplicit := os.Getenv("TAP_HTTP_TIMEOUT") != ""
-	flag.Visit(func(f *flag.Flag) {
-		if f.Name == "http-timeout" {
-			httpTimeoutExplicit = true
-		}
-	})
-	timeout := *httpTimeout
-	if *proxyFetchTO > 0 {
-		slog.Warn("--proxy-fetch-timeout is deprecated; use --http-timeout")
-		if !httpTimeoutExplicit {
-			timeout = *proxyFetchTO
-		}
-	}
-
 	client := httpx.NewClient(httpx.Opts{
-		Timeout:         timeout,
+		Timeout:         *httpTimeout,
 		PerHostInflight: *perHostInfl,
 		SSRF:            ssrfPolicy,
 		UserAgent:       *userAgent,

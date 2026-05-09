@@ -356,7 +356,7 @@ The inline `&http.Client{...}` block in M3's `main.go` is gone. The TODO comment
 | `--poll-error-base` | `TAP_POLL_ERROR_BASE` | `5m` | Base of exponential error backoff. |
 | `--user-agent` | `TAP_USER_AGENT` | `tap/0.1 (+https://github.com/bcrisp4/tap)` | Set centrally on the shared client. |
 
-`--proxy-fetch-timeout` / `TAP_PROXY_FETCH_TIMEOUT` from M3 is kept as a deprecated alias for `--http-timeout` for one release. Setting it logs a startup WARN. The two flags being equal-but-named-differently is fine; if both are set, `--http-timeout` wins.
+M3's `--proxy-fetch-timeout` / `TAP_PROXY_FETCH_TIMEOUT` is removed (Tap is pre-production; we don't carry deprecation aliases across milestones). Operators using it must switch to `--http-timeout` / `TAP_HTTP_TIMEOUT`.
 
 ### README update
 
@@ -465,7 +465,7 @@ Concrete test surface:
 8. A redirect from an allowlisted host to a non-allowlisted private IP is rejected by the redirect callback before the next connect; `last_error` reflects the redirect block.
 9. `internal/feed/parse.go` no longer sets `User-Agent` (the shared client owns it); `feed.FetchOpts.UserAgent` is removed.
 10. `cmd/tap/main.go` uses `httpx.NewClient(...)` exclusively; the inline `&http.Client{...}` block from M3 is gone.
-11. `--proxy-fetch-timeout` still works as a deprecated alias for `--http-timeout` and logs a startup WARN.
+11. M3's `--proxy-fetch-timeout` flag and `TAP_PROXY_FETCH_TIMEOUT` env var are removed (replaced by `--http-timeout` / `TAP_HTTP_TIMEOUT`).
 12. README gains the M4 trust-posture section, the Tailscale CGNAT note, and the adaptive-cadence summary.
 13. `make build` produces a static binary that boots cleanly against a fresh `data/` directory and against an existing M3 database (the `velocity_24h_x100` migration applies cleanly with no data loss).
 

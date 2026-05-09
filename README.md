@@ -61,8 +61,8 @@ Docker port mapping requires it.
 ## Configuration knobs added by M4
 
 - `--http-timeout` (env `TAP_HTTP_TIMEOUT`, default `30s`) — total
-  per-request HTTP deadline. Replaces `--proxy-fetch-timeout`
-  (deprecated alias kept for one release).
+  per-request HTTP deadline. (Replaces M3's `--proxy-fetch-timeout`,
+  which is removed.)
 - `--per-host-inflight` (env `TAP_PER_HOST_INFLIGHT`, default `4`) —
   concurrent outbound requests per hostname.
 - `--ssrf-disabled` (env `TAP_SSRF_DISABLED`, default `false`) — global
