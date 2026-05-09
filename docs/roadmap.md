@@ -35,6 +35,14 @@ These are locked in before M1 begins.
 | M11 | Archival + tombstones | Daily sweep, tombstone consult on insert, two-pass media cache eviction. | TBD |
 | M12 | Observability + production hardening | Structured logs, OTel metrics + traces, healthcheck subcommand, admin CLI, recent-errors ring buffer, brute-force lockout, system-status panel, security review pass. | TBD |
 
+## Deferred items (post-M6)
+
+Items committed in the design but not yet sequenced into a specific milestone. They depend on prerequisites (typically the user table from M6) and will be slotted into a milestone — or get their own — once that landscape is clearer.
+
+| Item | Depends on | Notes |
+|---|---|---|
+| Per-user iframe-host allowlist | M6 user table | M2 ships a hard-coded default (`youtube.com`, `youtu.be`, `player.vimeo.com`). Per-user override stored in DB-backed preferences once the user table exists. |
+
 ## Working cadence
 
 For each milestone:
