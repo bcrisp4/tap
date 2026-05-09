@@ -41,7 +41,7 @@ Items committed in the design but not yet sequenced into a specific milestone. T
 
 | Item | Depends on | Notes |
 |---|---|---|
-| Per-user iframe-host allowlist | M6 user table | M2 ships a hard-coded default (`youtube.com`, `youtu.be`, `player.vimeo.com`). Per-user override stored in DB-backed preferences once the user table exists. |
+| Per-user iframe-host allowlist | M6 user table | M2 ships a hard-coded default sourced from miniflux's `iframeAllowList` (13 hosts including `youtube.com`, `player.vimeo.com`, `bandcamp.com`, etc. — see `internal/sanitise/sanitise.go`). Per-user override stored in DB-backed preferences once the user table exists. |
 
 ## Working cadence
 
