@@ -23,6 +23,9 @@ func DefaultPolicy() *Policy {
 // extend without changing the constructor's call-site shape.)
 func New() *Policy {
 	bm := bluemonday.UGCPolicy()
+	// Tighten URL schemes: drop data:, vbscript:, etc. UGCPolicy already
+	// forbids javascript: but we narrow to a deliberate three-scheme set.
+	bm.AllowURLSchemes("http", "https", "mailto")
 	return &Policy{bm: bm}
 }
 
