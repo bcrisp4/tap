@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/bcrisp4/tap/internal/db"
 	"github.com/bcrisp4/tap/internal/poll"
 	"github.com/bcrisp4/tap/internal/processor"
+	"github.com/bcrisp4/tap/internal/proxy"
 	"github.com/bcrisp4/tap/internal/sanitise"
 	"github.com/stretchr/testify/require"
 )
@@ -94,4 +96,132 @@ func TestEndToEnd_SubscribePollServeEntries(t *testing.T) {
 	require.NotContains(t, detail.Content, "<iframe")
 	require.NotContains(t, detail.Content, "t.example/pixel")
 	require.Contains(t, detail.Content, "<p>hello</p>")
+}
+
+func TestEndToEnd_ProxyURLsRewriteAndServe(t *testing.T) {
+	t.Parallel()
+
+	// Origin server: returns a PNG fixture for any path.
+	pngFixture := []byte{
+		0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+		0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+	}
+	var imageHits int32
+	imageSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&imageHits, 1)
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(pngFixture)
+	}))
+	defer imageSrv.Close()
+
+	imageURL := imageSrv.URL + "/img.png"
+	atomFeed := `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Imgs</title>
+  <id>urn:imgs</id>
+  <updated>2026-05-01T00:00:00Z</updated>
+  <entry>
+    <title>HasImg</title>
+    <id>urn:imgs:1</id>
+    <link href="https://example.com/1"/>
+    <updated>2026-05-01T00:00:00Z</updated>
+    <content type="html">&lt;p&gt;hi&lt;/p&gt;&lt;img src=&quot;` + imageURL + `&quot;&gt;</content>
+  </entry>
+</feed>`
+	feedSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(atomFeed))
+	}))
+	defer feedSrv.Close()
+
+	d, err := db.Open(context.Background(), ":memory:")
+	require.NoError(t, err)
+	defer d.Close()
+	require.NoError(t, db.Migrate(context.Background(), d))
+
+	// Generate a signing key and insert into configuration (simulating bootstrap).
+	key := []byte("0123456789abcdef0123456789abcdef")
+	_, err = db.SetConfigIfAbsent(context.Background(), d, "proxy.signing_key", key)
+	require.NoError(t, err)
+
+	signer := proxy.NewSigner(key)
+	cache := proxy.NewCache(t.TempDir(), 1<<20)
+	proxyHandler := proxy.NewHandler(signer, cache, http.DefaultClient, 10<<20)
+
+	mux := api.NewMux(d, nil, proxyHandler)
+
+	// Subscribe.
+	body := strings.NewReader(`{"feed_url":"` + feedSrv.URL + `"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/subscriptions", body)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusCreated, rr.Code, rr.Body.String())
+
+	// Drive a poll with the production-shaped processor (rewriter wired in).
+	proc := processor.New(sanitise.DefaultPolicy(), signer.RewriteImageURL)
+	sched := poll.NewScheduler(context.Background(), d, http.DefaultClient, poll.SchedulerOpts{
+		Workers:   1,
+		Cadence:   time.Hour,
+		Processor: proc,
+	})
+	defer sched.Stop()
+	sched.Tick(context.Background())
+	require.NoError(t, sched.Wait(5*time.Second))
+
+	// Fetch the entry list, then the entry detail; the body must contain a proxy URL.
+	rr2 := httptest.NewRecorder()
+	mux.ServeHTTP(rr2, httptest.NewRequest(http.MethodGet, "/api/v1/entries", nil))
+	require.Equal(t, http.StatusOK, rr2.Code)
+	var listResp struct {
+		Data []map[string]any `json:"data"`
+	}
+	require.NoError(t, json.NewDecoder(rr2.Body).Decode(&listResp))
+	require.Len(t, listResp.Data, 1)
+
+	entryID := int64(listResp.Data[0]["id"].(float64))
+	rr3 := httptest.NewRecorder()
+	mux.ServeHTTP(rr3, httptest.NewRequest(http.MethodGet, "/api/v1/entries/"+strconv.FormatInt(entryID, 10), nil))
+	require.Equal(t, http.StatusOK, rr3.Code, rr3.Body.String())
+	var detail struct {
+		Content string `json:"content"`
+	}
+	require.NoError(t, json.NewDecoder(rr3.Body).Decode(&detail))
+	require.Contains(t, detail.Content, `src="/api/v1/proxy/`, "img src must be rewritten: %s", detail.Content)
+	require.NotContains(t, detail.Content, imageURL, "raw origin URL must not appear: %s", detail.Content)
+
+	// Extract the proxy URL from the body and GET it.
+	const marker = `src="/api/v1/proxy/`
+	idx := strings.Index(detail.Content, marker)
+	require.GreaterOrEqual(t, idx, 0)
+	end := strings.Index(detail.Content[idx+len(marker):], `"`)
+	require.GreaterOrEqual(t, end, 0)
+	proxyURL := "/api/v1/proxy/" + detail.Content[idx+len(marker):idx+len(marker)+end]
+
+	rr4 := httptest.NewRecorder()
+	mux.ServeHTTP(rr4, httptest.NewRequest(http.MethodGet, proxyURL, nil))
+	require.Equal(t, http.StatusOK, rr4.Code, rr4.Body.String())
+	require.Equal(t, "image/png", rr4.Header().Get("Content-Type"))
+	require.Equal(t, "public, max-age=31536000, immutable", rr4.Header().Get("Cache-Control"))
+	require.Equal(t, "nosniff", rr4.Header().Get("X-Content-Type-Options"))
+	require.Equal(t, pngFixture, rr4.Body.Bytes())
+	require.Equal(t, int32(1), atomic.LoadInt32(&imageHits))
+
+	// Second request: served from cache, no new origin hit.
+	rr5 := httptest.NewRecorder()
+	mux.ServeHTTP(rr5, httptest.NewRequest(http.MethodGet, proxyURL, nil))
+	require.Equal(t, http.StatusOK, rr5.Code)
+	require.Equal(t, int32(1), atomic.LoadInt32(&imageHits), "second request must hit cache")
+
+	// Restart simulation: reload the signing key from the DB and rebuild the
+	// signer + handler. The previously-issued token must still verify.
+	keyAgain, ok, err := db.GetConfig(context.Background(), d, "proxy.signing_key")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, key, keyAgain)
+
+	signer2 := proxy.NewSigner(keyAgain)
+	tok := strings.TrimPrefix(proxyURL, "/api/v1/proxy/")
+	gotURL, ok := signer2.Verify(tok)
+	require.True(t, ok)
+	require.Equal(t, imageURL, gotURL)
 }
