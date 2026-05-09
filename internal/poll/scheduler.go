@@ -34,8 +34,9 @@ type Scheduler struct {
 	// shutdown of both the tick loop and any in-flight worker context.
 	parentCtx    context.Context
 	parentCancel context.CancelFunc
+	startOnce    sync.Once
 	stopOnce     sync.Once
-	started      atomic.Bool // tracks whether Start() was called
+	started      atomic.Bool // tracks whether tickLoop was actually launched
 }
 
 // NewScheduler creates a scheduler whose lifetime is bounded by base. Cancel
@@ -83,10 +84,18 @@ func (s *Scheduler) workerLoop() {
 	}
 }
 
-// Start begins the periodic tick loop in a goroutine.
+// Start begins the periodic tick loop in a goroutine. Idempotent and safe
+// to call after Stop — a second invocation, or one after parentCtx has been
+// cancelled, is a no-op (avoids racing with tickLoop's deferred close of
+// tickDone).
 func (s *Scheduler) Start() {
-	s.started.Store(true)
-	go s.tickLoop()
+	s.startOnce.Do(func() {
+		if s.parentCtx.Err() != nil {
+			return
+		}
+		s.started.Store(true)
+		go s.tickLoop()
+	})
 }
 
 func (s *Scheduler) tickLoop() {

@@ -24,6 +24,14 @@ func SPAHandler() http.Handler {
 			http.Error(w, "SPA bundle missing", http.StatusInternalServerError)
 		})
 	}
+	// Catch checkouts where pnpm build was skipped before go build — without
+	// dist/index.html the SPA fallback below 404s every request, which looks
+	// like a routing bug. Surface the misconfiguration plainly instead.
+	if _, err := fs.Stat(dist, "index.html"); err != nil {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "SPA bundle missing index.html — was `pnpm --dir web build` run before `go build`?", http.StatusInternalServerError)
+		})
+	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		clean := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
