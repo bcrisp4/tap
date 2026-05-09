@@ -38,12 +38,12 @@ func (p SSRFPolicy) AllowAddr(addr netip.Addr) error {
 	if p.Disabled {
 		return nil
 	}
+	addrUnmapped := addr.Unmap()
 	for _, cidr := range p.AllowCIDRs {
-		if cidr.Contains(addr) {
+		if cidr.Contains(addr) || cidr.Contains(addrUnmapped) {
 			return nil
 		}
 	}
-	addrUnmapped := addr.Unmap()
 	for _, reject := range defaultRejectCIDRs {
 		if reject.Contains(addr) || reject.Contains(addrUnmapped) {
 			return fmt.Errorf("%w: %s in %s", ErrSSRFBlocked, addr, reject)

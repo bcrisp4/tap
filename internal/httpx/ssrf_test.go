@@ -71,6 +71,21 @@ func TestAllowAddr_CIDRAllowlist(t *testing.T) {
 	}
 }
 
+// TestAllowAddr_V4MappedAgainstV4Allowlist guards against asymmetry between
+// the allowlist and reject loops in AllowAddr. The reject loop unmaps
+// v4-mapped-v6 inputs so an attacker can't bypass with ::ffff:127.0.0.1;
+// the allowlist must do the same so a legitimate v4 CIDR entry covers the
+// same v4-mapped form. Otherwise spec line 84 ("matches either kind of
+// allowlist entry skips the reject rules entirely") is violated.
+func TestAllowAddr_V4MappedAgainstV4Allowlist(t *testing.T) {
+	p := SSRFPolicy{
+		AllowCIDRs: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")},
+	}
+	if err := p.AllowAddr(netip.MustParseAddr("::ffff:127.0.0.1")); err != nil {
+		t.Errorf("v4-mapped 127.0.0.1 should be allowlisted by 127.0.0.0/8, got %v", err)
+	}
+}
+
 func TestAllowHostname_Suffix(t *testing.T) {
 	p := SSRFPolicy{AllowSuffixes: []string{"home.lan", "ts.net"}}
 	cases := []struct {
