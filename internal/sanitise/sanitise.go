@@ -5,6 +5,7 @@ package sanitise
 
 import (
 	"bytes"
+	"log/slog"
 	"net/url"
 	"strings"
 	"unicode/utf8"
@@ -44,6 +45,11 @@ var defaultIframeHosts = map[string]struct{}{
 	"youtube.com":          {},
 }
 
+type walkStats struct {
+	droppedIframes       int
+	droppedPixelTrackers int
+}
+
 // Policy is a configured sanitiser. Construct with DefaultPolicy or New.
 type Policy struct {
 	bm          *bluemonday.Policy
@@ -74,6 +80,7 @@ func New() *Policy {
 // Sanitise returns final-form HTML safe to render directly.
 // Total function — never errors, never panics. Worst case returns "".
 func (p *Policy) Sanitise(rawHTML string) string {
+	truncated := false
 	if len(rawHTML) > MaxInputBytes {
 		rawHTML = rawHTML[:MaxInputBytes]
 		// Snap back to a UTF-8 boundary. UTF-8 codepoints are at most
@@ -81,24 +88,36 @@ func (p *Policy) Sanitise(rawHTML string) string {
 		for len(rawHTML) > 0 && !utf8.ValidString(rawHTML) {
 			rawHTML = rawHTML[:len(rawHTML)-1]
 		}
+		truncated = true
 	}
 	cleaned := p.bm.Sanitize(rawHTML)
-	return p.postProcess(cleaned)
+	out, stats := p.postProcess(cleaned)
+	if truncated || stats.droppedIframes > 0 || stats.droppedPixelTrackers > 0 {
+		slog.Debug("sanitise",
+			"input_bytes", len(rawHTML),
+			"output_bytes", len(out),
+			"truncated", truncated,
+			"dropped_iframes", stats.droppedIframes,
+			"dropped_pixel_trackers", stats.droppedPixelTrackers,
+		)
+	}
+	return out
 }
 
 // postProcess walks the bluemonday output and applies the rules
 // bluemonday can't express directly: iframe-host allowlisting,
 // pixel-tracker drop, URL tracking-param cleaning.
-func (p *Policy) postProcess(s string) string {
+func (p *Policy) postProcess(s string) (string, walkStats) {
+	var stats walkStats
 	if s == "" {
-		return ""
+		return "", stats
 	}
 	// ParseFragment with body context so the result doesn't get wrapped
 	// in <html><head><body>; we want a fragment in, a fragment out.
 	body := &html.Node{Type: html.ElementNode, Data: "body", DataAtom: atom.Body}
 	nodes, err := html.ParseFragment(strings.NewReader(s), body)
 	if err != nil {
-		return s
+		return s, stats
 	}
 	// Create a synthetic root to hold all fragment nodes so we can safely
 	// remove nodes during traversal.
@@ -106,19 +125,19 @@ func (p *Policy) postProcess(s string) string {
 	for _, n := range nodes {
 		root.AppendChild(n)
 	}
-	p.walk(root)
+	p.walk(root, &stats)
 
 	var buf bytes.Buffer
 	for c := root.FirstChild; c != nil; c = c.NextSibling {
 		if err := html.Render(&buf, c); err != nil {
-			return s
+			return s, stats
 		}
 	}
-	return buf.String()
+	return buf.String(), stats
 }
 
 // walk mutates the node tree in place.
-func (p *Policy) walk(n *html.Node) {
+func (p *Policy) walk(n *html.Node, stats *walkStats) {
 	// Iterate children manually so we can safely remove during traversal.
 	c := n.FirstChild
 	for c != nil {
@@ -128,12 +147,14 @@ func (p *Policy) walk(n *html.Node) {
 			case "iframe":
 				if !p.iframeHostAllowed(getAttr(c, "src")) {
 					n.RemoveChild(c)
+					stats.droppedIframes++
 					c = next
 					continue
 				}
 			case "img":
 				if isPixelTracker(c) {
 					n.RemoveChild(c)
+					stats.droppedPixelTrackers++
 					c = next
 					continue
 				}
@@ -142,7 +163,7 @@ func (p *Policy) walk(n *html.Node) {
 				cleanAttrURL(c, "href")
 			}
 		}
-		p.walk(c)
+		p.walk(c, stats)
 		c = next
 	}
 }

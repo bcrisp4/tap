@@ -1,6 +1,8 @@
 package sanitise
 
 import (
+	"bytes"
+	"log/slog"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -221,5 +223,26 @@ func TestSanitise_TruncationSnapsToUTF8Boundary(t *testing.T) {
 	}
 	if strings.Contains(got, "�") {
 		t.Errorf("output contains U+FFFD replacement character (input was cut mid-codepoint)")
+	}
+}
+
+func TestSanitise_LogsDropStats(t *testing.T) {
+	// Capture slog output at DEBUG level via a buffer-backed handler.
+	var buf bytes.Buffer
+	h := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})
+	prev := slog.Default()
+	slog.SetDefault(slog.New(h))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	in := `<p>ok</p>` +
+		`<iframe src="https://evil.example/x"></iframe>` +
+		`<img src="https://t.example/p" width="1" height="1">`
+	_ = DefaultPolicy().Sanitise(in)
+
+	out := buf.String()
+	for _, want := range []string{`"sanitise"`, `"dropped_iframes":1`, `"dropped_pixel_trackers":1`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in slog output: %s", want, out)
+		}
 	}
 }
