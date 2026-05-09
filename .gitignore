@@ -5,6 +5,13 @@ bin/
 web/dist/*
 !web/dist/.gitkeep
 web/node_modules/
+/node_modules/
+
+# Tool caches and per-machine state
+.playwright-mcp/
+.agents/
+.claude/skills/
+.claude/settings.local.json
 
 # Local data
 data/
