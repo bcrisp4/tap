@@ -10,6 +10,7 @@ import (
 	"runtime/debug"
 	"time"
 
+	"github.com/bcrisp4/tap/internal/cadence"
 	"github.com/bcrisp4/tap/internal/db"
 	"github.com/bcrisp4/tap/internal/feed"
 	"github.com/bcrisp4/tap/internal/processor"
@@ -75,30 +76,37 @@ func (w *Worker) Run(ctx context.Context, sub db.DueSubscription) {
 		}
 	}()
 
-	now := time.Now().Unix()
-	nextPoll := time.Now().Add(w.opts.Cadence).Unix()
+	now := w.opts.Now()
 
-	res, err := feed.Fetch(ctx, w.client, sub.FeedURL, feed.FetchOpts{
+	res, fetchErr := feed.Fetch(ctx, w.client, sub.FeedURL, feed.FetchOpts{
 		PriorETag:         sub.ETag.String,
 		PriorLastModified: sub.LastModified.String,
 	})
-	if err != nil {
-		slog.WarnContext(ctx, "poll error", "feed_id", sub.ID, "feed_url", sub.FeedURL, "err", err)
-		_ = db.UpdateAfterError(ctx, w.db, sub.ID, err.Error(), nextPoll)
+	if fetchErr != nil {
+		delay := cadence.BackoffFromErrorCount(sub.ErrorCount+1, w.opts.ErrorBase, w.opts.Ceiling, 0.25, w.opts.Rand)
+		next := now.Add(delay)
+		if !res.RetryAfter.IsZero() && res.RetryAfter.After(next) {
+			next = res.RetryAfter
+		}
+		slog.WarnContext(ctx, "poll error",
+			"feed_id", sub.ID, "feed_url", sub.FeedURL,
+			"error_count", sub.ErrorCount+1,
+			"next_poll_at", next.Unix(),
+			"err", fetchErr)
+		_ = db.UpdateAfterError(ctx, w.db, sub.ID, fetchErr.Error(), next.Unix())
 		return
 	}
 
 	if res.Status == http.StatusNotModified {
+		// Task 5.3 fills this in — placeholder keeps the build green between commits.
 		slog.DebugContext(ctx, "poll 304", "feed_id", sub.ID)
-		// TODO(M4 Phase 5): recompute velocity via db.QueryVelocity; right now the
-		// 304 path resets velocity_24h_x100 to 0 every poll.
-		_ = db.UpdateAfterNotModified(ctx, w.db, sub.ID, now, nextPoll, 0)
+		_ = db.UpdateAfterNotModified(ctx, w.db, sub.ID, now.Unix(), now.Add(w.opts.Ceiling).Unix(), 0)
 		return
 	}
 
 	newEntries := make([]db.NewEntry, 0, len(res.Feed.Items))
 	for _, item := range res.Feed.Items {
-		pubAt := now
+		pubAt := now.Unix()
 		if item.PublishedParsed != nil {
 			pubAt = item.PublishedParsed.Unix()
 		}
@@ -117,18 +125,18 @@ func (w *Worker) Run(ctx context.Context, sub db.DueSubscription) {
 		})
 	}
 
-	inserted, err := db.UpdateAfterPoll(ctx, w.db, sub.ID, db.PollResult{
+	inserted, perr := db.UpdateAfterPoll(ctx, w.db, sub.ID, db.PollResult{
 		NewETag:         nullStr(res.ETag),
 		NewLastModified: nullStr(res.LastModified),
-		NowUnix:         now,
+		NowUnix:         now.Unix(),
 		NewEntries:      newEntries,
-		// TODO(M4 Phase 5): wire Floor / Ceiling from WorkerOpts (default 15m / 24h).
-		Floor:   15 * time.Minute,
-		Ceiling: 24 * time.Hour,
+		Floor:           w.opts.Floor,
+		Ceiling:         w.opts.Ceiling,
+		// Task 5.4 wires RetryAfter / CacheMaxAge.
 	})
-	if err != nil {
-		slog.ErrorContext(ctx, "commit poll", "feed_id", sub.ID, "err", err)
-		_ = db.UpdateAfterError(ctx, w.db, sub.ID, err.Error(), nextPoll)
+	if perr != nil {
+		slog.ErrorContext(ctx, "commit poll", "feed_id", sub.ID, "err", perr)
+		_ = db.UpdateAfterError(ctx, w.db, sub.ID, perr.Error(), now.Add(w.opts.ErrorBase).Unix())
 		return
 	}
 	slog.InfoContext(ctx, "poll ok", "feed_id", sub.ID, "inserted", inserted, "total_items", len(res.Feed.Items))

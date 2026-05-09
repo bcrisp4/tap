@@ -3,6 +3,7 @@ package poll
 import (
 	"context"
 	"database/sql"
+	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -137,4 +138,91 @@ func TestWorker_SanitisesContent(t *testing.T) {
 	require.NotContains(t, body, "alert", "script body survived sanitise: %s", body)
 	require.NotContains(t, body, "utm_source", "tracking param survived urlcleaner: %s", body)
 	require.Contains(t, body, "<p>ok</p>", "legitimate paragraph stripped: %s", body)
+}
+
+func TestWorker_ErrorPath_ExponentialBackoff(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d, err := db.Open(ctx, ":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = d.Close() })
+	require.NoError(t, db.Migrate(ctx, d))
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(srv.Close)
+
+	fixedNow := time.Date(2026, 5, 9, 12, 0, 0, 0, time.UTC)
+	rng := rand.New(rand.NewChaCha8([32]byte{}))
+	w := NewWorker(d, srv.Client(), WorkerOpts{
+		Processor: processor.New(sanitise.DefaultPolicy(), nil),
+		Floor:     15 * time.Minute,
+		Ceiling:   24 * time.Hour,
+		ErrorBase: 5 * time.Minute,
+		Now:       func() time.Time { return fixedNow },
+		Rand:      rng,
+	})
+	subID, err := db.InsertSubscription(ctx, d, db.NewSubscription{
+		Title: "Bad", FeedURL: srv.URL, NextPoll: 0, Created: fixedNow.Unix(),
+	})
+	require.NoError(t, err)
+	sub := db.DueSubscription{ID: subID, FeedURL: srv.URL, ErrorCount: 0}
+
+	w.Run(ctx, sub)
+
+	var ec int
+	var nextPoll int64
+	require.NoError(t, d.QueryRowContext(ctx,
+		`SELECT error_count, next_poll_at FROM subscriptions WHERE id = ?`, subID).
+		Scan(&ec, &nextPoll))
+	require.Equal(t, 1, ec)
+	earliest := fixedNow.Add(5 * time.Minute).Unix()
+	latest := fixedNow.Add(5*time.Minute + 5*time.Minute/4).Unix()
+	require.GreaterOrEqual(t, nextPoll, earliest)
+	require.Less(t, nextPoll, latest)
+}
+
+func TestWorker_RetryAfterOverridesBackoff(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d, err := db.Open(ctx, ":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = d.Close() })
+	require.NoError(t, db.Migrate(ctx, d))
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "3600")
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(srv.Close)
+
+	// fixedNow must align with the wall clock because feed.Fetch parses
+	// Retry-After against time.Now() (Phase 4), and the server-floor branch
+	// only fires when res.RetryAfter > next = fixedNow + delay.
+	fixedNow := time.Now().UTC()
+	rng := rand.New(rand.NewChaCha8([32]byte{}))
+	w := NewWorker(d, srv.Client(), WorkerOpts{
+		Processor: processor.New(sanitise.DefaultPolicy(), nil),
+		Floor:     15 * time.Minute,
+		Ceiling:   24 * time.Hour,
+		ErrorBase: 5 * time.Minute,
+		Now:       func() time.Time { return fixedNow },
+		Rand:      rng,
+	})
+	subID, err := db.InsertSubscription(ctx, d, db.NewSubscription{
+		Title: "Slow", FeedURL: srv.URL, NextPoll: 0, Created: fixedNow.Unix(),
+	})
+	require.NoError(t, err)
+	sub := db.DueSubscription{ID: subID, FeedURL: srv.URL, ErrorCount: 0}
+
+	w.Run(ctx, sub)
+
+	var nextPoll int64
+	require.NoError(t, d.QueryRowContext(ctx,
+		`SELECT next_poll_at FROM subscriptions WHERE id = ?`, subID).Scan(&nextPoll))
+	// Allow a small tolerance: feed.Fetch records res.RetryAfter shortly after
+	// fixedNow is captured, so res.RetryAfter ≈ fixedNow + 3600s ± a few ms.
+	expected := fixedNow.Add(time.Hour - 5*time.Second).Unix()
+	require.GreaterOrEqual(t, nextPoll, expected, "Retry-After:3600 must floor next_poll")
 }
