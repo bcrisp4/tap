@@ -10,8 +10,24 @@ import (
 )
 
 // trackingParams is the set of full-name query parameters to drop.
+// Adapted from miniflux's urlcleaner — see package doc comment.
 var trackingParams = map[string]struct{}{
-	"utm_source": {},
+	"utm_source":    {},
+	"utm_medium":    {},
+	"utm_campaign":  {},
+	"utm_term":      {},
+	"utm_content":   {},
+	"mc_eid":        {},
+	"mc_cid":        {},
+	"mkt_tok":       {},
+	"hsctatracking": {}, // case-insensitive match — store lowercase
+	"_hsmi":         {},
+	"_hsenc":        {},
+	"vero_id":       {},
+	"vero_conv":     {},
+	"oly_anon_id":   {},
+	"oly_enc_id":    {},
+	"wickedid":      {},
 }
 
 // trackingPrefixes is the set of query-parameter name prefixes to drop.
