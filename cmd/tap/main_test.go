@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/bcrisp4/tap/internal/api"
 	"github.com/bcrisp4/tap/internal/db"
+	"github.com/bcrisp4/tap/internal/httpx"
 	"github.com/bcrisp4/tap/internal/poll"
 	"github.com/bcrisp4/tap/internal/processor"
 	"github.com/bcrisp4/tap/internal/proxy"
@@ -222,4 +225,79 @@ func TestEndToEnd_ProxyURLsRewriteAndServe(t *testing.T) {
 	gotURL, ok := signer2.Verify(tok)
 	require.True(t, ok)
 	require.Equal(t, imageURL, gotURL)
+}
+
+func TestE2E_SSRFRejectsLoopbackByDefault(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	tmp := t.TempDir()
+	d, err := db.Open(ctx, filepath.Join(tmp, "tap.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = d.Close() })
+	require.NoError(t, db.Migrate(ctx, d))
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`<rss version="2.0"><channel><title>t</title></channel></rss>`))
+	}))
+	t.Cleanup(srv.Close)
+
+	client := httpx.NewClient(httpx.Opts{Timeout: 5 * time.Second, SSRF: httpx.SSRFPolicy{}})
+	sched := poll.NewScheduler(ctx, d, client, poll.SchedulerOpts{
+		Processor: processor.New(sanitise.DefaultPolicy(), nil),
+		Workers:   1,
+		Floor:     15 * time.Minute,
+		Ceiling:   24 * time.Hour,
+	})
+	sched.Start()
+	t.Cleanup(sched.Stop)
+
+	subID, err := db.InsertSubscription(ctx, d, db.NewSubscription{
+		Title: "Loopback", FeedURL: srv.URL, NextPoll: 0, Created: time.Now().Unix(),
+	})
+	require.NoError(t, err)
+	sched.Tick(ctx)
+	require.NoError(t, sched.Wait(2*time.Second))
+
+	var lastError sql.NullString
+	require.NoError(t, d.QueryRowContext(ctx, `SELECT last_error FROM subscriptions WHERE id=?`, subID).Scan(&lastError))
+	require.True(t, lastError.Valid, "expected last_error to be set")
+	require.Contains(t, lastError.String, "ssrf", "expected ssrf in error: %s", lastError.String)
+}
+
+func TestE2E_SSRFAllowlistAcceptsLoopback(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	tmp := t.TempDir()
+	d, err := db.Open(ctx, filepath.Join(tmp, "tap.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = d.Close() })
+	require.NoError(t, db.Migrate(ctx, d))
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`<rss version="2.0"><channel><title>t</title></channel></rss>`))
+	}))
+	t.Cleanup(srv.Close)
+
+	policy, err := httpx.ParseSSRFPolicy(false, []string{"127.0.0.0/8"})
+	require.NoError(t, err)
+	client := httpx.NewClient(httpx.Opts{Timeout: 5 * time.Second, SSRF: policy})
+	sched := poll.NewScheduler(ctx, d, client, poll.SchedulerOpts{
+		Processor: processor.New(sanitise.DefaultPolicy(), nil),
+		Workers:   1,
+		Floor:     15 * time.Minute,
+		Ceiling:   24 * time.Hour,
+	})
+	sched.Start()
+	t.Cleanup(sched.Stop)
+
+	subID, err := db.InsertSubscription(ctx, d, db.NewSubscription{
+		Title: "Allowed", FeedURL: srv.URL, NextPoll: 0, Created: time.Now().Unix(),
+	})
+	require.NoError(t, err)
+	sched.Tick(ctx)
+	require.NoError(t, sched.Wait(2*time.Second))
+
+	var lastError sql.NullString
+	require.NoError(t, d.QueryRowContext(ctx, `SELECT last_error FROM subscriptions WHERE id=?`, subID).Scan(&lastError))
+	require.False(t, lastError.Valid, "expected no error, got %q", lastError.String)
 }

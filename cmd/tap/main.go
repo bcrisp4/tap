@@ -60,17 +60,6 @@ func main() {
 		}
 	}
 
-	// TODO(M4 Phase 6.2): wire these into httpx.NewClient and SchedulerOpts.
-	_ = httpTimeout
-	_ = perHostInfl
-	_ = ssrfDisabled
-	_ = ssrfAllow
-	_ = pollFloor
-	_ = pollCeiling
-	_ = pollErrorBase
-	_ = userAgent
-	_ = httpx.Opts{}
-
 	configureLogger(*logFmt)
 
 	if err := os.MkdirAll(*dataDir, 0o755); err != nil {
@@ -114,17 +103,35 @@ func main() {
 	signer := proxy.NewSigner(proxyKey)
 	cache := proxy.NewCache(cacheDir, *proxyCacheCap)
 
-	// HTTP client used for both feed polls and proxy origin fetches.
-	// M4 will replace this with a shared SSRF-aware client.
-	client := &http.Client{
-		Timeout: *proxyFetchTO,
-		Transport: &http.Transport{
-			MaxIdleConns:        32,
-			MaxIdleConnsPerHost: 4,
-			IdleConnTimeout:     90 * time.Second,
-			TLSHandshakeTimeout: 10 * time.Second,
-		},
+	// Build the shared SSRF-aware HTTP client. The same client serves both
+	// feed polls (via the scheduler) and proxy origin fetches, so the per-host
+	// concurrency cap, SSRF guard, and User-Agent apply uniformly.
+	ssrfPolicy, err := httpx.ParseSSRFPolicy(*ssrfDisabled, []string(ssrfAllow))
+	if err != nil {
+		slog.Error("parse ssrf-allow", "err", err)
+		os.Exit(1)
 	}
+	if *ssrfDisabled {
+		slog.Warn("SSRF guard disabled — outbound HTTP unrestricted")
+	}
+
+	// Resolve the http-timeout, honouring the deprecated --proxy-fetch-timeout
+	// alias only when --http-timeout is at its default (i.e. the operator did
+	// not override it explicitly).
+	timeout := *httpTimeout
+	if *proxyFetchTO > 0 {
+		slog.Warn("--proxy-fetch-timeout is deprecated; use --http-timeout")
+		if *httpTimeout == 30*time.Second {
+			timeout = *proxyFetchTO
+		}
+	}
+
+	client := httpx.NewClient(httpx.Opts{
+		Timeout:         timeout,
+		PerHostInflight: *perHostInfl,
+		SSRF:            ssrfPolicy,
+		UserAgent:       *userAgent,
+	})
 
 	proxyHandler := proxy.NewHandler(signer, cache, client, *proxyBodyCap)
 
@@ -132,6 +139,9 @@ func main() {
 
 	sched := poll.NewScheduler(ctx, d, client, poll.SchedulerOpts{
 		Processor: proc,
+		Floor:     *pollFloor,
+		Ceiling:   *pollCeiling,
+		ErrorBase: *pollErrorBase,
 	})
 	sched.Start()
 
