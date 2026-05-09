@@ -68,3 +68,35 @@ func TestAllowAddr_CIDRAllowlist(t *testing.T) {
 		t.Errorf("192.168.2.5 should be rejected (outside allowlist)")
 	}
 }
+
+func TestAllowHostname_Suffix(t *testing.T) {
+	p := SSRFPolicy{AllowSuffixes: []string{"home.lan", "ts.net"}}
+	cases := []struct {
+		host string
+		want bool
+	}{
+		{"home.lan", true},
+		{"nas.home.lan", true},
+		{"deeply.nested.home.lan", true},
+		{"notmyhome.lan", false},
+		{"home.lan.evil.com", false},
+		{"NAS.HOME.LAN", true},
+		{"foo.ts.net", true},
+		{"barts.net", false},
+		{"unrelated.com", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.host, func(t *testing.T) {
+			if got := p.AllowHostname(tc.host); got != tc.want {
+				t.Errorf("AllowHostname(%q) = %v; want %v", tc.host, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAllowHostname_DisabledAllowsAll(t *testing.T) {
+	p := SSRFPolicy{Disabled: true}
+	if !p.AllowHostname("anything.example") {
+		t.Error("Disabled should allow any hostname")
+	}
+}

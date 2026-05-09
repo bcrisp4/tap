@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"strings"
 )
 
 var ErrSSRFBlocked = errors.New("ssrf: destination not allowed")
@@ -48,4 +49,18 @@ func (p SSRFPolicy) AllowAddr(addr netip.Addr) error {
 		}
 	}
 	return nil
+}
+
+func (p SSRFPolicy) AllowHostname(host string) bool {
+	if p.Disabled {
+		return true
+	}
+	host = strings.ToLower(host)
+	for _, suffix := range p.AllowSuffixes {
+		suffix = strings.ToLower(suffix)
+		if host == suffix || strings.HasSuffix(host, "."+suffix) {
+			return true
+		}
+	}
+	return false
 }
