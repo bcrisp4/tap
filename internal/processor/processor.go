@@ -19,9 +19,15 @@ type Processor struct {
 	imgRewriter func(string) string
 }
 
-// New returns a Processor. If rewriter is nil, Process is equivalent to
-// sanitiser.Sanitise (used by tests that don't care about the proxy).
+// New returns a Processor. The sanitiser is required; passing nil is a
+// programmer error (Process can't honour its total-function contract
+// without one). The rewriter is optional — when nil, Process is
+// equivalent to sanitiser.Sanitise (used by tests that don't care about
+// the proxy).
 func New(s *sanitise.Policy, rewriter func(string) string) *Processor {
+	if s == nil {
+		panic("processor.New: sanitiser is required")
+	}
 	return &Processor{sanitiser: s, imgRewriter: rewriter}
 }
 

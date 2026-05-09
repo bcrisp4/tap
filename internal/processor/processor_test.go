@@ -52,6 +52,13 @@ func TestProcessor_RewriterDoesNotTouchAnchorOrIframe(t *testing.T) {
 	require.NotContains(t, out, "/PROXY/", "rewriter must touch <img> only: %s", out)
 }
 
+func TestNew_PanicsOnNilSanitiser(t *testing.T) {
+	t.Parallel()
+	require.PanicsWithValue(t, "processor.New: sanitiser is required", func() {
+		processor.New(nil, nil)
+	})
+}
+
 func TestProcessor_TotalFunctionContract(t *testing.T) {
 	t.Parallel()
 	pol := sanitise.DefaultPolicy()

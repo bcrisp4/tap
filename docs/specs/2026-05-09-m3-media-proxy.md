@@ -125,11 +125,11 @@ image/png  image/jpeg  image/gif  image/webp  image/avif
 
 SVG is excluded (see *Out of scope*). Type detection at fetch time:
 
-1. Sniff the response body's first 512 bytes with `http.DetectContentType` (Go 1.25 stdlib covers all five).
-2. Compare against the origin's `Content-Type` header.
+1. Sniff the response body's first 512 bytes with `http.DetectContentType` for PNG, JPEG, GIF, and WebP. Go's stdlib has no AVIF detector (the ftyp container family is sniffed only as `video/mp4`), so a small `detectAVIF` helper in `internal/proxy/sniff.go` parses the ISO Base Media File Format ftyp box and matches the `avif` / `avis` brands.
+2. Compare against the origin's `Content-Type` header (charset/parameter stripped).
 3. Accept only if the sniffed type is in the allowlist **and** the origin's claim agrees.
 
-The sniff is the trust anchor — origins lie about Content-Type all the time; bytes don't. The header check is defence in depth: an origin claiming `text/html` while serving PNG bytes is misconfigured at best, hostile at worst, and in either case we'd rather drop the response. A unit test fixture per allowlisted format pins the sniff behaviour against future Go upgrades.
+The sniff is the trust anchor — origins lie about Content-Type all the time; bytes don't. The header check is defence in depth: an origin claiming `text/html` while serving PNG bytes is misconfigured at best, hostile at worst, and in either case we'd rather drop the response. A unit test fixture per allowlisted format pins the sniff behaviour against future Go upgrades; a `TestDetectAVIF` table covers the brand-walker edge cases (`avis` brand, `avif` as a compatible-brand alongside an `mp42` major brand, the minor-version skip).
 
 ### Origin fetch
 
@@ -177,7 +177,7 @@ Wire-up in `cmd/tap/main.go`:
 key := loadOrCreateProxyKey(ctx, d)
 signer := proxy.NewSigner(key)
 cache := proxy.NewCache(cacheDir, capBytes)
-proxyHandler := proxy.NewHandler(signer, cache, client)
+proxyHandler := proxy.NewHandler(signer, cache, client, bodyCap)
 
 proc := processor.New(sanitise.DefaultPolicy(), signer.RewriteImageURL)
 sched := poll.NewScheduler(ctx, d, client, poll.SchedulerOpts{Processor: proc})

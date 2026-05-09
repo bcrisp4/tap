@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Tap is a self-hosted RSS / Atom / JSON Feed reader. It ships as **one static Go binary** with an embedded SQLite database, an embedded Svelte SPA, and no external services. See `docs/concept.md` for the full design and `docs/roadmap.md` for the milestone plan; **M3 specced, awaiting implementation** (spec at `docs/specs/2026-05-09-m3-media-proxy.md`; M2 sanitisation pipeline merged — spec at `docs/specs/2026-05-08-m2-sanitisation.md`; M1 walking-skeleton spec at `docs/specs/2026-05-08-m1-walking-skeleton.md`).
+Tap is a self-hosted RSS / Atom / JSON Feed reader. It ships as **one static Go binary** with an embedded SQLite database, an embedded Svelte SPA, and no external services. See `docs/concept.md` for the full design and `docs/roadmap.md` for the milestone plan; **M3 in review** (media proxy + cache implemented, awaiting merge — spec at `docs/specs/2026-05-09-m3-media-proxy.md`; M2 sanitisation pipeline merged — spec at `docs/specs/2026-05-08-m2-sanitisation.md`; M1 walking-skeleton spec at `docs/specs/2026-05-08-m1-walking-skeleton.md`).
 
 ## Commands
 

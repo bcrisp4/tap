@@ -151,11 +151,14 @@ func configureLogger(format string) {
 const proxySigningKeyConfigKey = "proxy.signing_key"
 
 func loadOrCreateProxyKey(ctx context.Context, d *sql.DB) ([]byte, error) {
-	// len check: reject malformed/truncated stored keys and generate a fresh one.
-	// A future migration should update proxy.KeySize if the key size changes.
+	// A stored key takes precedence and is returned as-is. proxy.NewSigner
+	// will panic with a clear message if the stored key is shorter than
+	// proxy.KeySize — that's the loud-failure path for an operator who
+	// somehow ended up with a malformed row. Per spec, key rotation is not
+	// a feature, so we never overwrite a stored key from this code path.
 	if v, ok, err := db.GetConfig(ctx, d, proxySigningKeyConfigKey); err != nil {
 		return nil, fmt.Errorf("read signing key: %w", err)
-	} else if ok && len(v) == proxy.KeySize {
+	} else if ok {
 		return v, nil
 	}
 
@@ -170,12 +173,17 @@ func loadOrCreateProxyKey(ctx context.Context, d *sql.DB) ([]byte, error) {
 	return got, nil
 }
 
+// envOr* helpers are evaluated during flag-default evaluation, which runs
+// before configureLogger. We can't use slog here — it'd write to the
+// default text handler regardless of the operator's --log-format choice.
+// Plain stderr is the right channel for a startup configuration warning.
+
 func envOrInt64(k string, def int64) int64 {
 	if v := os.Getenv(k); v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
 			return n
 		}
-		slog.Warn("invalid int64 env var; falling back to default", "key", k, "value", v, "default", def)
+		fmt.Fprintf(os.Stderr, "warning: %s=%q is not a valid int64; using default %d\n", k, v, def)
 	}
 	return def
 }
@@ -185,7 +193,7 @@ func envOrDuration(k string, def time.Duration) time.Duration {
 		if d, err := time.ParseDuration(v); err == nil {
 			return d
 		}
-		slog.Warn("invalid duration env var; falling back to default", "key", k, "value", v, "default", def)
+		fmt.Fprintf(os.Stderr, "warning: %s=%q is not a valid duration; using default %s\n", k, v, def)
 	}
 	return def
 }
