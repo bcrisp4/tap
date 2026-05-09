@@ -122,6 +122,11 @@ func (c *Cache) write(hash string, res FetchedResource) error {
 	if dirPath == "" {
 		return fmt.Errorf("proxy cache: invalid hash %q", hash)
 	}
+
+	if err := c.evictIfOverCap(int64(len(res.Bytes))); err != nil {
+		return fmt.Errorf("evict: %w", err)
+	}
+
 	if err := os.MkdirAll(dirPath, 0o755); err != nil {
 		return err
 	}
@@ -162,4 +167,88 @@ func (c *Cache) write(hash string, res FetchedResource) error {
 		return err
 	}
 	return nil
+}
+
+type evictEntry struct {
+	binPath  string
+	metaPath string
+	mtime    time.Time
+	size     int64
+}
+
+func (c *Cache) evictIfOverCap(incoming int64) error {
+	c.evictMu.Lock()
+	defer c.evictMu.Unlock()
+
+	if c.capBytes <= 0 {
+		return nil
+	}
+
+	entries, total, err := c.scanCache()
+	if err != nil {
+		return err
+	}
+	if total+incoming <= c.capBytes {
+		return nil
+	}
+
+	// Sort by mtime ascending — oldest first.
+	sortByMtime(entries)
+
+	for _, e := range entries {
+		if total+incoming <= c.capBytes {
+			break
+		}
+		_ = os.Remove(e.binPath)
+		_ = os.Remove(e.metaPath)
+		total -= e.size
+	}
+	return nil
+}
+
+func (c *Cache) scanCache() ([]evictEntry, int64, error) {
+	var entries []evictEntry
+	var total int64
+	err := filepath.WalkDir(c.dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		// We pair .bin files only; the .meta sibling is removed alongside.
+		if filepath.Ext(path) != ".bin" {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+		entries = append(entries, evictEntry{
+			binPath:  path,
+			metaPath: path[:len(path)-len(".bin")] + ".meta",
+			mtime:    info.ModTime(),
+			size:     info.Size(),
+		})
+		total += info.Size()
+		return nil
+	})
+	if err != nil && !os.IsNotExist(err) {
+		return nil, 0, err
+	}
+	return entries, total, nil
+}
+
+func sortByMtime(entries []evictEntry) {
+	// Insertion sort: simple, stable, fine for the small N we expect.
+	for i := 1; i < len(entries); i++ {
+		j := i
+		for j > 0 && entries[j-1].mtime.After(entries[j].mtime) {
+			entries[j-1], entries[j] = entries[j], entries[j-1]
+			j--
+		}
+	}
 }

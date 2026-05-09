@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/bcrisp4/tap/internal/proxy"
 	"github.com/stretchr/testify/require"
@@ -155,4 +156,38 @@ func TestCache_SingleflightCoalesces(t *testing.T) {
 	got := atomic.LoadInt32(&calls)
 	require.LessOrEqual(t, got, int32(2), "singleflight should collapse %d concurrent misses to 1 (allow 2 for race tolerance)", N)
 	require.GreaterOrEqual(t, got, int32(1))
+}
+
+func TestCache_EvictsOldestByMtimeWhenOverCap(t *testing.T) {
+	t.Parallel()
+	// Cap of 200 bytes. Each fetch returns 100 bytes. Three writes will
+	// force eviction of the first.
+	c, dir := newCache(t, 200)
+
+	body := make([]byte, 100)
+	makeFetch := func() func(context.Context) (proxy.FetchedResource, error) {
+		return func(ctx context.Context) (proxy.FetchedResource, error) {
+			return proxy.FetchedResource{Bytes: body, ContentType: "image/png"}, nil
+		}
+	}
+
+	_, err := c.Get(context.Background(), "aaaa1111", makeFetch())
+	require.NoError(t, err)
+
+	// Bump the mtime difference so sort is unambiguous on coarse-mtime FS.
+	// (FAT and some ext4 setups have second-resolution mtimes.)
+	require.NoError(t, os.Chtimes(filepath.Join(dir, "aa", "aaaa1111.bin"), time.Now().Add(-2*time.Second), time.Now().Add(-2*time.Second)))
+	require.NoError(t, os.Chtimes(filepath.Join(dir, "aa", "aaaa1111.meta"), time.Now().Add(-2*time.Second), time.Now().Add(-2*time.Second)))
+
+	_, err = c.Get(context.Background(), "bbbb2222", makeFetch())
+	require.NoError(t, err)
+
+	// Now total is 200 bytes (at cap). A third 100-byte write triggers eviction.
+	_, err = c.Get(context.Background(), "cccc3333", makeFetch())
+	require.NoError(t, err)
+
+	require.NoFileExists(t, filepath.Join(dir, "aa", "aaaa1111.bin"), "oldest should be evicted")
+	require.NoFileExists(t, filepath.Join(dir, "aa", "aaaa1111.meta"))
+	require.FileExists(t, filepath.Join(dir, "bb", "bbbb2222.bin"))
+	require.FileExists(t, filepath.Join(dir, "cc", "cccc3333.bin"))
 }
