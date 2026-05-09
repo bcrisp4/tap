@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/bcrisp4/tap/internal/db"
 	"github.com/stretchr/testify/require"
@@ -21,7 +22,7 @@ func TestEntries_ListAndPatchRead(t *testing.T) {
 		Title: "x", FeedURL: "https://example.com/feed", NextPoll: 0, Created: 0,
 	})
 	_, err := db.UpdateAfterPoll(context.Background(), d, subID, db.PollResult{
-		NowUnix: 100, NextPollAt: 200, NewEntries: []db.NewEntry{
+		NowUnix: 100, Floor: 15 * time.Minute, Ceiling: 24 * time.Hour, NewEntries: []db.NewEntry{
 			{Hash: "h1", Title: "A", URL: "https://e.com/a", Content: "<p>a</p>", PublishedAt: 50},
 		},
 	})

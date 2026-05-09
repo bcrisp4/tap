@@ -5,6 +5,9 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
+
+	"github.com/bcrisp4/tap/internal/cadence"
 )
 
 type NewEntry struct {
@@ -17,13 +20,17 @@ type NewEntry struct {
 }
 
 // PollResult is the success result of a feed fetch+parse worth committing.
-// Lives here (not subscriptions.go) so it can reference NewEntry directly.
+// The cadence inputs let UpdateAfterPoll compute next_poll_at + velocity in
+// one transaction so the post-insert count flows directly into the schedule.
 type PollResult struct {
 	NewETag         sql.NullString
 	NewLastModified sql.NullString
-	NextPollAt      int64
 	NowUnix         int64
 	NewEntries      []NewEntry
+	Floor           time.Duration
+	Ceiling         time.Duration
+	RetryAfter      time.Time     // zero -> no server floor
+	CacheMaxAge     time.Duration // 0 -> no server floor
 }
 
 type Entry struct {
@@ -166,9 +173,12 @@ func boolToInt(b bool) int {
 	return 0
 }
 
-// UpdateAfterPoll commits the success result of a poll in one transaction.
-// New entries are inserted (duplicates dropped silently); the subscription
-// row is updated. Lives here (not subscriptions.go) so it can reference NewEntry.
+// UpdateAfterPoll commits the success result of a poll in one transaction:
+// insert entries (silently dropping duplicates on the (subscription_id, hash)
+// unique constraint), recompute velocity from the post-insert state, derive
+// the next-poll time via the cadence formula with server-mandated floors, and
+// update the subscription row. Lives here (not subscriptions.go) so it can
+// reference NewEntry.
 func UpdateAfterPoll(ctx context.Context, d *sql.DB, subID int64, r PollResult) (insertedCount int, err error) {
 	tx, err := d.BeginTx(ctx, nil)
 	if err != nil {
@@ -194,16 +204,31 @@ func UpdateAfterPoll(ctx context.Context, d *sql.DB, subID int64, r PollResult) 
 		insertedCount += int(n)
 	}
 
+	cutoff := r.NowUnix - 7*24*60*60
+	var velocity int
+	if err = tx.QueryRowContext(ctx, `
+		SELECT COUNT(*) * 100 / 7 FROM entries
+		WHERE subscription_id = ? AND published_at >= ?
+	`, subID, cutoff).Scan(&velocity); err != nil {
+		err = fmt.Errorf("compute velocity: %w", err)
+		return 0, err
+	}
+
+	now := time.Unix(r.NowUnix, 0).UTC()
+	interval := cadence.IntervalFromVelocity(velocity, r.Floor, r.Ceiling)
+	nextPoll := cadence.ApplyServerFloors(now.Add(interval), r.RetryAfter, r.CacheMaxAge, now)
+
 	if _, err = tx.ExecContext(ctx, `
 		UPDATE subscriptions
-		SET etag          = ?,
-		    last_modified = ?,
-		    last_poll_at  = ?,
-		    next_poll_at  = ?,
-		    error_count   = 0,
-		    last_error    = NULL
+		SET etag              = ?,
+		    last_modified     = ?,
+		    last_poll_at      = ?,
+		    next_poll_at      = ?,
+		    error_count       = 0,
+		    last_error        = NULL,
+		    velocity_24h_x100 = ?
 		WHERE id = ?
-	`, r.NewETag, r.NewLastModified, r.NowUnix, r.NextPollAt, subID); err != nil {
+	`, r.NewETag, r.NewLastModified, r.NowUnix, nextPoll.Unix(), velocity, subID); err != nil {
 		err = fmt.Errorf("update subscription: %w", err)
 		return 0, err
 	}

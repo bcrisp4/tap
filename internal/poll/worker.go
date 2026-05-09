@@ -94,9 +94,10 @@ func (w *Worker) Run(ctx context.Context, sub db.DueSubscription) {
 	inserted, err := db.UpdateAfterPoll(ctx, w.db, sub.ID, db.PollResult{
 		NewETag:         nullStr(res.ETag),
 		NewLastModified: nullStr(res.LastModified),
-		NextPollAt:      nextPoll,
 		NowUnix:         now,
 		NewEntries:      newEntries,
+		Floor:           15 * time.Minute,
+		Ceiling:         24 * time.Hour,
 	})
 	if err != nil {
 		slog.ErrorContext(ctx, "commit poll", "feed_id", sub.ID, "err", err)
