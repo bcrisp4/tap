@@ -33,7 +33,7 @@ func TestEntries_ListAndPatchRead(t *testing.T) {
 
 	var listResp struct {
 		Data       []map[string]any `json:"data"`
-		NextCursor int64            `json:"next_cursor"`
+		NextCursor *string          `json:"next_cursor"`
 	}
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&listResp))
 	require.Len(t, listResp.Data, 1)
