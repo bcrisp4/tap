@@ -83,6 +83,10 @@ func (h *Handler) fetchOrigin(ctx context.Context, rawURL string) (FetchedResour
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode >= 500 {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
+		return FetchedResource{}, &fetchError{status: http.StatusBadGateway, msg: fmt.Sprintf("origin %d", resp.StatusCode)}
+	}
 	if resp.StatusCode >= 400 {
 		// Drain a few bytes to free the connection and propagate the status.
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))

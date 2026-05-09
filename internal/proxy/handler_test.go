@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -53,6 +54,7 @@ func TestHandler_ColdCacheHappyPath(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
 	require.Equal(t, "image/png", rr.Header().Get("Content-Type"))
+	require.Equal(t, strconv.Itoa(len(pngFixture)), rr.Header().Get("Content-Length"))
 	require.Equal(t, "public, max-age=31536000, immutable", rr.Header().Get("Cache-Control"))
 	require.Equal(t, "nosniff", rr.Header().Get("X-Content-Type-Options"))
 
@@ -138,4 +140,40 @@ func TestHandler_OriginOversizeBody_502(t *testing.T) {
 	h.ServeHTTP(rr, req)
 
 	require.Equal(t, http.StatusBadGateway, rr.Code)
+}
+
+func TestHandler_Origin5xxReturns502(t *testing.T) {
+	t.Parallel()
+	cases := []int{500, 502, 503, 504}
+	for _, status := range cases {
+		status := status
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			t.Parallel()
+			origin, _ := newOriginServer(t, []byte("upstream broke"), "text/plain", status)
+			signer, h := newHandler(t)
+
+			tok := signer.Sign(origin.URL + "/x")
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/proxy/"+tok, nil)
+			req.SetPathValue("token", tok)
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, req)
+
+			require.Equal(t, http.StatusBadGateway, rr.Code,
+				"5xx origin (%d) must collapse to 502", status)
+		})
+	}
+}
+
+func TestNewHandler_PanicsOnNilSigner(t *testing.T) {
+	t.Parallel()
+	require.PanicsWithValue(t, "proxy.NewHandler: signer and cache are required", func() {
+		proxy.NewHandler(nil, proxy.NewCache(t.TempDir(), 1<<20), http.DefaultClient, 1<<20)
+	})
+}
+
+func TestNewHandler_PanicsOnNilCache(t *testing.T) {
+	t.Parallel()
+	require.PanicsWithValue(t, "proxy.NewHandler: signer and cache are required", func() {
+		proxy.NewHandler(proxy.NewSigner(testKey), nil, http.DefaultClient, 1<<20)
+	})
 }
