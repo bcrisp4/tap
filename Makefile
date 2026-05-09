@@ -1,8 +1,10 @@
-.PHONY: dev build docker clean test
+.PHONY: dev build run docker clean test
 
 GO   ?= go
 PNPM ?= pnpm
 BIN  := bin/tap
+ADDR ?= 127.0.0.1:8080
+DATA ?= ./data
 
 dev:
 	@echo "Starting Go on :8080 and Vite on :5173 — open http://localhost:5173"
@@ -19,6 +21,10 @@ build: web/dist/index.html
 web/dist/index.html: $(shell find web/src -type f) web/index.html web/package.json
 	$(PNPM) --dir web install --frozen-lockfile
 	$(PNPM) --dir web build
+
+run: build
+	mkdir -p $(DATA)
+	$(BIN) -addr $(ADDR) -data $(DATA)
 
 docker: build
 	docker build -t tap:dev .
