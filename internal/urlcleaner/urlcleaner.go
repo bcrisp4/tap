@@ -77,11 +77,12 @@ func Clean(rawURL string) string {
 }
 
 func isTracking(name string) bool {
-	if _, ok := trackingParams[strings.ToLower(name)]; ok {
+	lower := strings.ToLower(name)
+	if _, ok := trackingParams[lower]; ok {
 		return true
 	}
 	for _, p := range trackingPrefixes {
-		if strings.HasPrefix(strings.ToLower(name), p) {
+		if strings.HasPrefix(lower, p) {
 			return true
 		}
 	}
