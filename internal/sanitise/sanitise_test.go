@@ -272,3 +272,36 @@ func TestSanitise_ConcurrentSafe(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestSanitise_NeverPanics(t *testing.T) {
+	t.Parallel()
+	inputs := []string{
+		"",
+		"<<<>>>",
+		`<p>unclosed`,
+		`<script>`,
+		`<img src=x onerror=alert(1)>`,
+		`<iframe`,
+		`<!--<script>--><script>alert(1)</script>`,
+		strings.Repeat("<div>", 2000) + strings.Repeat("</div>", 2000),
+	}
+	p := DefaultPolicy()
+	for i, in := range inputs {
+		// Defer-recover ensures panics surface as test failures.
+		func(i int, in string) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("input %d panicked: %v (input=%q)", i, r, in)
+				}
+			}()
+			_ = p.Sanitise(in)
+		}(i, in)
+	}
+}
+
+func TestSanitise_EmptyInputReturnsEmpty(t *testing.T) {
+	t.Parallel()
+	if got := DefaultPolicy().Sanitise(""); got != "" {
+		t.Errorf("empty input produced non-empty output: %q", got)
+	}
+}
