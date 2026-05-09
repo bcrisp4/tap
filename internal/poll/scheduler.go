@@ -11,12 +11,14 @@ import (
 	"time"
 
 	"github.com/bcrisp4/tap/internal/db"
+	"github.com/bcrisp4/tap/internal/sanitise"
 )
 
 type SchedulerOpts struct {
-	TickInterval time.Duration // default 60s
-	Workers      int           // default 3
-	Cadence      time.Duration // default 30m
+	TickInterval time.Duration    // default 60s
+	Workers      int              // default 3
+	Cadence      time.Duration    // default 30m
+	Policy       *sanitise.Policy // default sanitise.DefaultPolicy()
 }
 
 type Scheduler struct {
@@ -52,13 +54,16 @@ func NewScheduler(base context.Context, d *sql.DB, c *http.Client, o SchedulerOp
 	if o.Cadence <= 0 {
 		o.Cadence = 30 * time.Minute
 	}
+	if o.Policy == nil {
+		o.Policy = sanitise.DefaultPolicy()
+	}
 	parentCtx, parentCancel := context.WithCancel(base)
 	s := &Scheduler{
 		db:           d,
 		client:       c,
 		opts:         o,
 		inflight:     NewInflight(),
-		worker:       NewWorker(d, c, WorkerOpts{Cadence: o.Cadence}),
+		worker:       NewWorker(d, c, WorkerOpts{Cadence: o.Cadence, Policy: o.Policy}),
 		jobs:         make(chan db.DueSubscription, o.Workers*2),
 		tickDone:     make(chan struct{}),
 		poke:         make(chan struct{}, 1),
