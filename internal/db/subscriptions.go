@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // ErrSubscriptionExists wraps the underlying SQLite UNIQUE-constraint failure
@@ -161,4 +162,22 @@ func UpdateAfterNotModified(ctx context.Context, d *sql.DB, subID int64, nowUnix
 		return fmt.Errorf("record 304: %w", err)
 	}
 	return nil
+}
+
+// QueryVelocity returns the rolling 7-day entries-per-day rate × 100 for a
+// single subscription. Returns 0 if the subscription has no entries in the
+// window. The caller is responsible for calling this inside the same logical
+// poll boundary so the count reflects the post-insert state.
+func QueryVelocity(ctx context.Context, d *sql.DB, subID int64, now time.Time) (int, error) {
+	cutoff := now.Add(-7 * 24 * time.Hour).Unix()
+	var velocity int
+	err := d.QueryRowContext(ctx, `
+		SELECT COUNT(*) * 100 / 7
+		FROM entries
+		WHERE subscription_id = ? AND published_at >= ?
+	`, subID, cutoff).Scan(&velocity)
+	if err != nil {
+		return 0, fmt.Errorf("query velocity: %w", err)
+	}
+	return velocity, nil
 }
