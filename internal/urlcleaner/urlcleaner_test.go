@@ -66,3 +66,25 @@ func TestClean_StripsKnownOutboundTrackers(t *testing.T) {
 		})
 	}
 }
+
+func TestClean_StripsPrefixedTrackers(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"utm_unknown", "https://e.com/?utm_zzz=x&keep=1", "https://e.com/?keep=1"},
+		{"mtm_source", "https://e.com/?mtm_source=x&keep=1", "https://e.com/?keep=1"},
+		{"mtm_unknown", "https://e.com/?mtm_anything=x&keep=1", "https://e.com/?keep=1"},
+		{"pk_campaign", "https://e.com/?pk_campaign=x&keep=1", "https://e.com/?keep=1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := Clean(tc.in); got != tc.want {
+				t.Errorf("Clean(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}

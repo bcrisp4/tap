@@ -37,7 +37,13 @@ var trackingParams = map[string]struct{}{
 }
 
 // trackingPrefixes is the set of query-parameter name prefixes to drop.
-var trackingPrefixes = []string{}
+// Adapted from miniflux's urlcleaner — see package doc comment.
+// Matched case-insensitively against the parameter name.
+var trackingPrefixes = []string{
+	"utm_",
+	"mtm_",
+	"pk_",
+}
 
 // Clean returns rawURL with well-known tracking parameters removed from
 // the query string. Returns rawURL unchanged on parse error or non-URL
