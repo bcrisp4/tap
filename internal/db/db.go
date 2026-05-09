@@ -18,6 +18,14 @@ func Open(ctx context.Context, path string) (*sql.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sql.Open: %w", err)
 	}
+
+	// SQLite in-memory databases are per-connection. If the pool opens multiple
+	// connections, each gets an independent (empty) database. Pin to one
+	// connection so migrations and data are visible across all callers.
+	if path == ":memory:" {
+		d.SetMaxOpenConns(1)
+	}
+
 	if err := d.PingContext(ctx); err != nil {
 		_ = d.Close()
 		return nil, fmt.Errorf("ping: %w", err)
