@@ -7,12 +7,19 @@ import (
 	"bytes"
 	"net/url"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/bcrisp4/tap/internal/urlcleaner"
 	"github.com/microcosm-cc/bluemonday"
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
 )
+
+// MaxInputBytes caps the raw-HTML input to Sanitise. Defence-in-depth on
+// top of feed.Fetch's 10 MiB body cap; per-entry HTML beyond this is
+// pathological. Truncation snaps back to a UTF-8 codepoint boundary so
+// bluemonday never sees a partial multi-byte sequence.
+const MaxInputBytes = 1 << 20 // 1 MiB
 
 // defaultIframeHosts is the set of hosts whose <iframe> embeds survive
 // sanitisation. Adapted from miniflux's iframeAllowList.
@@ -67,6 +74,14 @@ func New() *Policy {
 // Sanitise returns final-form HTML safe to render directly.
 // Total function — never errors, never panics. Worst case returns "".
 func (p *Policy) Sanitise(rawHTML string) string {
+	if len(rawHTML) > MaxInputBytes {
+		rawHTML = rawHTML[:MaxInputBytes]
+		// Snap back to a UTF-8 boundary. UTF-8 codepoints are at most
+		// 4 bytes; this loop runs at most 3 times.
+		for len(rawHTML) > 0 && !utf8.ValidString(rawHTML) {
+			rawHTML = rawHTML[:len(rawHTML)-1]
+		}
+	}
 	cleaned := p.bm.Sanitize(rawHTML)
 	return p.postProcess(cleaned)
 }

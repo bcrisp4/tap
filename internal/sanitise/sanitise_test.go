@@ -3,6 +3,7 @@ package sanitise
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestSanitise_StripsScript(t *testing.T) {
@@ -187,5 +188,38 @@ func TestSanitise_URLCleanerIntegration(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestSanitise_TruncatesOversizeInput(t *testing.T) {
+	t.Parallel()
+	// 2 MiB of "x" wrapped in a <p>; bluemonday should still produce
+	// finite output and never see more than ~1 MiB of input.
+	const wantCap = 1 << 20
+	huge := "<p>" + strings.Repeat("x", 2*wantCap) + "</p>"
+	got := DefaultPolicy().Sanitise(huge)
+	// Slack of 256 covers any wrapping/balancing the HTML parser may
+	// add when re-serialising the truncated fragment.
+	if len(got) > wantCap+256 {
+		t.Errorf("output size %d exceeds expected cap (%d + slack)", len(got), wantCap)
+	}
+}
+
+func TestSanitise_TruncationSnapsToUTF8Boundary(t *testing.T) {
+	t.Parallel()
+	// Build input where byte position MaxInputBytes lands inside a
+	// multi-byte UTF-8 codepoint. "€" is 3 bytes (E2 82 AC). Filling
+	// up to MaxInputBytes-1 with ASCII then inserting "€" puts the
+	// truncation cut mid-codepoint.
+	const cap = 1 << 20
+	body := strings.Repeat("a", cap-1) + "€" + strings.Repeat("b", 100)
+	got := DefaultPolicy().Sanitise(body)
+	// Result must be valid UTF-8 — no replacement chars from a partial
+	// multi-byte sequence handed to the HTML parser.
+	if !utf8.ValidString(got) {
+		t.Errorf("output is not valid UTF-8")
+	}
+	if strings.Contains(got, "�") {
+		t.Errorf("output contains U+FFFD replacement character (input was cut mid-codepoint)")
 	}
 }
