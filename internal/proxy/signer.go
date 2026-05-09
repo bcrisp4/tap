@@ -18,14 +18,17 @@ type Signer struct {
 }
 
 const hmacBytes = 16
-const proxySigningKeyMinBytes = 32
+
+// KeySize is the minimum (and recommended) signing-key length in bytes.
+// Exported so cmd/tap/main.go can size its crypto/rand read against the
+// same constant the package guards against.
+const KeySize = 32
 
 // NewSigner copies the key. Callers may safely reuse the underlying slice.
-// Panics if key is shorter than 32 bytes — the production caller in
-// cmd/tap/main.go generates a 32-byte key from crypto/rand, and shorter keys
-// break the security model.
+// Panics if key is shorter than KeySize — the production caller generates
+// a KeySize-byte key from crypto/rand, and shorter keys break the security model.
 func NewSigner(key []byte) *Signer {
-	if len(key) < proxySigningKeyMinBytes {
+	if len(key) < KeySize {
 		panic("proxy.NewSigner: key must be at least 32 bytes")
 	}
 	cp := make([]byte, len(key))

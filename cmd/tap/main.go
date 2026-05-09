@@ -105,7 +105,7 @@ func main() {
 	// /api/ and /healthz both go through the same factory; sched.Poke is wired
 	// into POST /api/v1/subscriptions so a freshly added feed polls immediately
 	// rather than waiting up to TickInterval (60s).
-	apiMux := api.NewMux(d, sched.Poke, proxyHandler)
+	apiMux := api.NewMux(d, api.MuxOpts{Poke: sched.Poke, ProxyHandler: proxyHandler})
 	mux.Handle("/api/", apiMux)
 	mux.Handle("/healthz", apiMux)
 	mux.Handle("/", server.SPAHandler())
@@ -145,22 +145,25 @@ func configureLogger(format string) {
 	slog.SetDefault(slog.New(h))
 }
 
-const proxySigningKeySize = 32
+// proxySigningKeyConfigKey is the row in the configuration table that holds
+// the HMAC signing key for proxy URLs. Constant so the bootstrap path and
+// tests can't drift on a typo.
+const proxySigningKeyConfigKey = "proxy.signing_key"
 
 func loadOrCreateProxyKey(ctx context.Context, d *sql.DB) ([]byte, error) {
 	// len check: reject malformed/truncated stored keys and generate a fresh one.
-	// A future migration should update proxySigningKeySize if the key size changes.
-	if v, ok, err := db.GetConfig(ctx, d, "proxy.signing_key"); err != nil {
+	// A future migration should update proxy.KeySize if the key size changes.
+	if v, ok, err := db.GetConfig(ctx, d, proxySigningKeyConfigKey); err != nil {
 		return nil, fmt.Errorf("read signing key: %w", err)
-	} else if ok && len(v) == proxySigningKeySize {
+	} else if ok && len(v) == proxy.KeySize {
 		return v, nil
 	}
 
-	key := make([]byte, proxySigningKeySize)
+	key := make([]byte, proxy.KeySize)
 	if _, err := rand.Read(key); err != nil {
 		return nil, fmt.Errorf("generate signing key: %w", err)
 	}
-	got, err := db.SetConfigIfAbsent(ctx, d, "proxy.signing_key", key)
+	got, err := db.SetConfigIfAbsent(ctx, d, proxySigningKeyConfigKey, key)
 	if err != nil {
 		return nil, fmt.Errorf("persist signing key: %w", err)
 	}

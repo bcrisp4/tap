@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -193,7 +194,7 @@ func (c *Cache) evictIfOverCap(incoming int64) error {
 	}
 
 	// Sort by mtime ascending — oldest first.
-	sortByMtime(entries)
+	slices.SortFunc(entries, func(a, b evictEntry) int { return a.mtime.Compare(b.mtime) })
 
 	for _, e := range entries {
 		if total+incoming <= c.capBytes {
@@ -242,13 +243,3 @@ func (c *Cache) scanCache() ([]evictEntry, int64, error) {
 	return entries, total, nil
 }
 
-func sortByMtime(entries []evictEntry) {
-	// Insertion sort: simple, stable, fine for the small N we expect.
-	for i := 1; i < len(entries); i++ {
-		j := i
-		for j > 0 && entries[j-1].mtime.After(entries[j].mtime) {
-			entries[j-1], entries[j] = entries[j], entries[j-1]
-			j--
-		}
-	}
-}

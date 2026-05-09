@@ -39,14 +39,14 @@ func TestEndToEnd_SubscribePollServeEntries(t *testing.T) {
 	feedSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(atom))
 	}))
-	defer feedSrv.Close()
+	t.Cleanup(feedSrv.Close)
 
 	d, err := db.Open(context.Background(), ":memory:")
 	require.NoError(t, err)
-	defer d.Close()
+	t.Cleanup(func() { _ = d.Close() })
 	require.NoError(t, db.Migrate(context.Background(), d))
 
-	mux := api.NewMux(d, nil, nil)
+	mux := api.NewMux(d, api.MuxOpts{})
 
 	// POST /api/v1/subscriptions
 	body := strings.NewReader(`{"feed_url":"` + feedSrv.URL + `"}`)
@@ -112,7 +112,7 @@ func TestEndToEnd_ProxyURLsRewriteAndServe(t *testing.T) {
 		w.Header().Set("Content-Type", "image/png")
 		_, _ = w.Write(pngFixture)
 	}))
-	defer imageSrv.Close()
+	t.Cleanup(imageSrv.Close)
 
 	imageURL := imageSrv.URL + "/img.png"
 	atomFeed := `<?xml version="1.0" encoding="UTF-8"?>
@@ -131,23 +131,23 @@ func TestEndToEnd_ProxyURLsRewriteAndServe(t *testing.T) {
 	feedSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(atomFeed))
 	}))
-	defer feedSrv.Close()
+	t.Cleanup(feedSrv.Close)
 
 	d, err := db.Open(context.Background(), ":memory:")
 	require.NoError(t, err)
-	defer d.Close()
+	t.Cleanup(func() { _ = d.Close() })
 	require.NoError(t, db.Migrate(context.Background(), d))
 
 	// Generate a signing key and insert into configuration (simulating bootstrap).
 	key := []byte("0123456789abcdef0123456789abcdef")
-	_, err = db.SetConfigIfAbsent(context.Background(), d, "proxy.signing_key", key)
+	_, err = db.SetConfigIfAbsent(context.Background(), d, proxySigningKeyConfigKey, key)
 	require.NoError(t, err)
 
 	signer := proxy.NewSigner(key)
 	cache := proxy.NewCache(t.TempDir(), 1<<20)
 	proxyHandler := proxy.NewHandler(signer, cache, http.DefaultClient, 10<<20)
 
-	mux := api.NewMux(d, nil, proxyHandler)
+	mux := api.NewMux(d, api.MuxOpts{ProxyHandler: proxyHandler})
 
 	// Subscribe.
 	body := strings.NewReader(`{"feed_url":"` + feedSrv.URL + `"}`)
@@ -214,7 +214,7 @@ func TestEndToEnd_ProxyURLsRewriteAndServe(t *testing.T) {
 
 	// Restart simulation: reload the signing key from the DB and rebuild the
 	// signer + handler. The previously-issued token must still verify.
-	keyAgain, ok, err := db.GetConfig(context.Background(), d, "proxy.signing_key")
+	keyAgain, ok, err := db.GetConfig(context.Background(), d, proxySigningKeyConfigKey)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, key, keyAgain)
