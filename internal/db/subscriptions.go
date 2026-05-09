@@ -50,9 +50,7 @@ type DueSubscription struct {
 	ErrorCount   int
 }
 
-// PollResult and UpdateAfterPoll live in entries.go because they reference
-// db.NewEntry, which is defined there. Keeping them together avoids a forward
-// reference and lets Task 2.5 commit cleanly without depending on Task 2.6.
+// PollResult and UpdateAfterPoll live in entries.go because they reference db.NewEntry.
 
 func InsertSubscription(ctx context.Context, d *sql.DB, s NewSubscription) (int64, error) {
 	res, err := d.ExecContext(ctx, `

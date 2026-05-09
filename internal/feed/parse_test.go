@@ -87,7 +87,7 @@ func TestFetch_DoesNotSetUserAgent(t *testing.T) {
 	_, err := Fetch(context.Background(), srv.Client(), srv.URL, FetchOpts{})
 	require.NoError(t, err)
 	ua := sawUA.Load().(string)
-	// The shared client (Phase 6) injects the tap UA. feed.Fetch itself must
+	// The shared httpx client injects the tap UA. feed.Fetch itself must
 	// not set "tap/" — that string is owned by httpx.Opts.UserAgent.
 	require.NotContains(t, ua, "tap/", "Fetch should not set tap-specific UA")
 }

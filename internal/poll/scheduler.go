@@ -144,7 +144,7 @@ func (s *Scheduler) tickLoop() {
 // Tick selects due subscriptions and dispatches them. Returns dispatched count.
 // Public for tests; production code uses Start() / Poke().
 func (s *Scheduler) Tick(ctx context.Context) int {
-	now := time.Now().Unix()
+	now := s.opts.Now().Unix()
 	due, err := db.ListDuePolls(ctx, s.db, now, 100)
 	if err != nil {
 		slog.ErrorContext(ctx, "list due polls", "err", err)

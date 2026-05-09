@@ -3,7 +3,6 @@ package httpx
 import (
 	"io"
 	"net/http"
-	"strings"
 	"sync"
 )
 
@@ -40,11 +39,10 @@ func (h *hostLimiter) RoundTrip(req *http.Request) (*http.Response, error) {
 	if h.n <= 0 {
 		return h.inner.RoundTrip(req)
 	}
-	// Normalise the host key so case and trailing-dot variants share the
-	// same semaphore — without this, "Example.COM" / "example.com" /
-	// "example.com." would each get their own slot and defeat the cap.
-	key := strings.TrimSuffix(strings.ToLower(req.URL.Hostname()), ".")
-	sem := h.acquireChan(key)
+	// Normalise so case and trailing-dot variants share the same semaphore —
+	// without this, "Example.COM" / "example.com" / "example.com." would
+	// each get their own slot and defeat the cap.
+	sem := h.acquireChan(normaliseHost(req.URL.Hostname()))
 
 	select {
 	case sem <- struct{}{}:

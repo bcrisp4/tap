@@ -57,11 +57,15 @@ func Fetch(ctx context.Context, client *http.Client, feedURL string, opts FetchO
 		ETag:         resp.Header.Get("ETag"),
 		LastModified: resp.Header.Get("Last-Modified"),
 	}
-	if t, ok := cadence.ParseRetryAfter(resp.Header.Get("Retry-After"), time.Now()); ok {
-		res.RetryAfter = t
+	if h := resp.Header.Get("Retry-After"); h != "" {
+		if t, ok := cadence.ParseRetryAfter(h, time.Now()); ok {
+			res.RetryAfter = t
+		}
 	}
-	if d, ok := cadence.ParseCacheMaxAge(resp.Header.Get("Cache-Control")); ok {
-		res.CacheMaxAge = d
+	if h := resp.Header.Get("Cache-Control"); h != "" {
+		if d, ok := cadence.ParseCacheMaxAge(h); ok {
+			res.CacheMaxAge = d
+		}
 	}
 
 	switch {

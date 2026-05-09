@@ -72,10 +72,7 @@ func (w *Worker) Run(ctx context.Context, sub db.DueSubscription) {
 	})
 	if fetchErr != nil {
 		delay := cadence.BackoffFromErrorCount(sub.ErrorCount+1, w.opts.ErrorBase, w.opts.Ceiling, 0.25)
-		next := now.Add(delay)
-		if !res.RetryAfter.IsZero() && res.RetryAfter.After(next) {
-			next = res.RetryAfter
-		}
+		next := cadence.ApplyServerFloors(now.Add(delay), res.RetryAfter, 0, now)
 		slog.WarnContext(ctx, "poll error",
 			"feed_id", sub.ID, "feed_url", sub.FeedURL,
 			"error_count", sub.ErrorCount+1,

@@ -27,6 +27,10 @@ type SSRFPolicy struct {
 	AllowCIDRs    []netip.Prefix
 }
 
+// defaultRejectCIDRs covers loopback, RFC1918, link-local, CGNAT (RFC 6598),
+// the unspecified address, and IPv6 ULA. CGNAT (100.64/10) is included so a
+// misconfigured Tailscale URL doesn't bypass the guard — operators on a
+// tailnet must explicitly allowlist their range or hostname suffix.
 var defaultRejectCIDRs = []netip.Prefix{
 	netip.MustParsePrefix("127.0.0.0/8"),
 	netip.MustParsePrefix("10.0.0.0/8"),
@@ -72,7 +76,7 @@ func (p SSRFPolicy) AllowHostname(host string) bool {
 	if p.Disabled {
 		return true
 	}
-	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	host = normaliseHost(host)
 	for _, suffix := range p.AllowSuffixes {
 		suffix = strings.ToLower(suffix)
 		if host == suffix || strings.HasSuffix(host, "."+suffix) {
@@ -80,6 +84,13 @@ func (p SSRFPolicy) AllowHostname(host string) bool {
 		}
 	}
 	return false
+}
+
+// normaliseHost lowercases and strips a trailing dot so suffix matching and
+// per-host-limiter keying treat "Example.COM", "example.com", and
+// "example.com." as the same hostname.
+func normaliseHost(host string) string {
+	return strings.TrimSuffix(strings.ToLower(host), ".")
 }
 
 // CheckRedirect is the http.Client.CheckRedirect callback. It enforces a

@@ -193,8 +193,8 @@ func TestWorker_RetryAfterOverridesBackoff(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	// fixedNow must align with the wall clock because feed.Fetch parses
-	// Retry-After against time.Now() (Phase 4), and the server-floor branch
-	// only fires when res.RetryAfter > next = fixedNow + delay.
+	// Retry-After against time.Now(), and the server-floor branch only
+	// fires when res.RetryAfter > next = fixedNow + delay.
 	fixedNow := time.Now().UTC()
 	w := NewWorker(d, srv.Client(), WorkerOpts{
 		Processor: processor.New(sanitise.DefaultPolicy(), nil),
@@ -284,8 +284,8 @@ func TestWorker_Success_RetryAfterAdvisoryFloor(t *testing.T) {
 	require.NoError(t, db.Migrate(ctx, d))
 
 	// fixedNow must align with the wall clock because feed.Fetch parses
-	// Retry-After against time.Now() (Phase 4); the success branch then
-	// floors next_poll against the parsed timestamp.
+	// Retry-After against time.Now(); the success branch then floors
+	// next_poll against the parsed timestamp.
 	fixedNow := time.Now().UTC()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Retry-After", "3600")
