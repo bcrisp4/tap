@@ -150,3 +150,42 @@ func TestSanitise_PixelTracker(t *testing.T) {
 		})
 	}
 }
+
+func TestSanitise_URLCleanerIntegration(t *testing.T) {
+	t.Parallel()
+	p := DefaultPolicy()
+
+	cases := []struct {
+		name        string
+		in          string
+		mustContain string
+		mustNot     []string
+	}{
+		{
+			name:        "anchor utm_source",
+			in:          `<a href="https://e.com/x?utm_source=foo&id=1">link</a>`,
+			mustContain: `href="https://e.com/x?id=1"`,
+			mustNot:     []string{"utm_source"},
+		},
+		{
+			name:        "img fbclid",
+			in:          `<img src="https://e.com/i.png?fbclid=bar&v=1">`,
+			mustContain: `src="https://e.com/i.png?v=1"`,
+			mustNot:     []string{"fbclid"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := p.Sanitise(tc.in)
+			if !strings.Contains(got, tc.mustContain) {
+				t.Errorf("missing expected fragment %q in output %q", tc.mustContain, got)
+			}
+			for _, ng := range tc.mustNot {
+				if strings.Contains(got, ng) {
+					t.Errorf("unwanted fragment %q in output %q", ng, got)
+				}
+			}
+		})
+	}
+}

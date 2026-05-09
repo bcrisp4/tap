@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/bcrisp4/tap/internal/urlcleaner"
 	"github.com/microcosm-cc/bluemonday"
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
@@ -121,6 +122,9 @@ func (p *Policy) walk(n *html.Node) {
 					c = next
 					continue
 				}
+				cleanAttrURL(c, "src")
+			case "a":
+				cleanAttrURL(c, "href")
 			}
 		}
 		p.walk(c)
@@ -167,4 +171,20 @@ func isPixelTracker(n *html.Node) bool {
 		return false
 	}
 	return (w == "0" || w == "1") && (h == "0" || h == "1")
+}
+
+// cleanAttrURL strips tracking parameters from the named attribute's
+// URL value, in place. No-op if the attribute is missing.
+//
+// Scope: M2 covers <a href> and <img src> only. UGCPolicy may also
+// permit <source src/srcset>, <video src/poster>, <audio src>, etc.;
+// tracking parameters in those URLs are not yet cleaned. Add cases
+// here if a real feed surfaces survivors.
+func cleanAttrURL(n *html.Node, key string) {
+	for i, a := range n.Attr {
+		if a.Key == key {
+			n.Attr[i].Val = urlcleaner.Clean(a.Val)
+			return
+		}
+	}
 }
