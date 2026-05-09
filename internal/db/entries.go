@@ -204,7 +204,7 @@ func UpdateAfterPoll(ctx context.Context, d *sql.DB, subID int64, r PollResult) 
 		insertedCount += int(n)
 	}
 
-	cutoff := r.NowUnix - 7*24*60*60
+	cutoff := r.NowUnix - int64(velocityWindow.Seconds())
 	var velocity int
 	if err = tx.QueryRowContext(ctx, `
 		SELECT COUNT(*) * 100 / 7 FROM entries
