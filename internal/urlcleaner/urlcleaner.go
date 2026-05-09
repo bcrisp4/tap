@@ -28,6 +28,12 @@ var trackingParams = map[string]struct{}{
 	"oly_anon_id":   {},
 	"oly_enc_id":    {},
 	"wickedid":      {},
+	"fbclid":        {},
+	"gclid":         {},
+	"dclid":         {},
+	"msclkid":       {},
+	"yclid":         {},
+	"igshid":        {},
 }
 
 // trackingPrefixes is the set of query-parameter name prefixes to drop.
