@@ -3,9 +3,11 @@ package api
 import (
 	"database/sql"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/bcrisp4/tap/internal/db"
@@ -83,7 +85,12 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 			Created:  time.Now().Unix(),
 		})
 		if err != nil {
-			writeError(w, http.StatusConflict, ErrCodeConflict, "subscription already exists")
+			if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+				writeError(w, http.StatusConflict, ErrCodeConflict, "subscription already exists")
+				return
+			}
+			slog.Error("insert subscription failed", "feed_url", body.FeedURL, "err", err)
+			writeError(w, http.StatusInternalServerError, ErrCodeInternal, "could not create subscription")
 			return
 		}
 		s, err := db.GetSubscription(r.Context(), d, id)
