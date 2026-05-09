@@ -3,6 +3,7 @@ package poll
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
@@ -225,4 +226,59 @@ func TestWorker_RetryAfterOverridesBackoff(t *testing.T) {
 	// fixedNow is captured, so res.RetryAfter ≈ fixedNow + 3600s ± a few ms.
 	expected := fixedNow.Add(time.Hour - 5*time.Second).Unix()
 	require.GreaterOrEqual(t, nextPoll, expected, "Retry-After:3600 must floor next_poll")
+}
+
+func TestWorker_NotModified_RecomputesVelocityAndCadence(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d, err := db.Open(ctx, ":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = d.Close() })
+	require.NoError(t, db.Migrate(ctx, d))
+
+	fixedNow := time.Date(2026, 5, 9, 12, 0, 0, 0, time.UTC)
+
+	subID, err := db.InsertSubscription(ctx, d, db.NewSubscription{
+		Title: "Active", FeedURL: "", NextPoll: 0, Created: fixedNow.Unix(),
+	})
+	require.NoError(t, err)
+	_, err = d.ExecContext(ctx, `UPDATE subscriptions SET etag='abc' WHERE id=?`, subID)
+	require.NoError(t, err)
+	for i := 0; i < 14; i++ {
+		_, err := d.ExecContext(ctx, `INSERT INTO entries
+			(subscription_id, hash, title, url, content, published_at, fetched_at)
+			VALUES (?, ?, '', '', '', ?, ?)`,
+			subID, fmt.Sprintf("h%d", i),
+			fixedNow.Add(-time.Duration(i)*12*time.Hour).Unix(), fixedNow.Unix())
+		require.NoError(t, err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "abc", r.Header.Get("If-None-Match"))
+		w.WriteHeader(http.StatusNotModified)
+	}))
+	t.Cleanup(srv.Close)
+	_, err = d.ExecContext(ctx, `UPDATE subscriptions SET feed_url=? WHERE id=?`, srv.URL, subID)
+	require.NoError(t, err)
+
+	w := NewWorker(d, srv.Client(), WorkerOpts{
+		Processor: processor.New(sanitise.DefaultPolicy(), nil),
+		Floor:     15 * time.Minute,
+		Ceiling:   24 * time.Hour,
+		Now:       func() time.Time { return fixedNow },
+	})
+	sub := db.DueSubscription{
+		ID: subID, FeedURL: srv.URL,
+		ETag: sql.NullString{String: "abc", Valid: true},
+	}
+	w.Run(ctx, sub)
+
+	var velocity int
+	var nextPoll int64
+	require.NoError(t, d.QueryRowContext(ctx,
+		`SELECT velocity_24h_x100, next_poll_at FROM subscriptions WHERE id = ?`,
+		subID).Scan(&velocity, &nextPoll))
+	require.Equal(t, 200, velocity)
+	expected := fixedNow.Add(12 * time.Hour).Unix()
+	require.Equal(t, expected, nextPoll)
 }

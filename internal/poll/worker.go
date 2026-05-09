@@ -98,9 +98,16 @@ func (w *Worker) Run(ctx context.Context, sub db.DueSubscription) {
 	}
 
 	if res.Status == http.StatusNotModified {
-		// Task 5.3 fills this in — placeholder keeps the build green between commits.
-		slog.DebugContext(ctx, "poll 304", "feed_id", sub.ID)
-		_ = db.UpdateAfterNotModified(ctx, w.db, sub.ID, now.Unix(), now.Add(w.opts.Ceiling).Unix(), 0)
+		velocity, verr := db.QueryVelocity(ctx, w.db, sub.ID, now)
+		if verr != nil {
+			slog.ErrorContext(ctx, "query velocity", "feed_id", sub.ID, "err", verr)
+			return
+		}
+		interval := cadence.IntervalFromVelocity(velocity, w.opts.Floor, w.opts.Ceiling)
+		next := cadence.ApplyServerFloors(now.Add(interval), res.RetryAfter, res.CacheMaxAge, now)
+		slog.DebugContext(ctx, "poll 304",
+			"feed_id", sub.ID, "velocity_x100", velocity, "next_poll_at", next.Unix())
+		_ = db.UpdateAfterNotModified(ctx, w.db, sub.ID, now.Unix(), next.Unix(), velocity)
 		return
 	}
 
