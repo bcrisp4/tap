@@ -9,7 +9,7 @@ embedded SPA, no external dependencies.
 
 ## Status
 
-Pre-M1 — walking-skeleton implementation in progress.
+M2 in progress — sanitisation pipeline complete; M2 awaiting merge.
 See [`docs/specs/`](docs/specs/) for milestone specs.
 
 ## Development
