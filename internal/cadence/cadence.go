@@ -4,7 +4,10 @@
 // both depend on it without cycling.
 package cadence
 
-import "time"
+import (
+	"math/rand/v2"
+	"time"
+)
 
 // IntervalFromVelocity converts a fixed-point velocity (entries/day × 100) to
 // a polling interval, clamped to [floor, ceiling]. Velocities below 1 entry/day
@@ -22,4 +25,32 @@ func IntervalFromVelocity(velocityX100 int, floor, ceiling time.Duration) time.D
 		return ceiling
 	}
 	return interval
+}
+
+// BackoffFromErrorCount returns the delay before the next attempt after
+// errorCount consecutive errors, doubling base each time and capping at
+// ceiling. When jitterFrac > 0 and rng is non-nil, the result is increased
+// by a uniform random fraction in [0, jitterFrac) of the computed delay.
+func BackoffFromErrorCount(errorCount int, base, ceiling time.Duration, jitterFrac float64, rng *rand.Rand) time.Duration {
+	if errorCount < 1 {
+		errorCount = 1
+	}
+	delay := base
+	for i := 1; i < errorCount; i++ {
+		if delay >= ceiling {
+			delay = ceiling
+			break
+		}
+		delay *= 2
+	}
+	if delay > ceiling {
+		delay = ceiling
+	}
+	if jitterFrac > 0 && rng != nil {
+		max := time.Duration(float64(delay) * jitterFrac)
+		if max > 0 {
+			delay += time.Duration(rng.Int64N(int64(max)))
+		}
+	}
+	return delay
 }
