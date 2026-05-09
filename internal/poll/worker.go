@@ -23,7 +23,6 @@ type Worker struct {
 	db     *sql.DB
 	client *http.Client
 	opts   WorkerOpts
-	policy *sanitise.Policy
 }
 
 // NewWorker requires a non-nil Policy. Defaulting it here would silently
@@ -39,7 +38,7 @@ func NewWorker(d *sql.DB, c *http.Client, o WorkerOpts) *Worker {
 	if c == nil {
 		c = http.DefaultClient
 	}
-	return &Worker{db: d, client: c, opts: o, policy: o.Policy}
+	return &Worker{db: d, client: c, opts: o}
 }
 
 // Run polls a single subscription end-to-end. Always returns; never panics.
@@ -81,7 +80,7 @@ func (w *Worker) Run(ctx context.Context, sub db.DueSubscription) {
 		if content == "" {
 			content = item.Description
 		}
-		content = w.policy.Sanitise(content)
+		content = w.opts.Policy.Sanitise(content)
 		newEntries = append(newEntries, db.NewEntry{
 			Hash:        feed.EntryHash(sub.ID, item),
 			Title:       item.Title,

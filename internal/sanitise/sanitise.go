@@ -57,10 +57,7 @@ type Policy struct {
 }
 
 // DefaultPolicy returns the policy used in production.
-func DefaultPolicy() *Policy { return New() }
-
-// New constructs a Policy. (Currently no options; M5 will extend.)
-func New() *Policy {
+func DefaultPolicy() *Policy {
 	bm := bluemonday.UGCPolicy()
 	bm.AllowURLSchemes("http", "https", "mailto")
 	// Allow iframes through bluemonday; the post-pass enforces the
@@ -196,14 +193,12 @@ func getAttr(n *html.Node, key string) string {
 }
 
 // isPixelTracker matches <img> whose width AND height attributes are
-// both "0" or "1". Mirrors miniflux's heuristic
-// (internal/reader/sanitizer/sanitizer.go isPixelTracker).
+// both "0" or "1" — the same "obvious tracker" heuristic miniflux uses.
 //
-// Known gaps (intentional — concept doc scopes us to "obvious" trackers):
-// CSS-styled trackers (<img style="width:1px">), 2x2 pixels, and naked
-// <img> with no dims that the browser sizes from a 1x1 source bitmap
-// all survive. Expanding the heuristic risks false positives on
-// legitimate content (icons, spacers).
+// Known gaps (intentional): CSS-styled trackers (<img style="width:1px">),
+// 2x2 pixels, and naked <img> with no dims that the browser sizes from a
+// 1x1 source bitmap all survive. Expanding the heuristic risks false
+// positives on legitimate content (icons, spacers).
 func isPixelTracker(n *html.Node) bool {
 	w := getAttr(n, "width")
 	h := getAttr(n, "height")
@@ -216,10 +211,9 @@ func isPixelTracker(n *html.Node) bool {
 // cleanAttrURL strips tracking parameters from the named attribute's
 // URL value, in place. No-op if the attribute is missing.
 //
-// Scope: M2 covers <a href> and <img src> only. UGCPolicy may also
-// permit <source src/srcset>, <video src/poster>, <audio src>, etc.;
-// tracking parameters in those URLs are not yet cleaned. Add cases
-// here if a real feed surfaces survivors.
+// Only <a href> and <img src> are wired up by walk; <source src/srcset>,
+// <video src/poster>, and <audio src> survive UGCPolicy with their
+// tracking params intact.
 func cleanAttrURL(n *html.Node, key string) {
 	for i, a := range n.Attr {
 		if a.Key == key {
