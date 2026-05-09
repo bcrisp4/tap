@@ -159,6 +159,25 @@ func TestParseSSRFPolicy_MalformedCIDR(t *testing.T) {
 	}
 }
 
+func TestParseSSRFPolicy_NormalisesTrailingDot(t *testing.T) {
+	// Operator entering "home.lan." (DNS-absolute form) should match
+	// "nas.home.lan" and "home.lan" — without the suffix-side normalisation
+	// the trailing dot would defeat the dot-boundary match.
+	p, err := ParseSSRFPolicy(false, []string{"home.lan.", "TS.NET."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.AllowHostname("home.lan") {
+		t.Error("home.lan should match suffix entered as 'home.lan.'")
+	}
+	if !p.AllowHostname("nas.home.lan") {
+		t.Error("nas.home.lan should match suffix entered as 'home.lan.'")
+	}
+	if !p.AllowHostname("foo.ts.net") {
+		t.Error("foo.ts.net should match suffix entered as 'TS.NET.'")
+	}
+}
+
 func TestParseSSRFPolicy_DisabledFlag(t *testing.T) {
 	p, err := ParseSSRFPolicy(true, nil)
 	if err != nil {

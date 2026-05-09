@@ -13,6 +13,13 @@ import (
 // waiting on a slot). The slot is released on response Body.Close() so
 // HTTP/1.1 keep-alive connections aren't reused before the prior caller
 // has finished reading.
+//
+// The map grows monotonically — entries are never evicted. Bounded by the
+// hostname cardinality of subscribed feeds plus media-proxy origins (at
+// typical self-hosted scale: dozens of feed hosts, hundreds of image-CDN
+// hosts referenced across cached entries). Each entry costs ~24 bytes plus
+// the hostname string. Eviction is unjustified at this scale; revisit if
+// real deployments report memory growth on long-running processes.
 type hostLimiter struct {
 	inner http.RoundTripper
 	n     int

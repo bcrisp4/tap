@@ -85,7 +85,15 @@ func (w *Worker) Run(ctx context.Context, sub db.DueSubscription) {
 	if res.Status == http.StatusNotModified {
 		velocity, verr := db.QueryVelocity(ctx, w.db, sub.ID, now)
 		if verr != nil {
-			slog.ErrorContext(ctx, "query velocity", "feed_id", sub.ID, "err", verr)
+			// Treat velocity-query failure as a poll failure rather than
+			// silently returning — otherwise next_poll_at stays put and the
+			// scheduler picks this subscription on every tick (tight loop).
+			delay := cadence.BackoffFromErrorCount(sub.ErrorCount+1, w.opts.ErrorBase, w.opts.Ceiling, 0.25)
+			next := now.Add(delay)
+			slog.ErrorContext(ctx, "query velocity",
+				"feed_id", sub.ID, "error_count", sub.ErrorCount+1,
+				"next_poll_at", next.Unix(), "err", verr)
+			_ = db.UpdateAfterError(ctx, w.db, sub.ID, verr.Error(), next.Unix())
 			return
 		}
 		interval := cadence.IntervalFromVelocity(velocity, w.opts.Floor, w.opts.Ceiling)

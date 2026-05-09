@@ -328,6 +328,56 @@ func TestWorker_Success_RetryAfterAdvisoryFloor(t *testing.T) {
 	require.GreaterOrEqual(t, nextPoll, expected, "Retry-After:3600 must floor next_poll on success")
 }
 
+func TestWorker_NotModified_VelocityQueryFailure_AdvancesNextPoll(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d, err := db.Open(ctx, ":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = d.Close() })
+	require.NoError(t, db.Migrate(ctx, d))
+
+	// Origin always 304s; that's the path that calls QueryVelocity.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotModified)
+	}))
+	t.Cleanup(srv.Close)
+
+	subID, err := db.InsertSubscription(ctx, d, db.NewSubscription{
+		Title: "X", FeedURL: srv.URL, NextPoll: 0, Created: 0,
+	})
+	require.NoError(t, err)
+
+	// Drop the entries table so QueryVelocity's COUNT errors.
+	_, err = d.ExecContext(ctx, `DROP TABLE entries`)
+	require.NoError(t, err)
+
+	fixedNow := time.Date(2026, 5, 9, 12, 0, 0, 0, time.UTC)
+	w := NewWorker(d, srv.Client(), WorkerOpts{
+		Processor: processor.New(sanitise.DefaultPolicy(), nil),
+		Floor:     15 * time.Minute,
+		Ceiling:   24 * time.Hour,
+		ErrorBase: 5 * time.Minute,
+		Now:       func() time.Time { return fixedNow },
+	})
+	w.Run(ctx, db.DueSubscription{ID: subID, FeedURL: srv.URL, ErrorCount: 0})
+
+	// next_poll_at must move forward — otherwise the scheduler picks this
+	// subscription on every tick (tight loop). Apply exponential backoff
+	// just like a fetch failure.
+	var nextPoll int64
+	var ec int
+	var lastError sql.NullString
+	require.NoError(t, d.QueryRowContext(ctx,
+		`SELECT next_poll_at, error_count, last_error FROM subscriptions WHERE id = ?`, subID).
+		Scan(&nextPoll, &ec, &lastError))
+	earliest := fixedNow.Add(5 * time.Minute).Unix()
+	latest := fixedNow.Add(5*time.Minute + 5*time.Minute/4).Unix()
+	require.GreaterOrEqual(t, nextPoll, earliest, "QueryVelocity failure must back off, not leave next_poll_at unchanged")
+	require.Less(t, nextPoll, latest)
+	require.Equal(t, 1, ec, "error_count should bump on velocity-query failure")
+	require.True(t, lastError.Valid, "last_error should record the velocity-query failure")
+}
+
 func TestWorker_CommitFailure_UsesExponentialBackoff(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

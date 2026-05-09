@@ -143,7 +143,7 @@ func ParseSSRFPolicy(disabled bool, entries []string) (SSRFPolicy, error) {
 			p.AllowCIDRs = append(p.AllowCIDRs, netip.PrefixFrom(addr, bits))
 			continue
 		}
-		p.AllowSuffixes = append(p.AllowSuffixes, strings.ToLower(e))
+		p.AllowSuffixes = append(p.AllowSuffixes, normaliseHost(e))
 	}
 	return p, nil
 }
