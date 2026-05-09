@@ -30,7 +30,7 @@ func TestEndToEnd_SubscribePollServeEntries(t *testing.T) {
     <id>urn:e2e:1</id>
     <link href="https://e2e.example/1"/>
     <updated>2026-05-01T00:00:00Z</updated>
-    <content type="html">&lt;p&gt;hello&lt;/p&gt;&lt;script&gt;alert(1)&lt;/script&gt;&lt;a href=&quot;https://e.com/?utm_source=feed&amp;id=1&quot; onclick=&quot;evil()&quot;&gt;link&lt;/a&gt;</content>
+    <content type="html">&lt;p&gt;hello&lt;/p&gt;&lt;script&gt;alert(1)&lt;/script&gt;&lt;a href=&quot;https://e.com/?utm_source=feed&amp;id=1&quot; onclick=&quot;evil()&quot;&gt;link&lt;/a&gt;&lt;iframe src=&quot;https://evil.example/embed&quot;&gt;&lt;/iframe&gt;&lt;img src=&quot;https://t.example/pixel&quot; width=&quot;1&quot; height=&quot;1&quot;&gt;</content>
   </entry>
 </feed>`
 	feedSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -90,5 +90,7 @@ func TestEndToEnd_SubscribePollServeEntries(t *testing.T) {
 	require.NotContains(t, detail.Content, "alert")
 	require.NotContains(t, detail.Content, "onclick")
 	require.NotContains(t, detail.Content, "utm_source")
+	require.NotContains(t, detail.Content, "<iframe")
+	require.NotContains(t, detail.Content, "t.example/pixel")
 	require.Contains(t, detail.Content, "<p>hello</p>")
 }
