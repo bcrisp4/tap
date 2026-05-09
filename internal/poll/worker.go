@@ -3,7 +3,9 @@ package poll
 import (
 	"context"
 	"database/sql"
+	"encoding/binary"
 	"log/slog"
+	"math/rand/v2"
 	"net/http"
 	"runtime/debug"
 	"time"
@@ -15,8 +17,13 @@ import (
 )
 
 type WorkerOpts struct {
-	Cadence   time.Duration        // fixed retry/next-poll interval for M1
+	Cadence   time.Duration        // legacy; M4 supersedes with Floor/Ceiling. Retained so callers compile.
 	Processor *processor.Processor // applied to every entry's HTML body. Required (panics on nil).
+	Floor     time.Duration        // min interval between polls; default 15m
+	Ceiling   time.Duration        // max interval between polls; default 24h
+	ErrorBase time.Duration        // first-error backoff base, doubled per consecutive error; default 5m
+	Now       func() time.Time     // default time.Now (overridable in tests)
+	Rand      *rand.Rand           // default fresh ChaCha8-seeded Rand (overridable in tests)
 }
 
 type Worker struct {
@@ -34,6 +41,23 @@ func NewWorker(d *sql.DB, c *http.Client, o WorkerOpts) *Worker {
 	}
 	if o.Cadence <= 0 {
 		o.Cadence = 30 * time.Minute
+	}
+	if o.Floor <= 0 {
+		o.Floor = 15 * time.Minute
+	}
+	if o.Ceiling <= 0 {
+		o.Ceiling = 24 * time.Hour
+	}
+	if o.ErrorBase <= 0 {
+		o.ErrorBase = 5 * time.Minute
+	}
+	if o.Now == nil {
+		o.Now = time.Now
+	}
+	if o.Rand == nil {
+		var seed [32]byte
+		binary.LittleEndian.PutUint64(seed[:8], uint64(time.Now().UnixNano()))
+		o.Rand = rand.New(rand.NewChaCha8(seed))
 	}
 	if c == nil {
 		c = http.DefaultClient

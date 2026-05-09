@@ -12,6 +12,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestSchedulerOpts_DefaultsApplied(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d, err := db.Open(ctx, ":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = d.Close() })
+	require.NoError(t, db.Migrate(ctx, d))
+
+	s := NewScheduler(ctx, d, http.DefaultClient, SchedulerOpts{})
+	require.NotZero(t, s.opts.Floor, "Floor should default to 15m")
+	require.NotZero(t, s.opts.Ceiling, "Ceiling should default to 24h")
+	require.NotZero(t, s.opts.ErrorBase, "ErrorBase should default to 5m")
+	require.NotNil(t, s.opts.Now, "Now should default to time.Now")
+	require.NotNil(t, s.opts.Rand, "Rand should default to a fresh rand.Rand")
+}
+
 func TestScheduler_TickDispatchesDueFeeds(t *testing.T) {
 	t.Parallel()
 
