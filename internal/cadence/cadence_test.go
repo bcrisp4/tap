@@ -67,3 +67,29 @@ func TestBackoffFromErrorCount_Jitter(t *testing.T) {
 		t.Errorf("delay %v outside jitter window [10m, 12m30s)", delay)
 	}
 }
+
+func TestApplyServerFloors(t *testing.T) {
+	now := time.Date(2026, 5, 9, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name        string
+		candidate   time.Time
+		retryAfter  time.Time
+		cacheMaxAge time.Duration
+		want        time.Time
+	}{
+		{"no overrides returns candidate", now.Add(2 * time.Hour), time.Time{}, 0, now.Add(2 * time.Hour)},
+		{"retry-after later than candidate pushes", now.Add(2 * time.Hour), now.Add(6 * time.Hour), 0, now.Add(6 * time.Hour)},
+		{"retry-after earlier than candidate is ignored", now.Add(6 * time.Hour), now.Add(2 * time.Hour), 0, now.Add(6 * time.Hour)},
+		{"cache max-age later than candidate pushes", now.Add(2 * time.Hour), time.Time{}, 6 * time.Hour, now.Add(6 * time.Hour)},
+		{"both set, later wins", now.Add(2 * time.Hour), now.Add(4 * time.Hour), 6 * time.Hour, now.Add(6 * time.Hour)},
+		{"both set, retry-after later wins", now.Add(2 * time.Hour), now.Add(8 * time.Hour), 6 * time.Hour, now.Add(8 * time.Hour)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ApplyServerFloors(tc.candidate, tc.retryAfter, tc.cacheMaxAge, now)
+			if !got.Equal(tc.want) {
+				t.Errorf("ApplyServerFloors = %v; want %v", got, tc.want)
+			}
+		})
+	}
+}

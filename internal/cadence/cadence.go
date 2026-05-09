@@ -54,3 +54,18 @@ func BackoffFromErrorCount(errorCount int, base, ceiling time.Duration, jitterFr
 	}
 	return delay
 }
+
+// ApplyServerFloors pushes the candidate next-poll time forward (never
+// backward) based on origin response headers.
+func ApplyServerFloors(candidate, retryAfter time.Time, cacheMaxAge time.Duration, now time.Time) time.Time {
+	if !retryAfter.IsZero() && retryAfter.After(candidate) {
+		candidate = retryAfter
+	}
+	if cacheMaxAge > 0 {
+		cacheFloor := now.Add(cacheMaxAge)
+		if cacheFloor.After(candidate) {
+			candidate = cacheFloor
+		}
+	}
+	return candidate
+}
