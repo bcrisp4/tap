@@ -1,9 +1,23 @@
-// Stub — full implementation in Phase 9.
-// Replaced by the real router when Phase 9 lands.
-import { readable } from 'svelte/store';
+import { writable, type Readable } from 'svelte/store';
 
-export type Route =
-  | { name: 'unread'; params: Record<string, never> }
-  | { name: 'reader'; params: { id: string } };
+type RouteState =
+  | { name: 'unread' }
+  | { name: 'reader'; params: { id: number } };
 
-export const route = readable<Route>({ name: 'unread', params: {} });
+function parse(pathname: string): RouteState {
+  const m = pathname.match(/^\/entry\/(\d+)$/);
+  if (m) return { name: 'reader', params: { id: Number(m[1]) } };
+  return { name: 'unread' };
+}
+
+const internal = writable<RouteState>(parse(window.location.pathname));
+
+window.addEventListener('popstate', () => internal.set(parse(window.location.pathname)));
+
+export const route: Readable<RouteState> = { subscribe: internal.subscribe };
+
+export function navigate(to: string) {
+  if (window.location.pathname === to) return;
+  window.history.pushState({}, '', to);
+  internal.set(parse(to));
+}
