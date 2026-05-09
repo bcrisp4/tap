@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"encoding/binary"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -56,4 +57,67 @@ func TestValidateImage_RejectsSVG(t *testing.T) {
 	body := []byte(`<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"></svg>`)
 	_, ok := validateImage(body, "image/svg+xml")
 	require.False(t, ok, "SVG must be rejected — not in M3 allowlist")
+}
+
+// mkFtyp constructs a self-consistent ISOBMFF ftyp box. boxSize is computed
+// from the number of fields so that detectAVIF's brand walker runs over the
+// full declared range.
+func mkFtyp(major, minor string, compatible ...string) []byte {
+	// size(4) + "ftyp"(4) + major_brand(4) + minor_version(4) + 4*len(compat)
+	size := 8 + 4 + 4 + 4*len(compatible)
+	out := make([]byte, 0, size)
+	var sz [4]byte
+	binary.BigEndian.PutUint32(sz[:], uint32(size))
+	out = append(out, sz[:]...)
+	out = append(out, []byte("ftyp")...)
+	out = append(out, []byte(major)...)
+	out = append(out, []byte(minor)...)
+	for _, c := range compatible {
+		out = append(out, []byte(c)...)
+	}
+	return out
+}
+
+func TestDetectAVIF(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		body []byte
+		want string
+	}{
+		{
+			name: "major_brand=avif",
+			body: mkFtyp("avif", "0000"),
+			want: "image/avif",
+		},
+		{
+			name: "major_brand=avis",
+			body: mkFtyp("avis", "0000"),
+			want: "image/avif",
+		},
+		{
+			name: "compatible_brand=avif",
+			body: mkFtyp("mp42", "0000", "avif"),
+			want: "image/avif",
+		},
+		{
+			name: "minor_version_avif_does_not_match",
+			body: mkFtyp("mp42", "avif"), // no compat brands; "avif" is at minor_version offset (12)
+			want: "",
+		},
+		{
+			name: "no_avif_brands",
+			body: mkFtyp("mp42", "0000", "isom"),
+			want: "",
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := detectAVIF(tc.body)
+			require.Equal(t, tc.want, got)
+		})
+	}
 }
