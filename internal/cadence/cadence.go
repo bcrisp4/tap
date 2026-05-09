@@ -6,6 +6,9 @@ package cadence
 
 import (
 	"math/rand/v2"
+	"net/http"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -68,4 +71,24 @@ func ApplyServerFloors(candidate, retryAfter time.Time, cacheMaxAge time.Duratio
 		}
 	}
 	return candidate
+}
+
+// ParseRetryAfter parses the HTTP Retry-After header per RFC 7231 §7.1.3:
+// either a non-negative integer of seconds (delta-seconds) or an HTTP-date.
+// Returns (target time, true) on success; (zero, false) on absent or malformed.
+func ParseRetryAfter(header string, now time.Time) (time.Time, bool) {
+	header = strings.TrimSpace(header)
+	if header == "" {
+		return time.Time{}, false
+	}
+	if secs, err := strconv.Atoi(header); err == nil {
+		if secs < 0 {
+			return time.Time{}, false
+		}
+		return now.Add(time.Duration(secs) * time.Second), true
+	}
+	if t, err := http.ParseTime(header); err == nil {
+		return t, true
+	}
+	return time.Time{}, false
 }

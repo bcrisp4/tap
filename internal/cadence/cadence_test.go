@@ -93,3 +93,32 @@ func TestApplyServerFloors(t *testing.T) {
 		})
 	}
 }
+
+func TestParseRetryAfter(t *testing.T) {
+	now := time.Date(2026, 5, 9, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name   string
+		header string
+		wantOK bool
+		want   time.Time
+	}{
+		{"empty -> false", "", false, time.Time{}},
+		{"whitespace -> false", "   ", false, time.Time{}},
+		{"seconds form", "60", true, now.Add(60 * time.Second)},
+		{"seconds form with whitespace", "  120  ", true, now.Add(120 * time.Second)},
+		{"negative seconds rejected", "-5", false, time.Time{}},
+		{"http-date form", "Tue, 09 May 2026 13:00:00 GMT", true, time.Date(2026, 5, 9, 13, 0, 0, 0, time.UTC)},
+		{"malformed string -> false", "tomorrow please", false, time.Time{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := ParseRetryAfter(tc.header, now)
+			if ok != tc.wantOK {
+				t.Errorf("ok = %v; want %v", ok, tc.wantOK)
+			}
+			if ok && !got.Equal(tc.want) {
+				t.Errorf("time = %v; want %v", got, tc.want)
+			}
+		})
+	}
+}
