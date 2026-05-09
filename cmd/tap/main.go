@@ -43,7 +43,7 @@ func main() {
 
 		proxyCacheDir = flag.String("proxy-cache-dir", envOr("TAP_PROXY_CACHE_DIR", ""), "media cache directory (default: <data>/cache)")
 		proxyCacheCap = flag.Int64("proxy-cache-cap-bytes", envOrInt64("TAP_PROXY_CACHE_CAP_BYTES", 524288000), "media cache size cap in bytes")
-		proxyFetchTO  = flag.Duration("proxy-fetch-timeout", 0, "DEPRECATED: alias for --http-timeout")
+		proxyFetchTO  = flag.Duration("proxy-fetch-timeout", envOrDuration("TAP_PROXY_FETCH_TIMEOUT", 0), "DEPRECATED: alias for --http-timeout")
 		proxyBodyCap  = flag.Int64("proxy-body-cap-bytes", envOrInt64("TAP_PROXY_BODY_CAP_BYTES", 10485760), "per-response body cap for media proxy origin fetches")
 
 		ssrfAllow stringSlice
@@ -55,7 +55,9 @@ func main() {
 	if len(ssrfAllow) == 0 {
 		if env := os.Getenv("TAP_SSRF_ALLOW"); env != "" {
 			for _, p := range strings.Split(env, ",") {
-				ssrfAllow = append(ssrfAllow, p)
+				if p = strings.TrimSpace(p); p != "" {
+					ssrfAllow = append(ssrfAllow, p)
+				}
 			}
 		}
 	}

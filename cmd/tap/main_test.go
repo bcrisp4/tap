@@ -341,6 +341,8 @@ func TestE2E_RetryAfterFloorOnSuccess(t *testing.T) {
 
 	var nextPoll int64
 	require.NoError(t, d.QueryRowContext(ctx, `SELECT next_poll_at FROM subscriptions WHERE id=?`, subID).Scan(&nextPoll))
+	// 5s slack absorbs the small drift between pollStart (test-side) and the
+	// time.Now() that feed.Fetch uses to parse Retry-After.
 	require.GreaterOrEqual(t, nextPoll, pollStart+3600-5, "Retry-After:3600 should floor next_poll")
 }
 
