@@ -2,7 +2,9 @@ package httpx
 
 import (
 	"errors"
+	"net/http"
 	"net/netip"
+	"net/url"
 	"testing"
 )
 
@@ -145,5 +147,55 @@ func TestParseSSRFPolicy_DisabledFlag(t *testing.T) {
 	}
 	if !p.Disabled {
 		t.Error("Disabled should be true")
+	}
+}
+
+func mustURL(t *testing.T, s string) *url.URL {
+	t.Helper()
+	u, err := url.Parse(s)
+	if err != nil {
+		t.Fatalf("parse %q: %v", s, err)
+	}
+	return u
+}
+
+func TestCheckRedirect_DepthLimit(t *testing.T) {
+	p := SSRFPolicy{}
+	via := make([]*http.Request, 10)
+	req := &http.Request{URL: mustURL(t, "https://example.com")}
+	if err := p.CheckRedirect(req, via); err == nil {
+		t.Error("expected error at 10 redirects")
+	}
+}
+
+func TestCheckRedirect_LiteralPrivateIP(t *testing.T) {
+	p := SSRFPolicy{}
+	req := &http.Request{URL: mustURL(t, "http://127.0.0.1:9999/x")}
+	if err := p.CheckRedirect(req, nil); err == nil {
+		t.Error("expected reject for literal loopback in redirect")
+	}
+}
+
+func TestCheckRedirect_AllowlistedSuffix(t *testing.T) {
+	p := SSRFPolicy{AllowSuffixes: []string{"home.lan"}}
+	req := &http.Request{URL: mustURL(t, "http://nas.home.lan/x")}
+	if err := p.CheckRedirect(req, nil); err != nil {
+		t.Errorf("expected allow for suffix-allowlisted host, got %v", err)
+	}
+}
+
+func TestCheckRedirect_HostnameDeferToDialer(t *testing.T) {
+	p := SSRFPolicy{}
+	req := &http.Request{URL: mustURL(t, "https://example.com")}
+	if err := p.CheckRedirect(req, nil); err != nil {
+		t.Errorf("expected nil (defer to dialer), got %v", err)
+	}
+}
+
+func TestCheckRedirect_Disabled(t *testing.T) {
+	p := SSRFPolicy{Disabled: true}
+	req := &http.Request{URL: mustURL(t, "http://127.0.0.1/x")}
+	if err := p.CheckRedirect(req, nil); err != nil {
+		t.Errorf("Disabled should allow, got %v", err)
 	}
 }

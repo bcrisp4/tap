@@ -7,6 +7,7 @@ package httpx
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"net/netip"
 	"strings"
 )
@@ -63,6 +64,29 @@ func (p SSRFPolicy) AllowHostname(host string) bool {
 		}
 	}
 	return false
+}
+
+// CheckRedirect is the http.Client.CheckRedirect callback. It enforces a
+// 10-redirect depth limit (matches stdlib default), then for the new URL:
+// suffix-allowlisted hostnames pass; literal IPs are checked against
+// AllowAddr; other hostnames fall through (the dialer's ControlContext
+// will re-check after DNS resolution — that is the authoritative SSRF
+// gate).
+func (p SSRFPolicy) CheckRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	if p.Disabled {
+		return nil
+	}
+	host := req.URL.Hostname()
+	if p.AllowHostname(host) {
+		return nil
+	}
+	if addr, err := netip.ParseAddr(host); err == nil {
+		return p.AllowAddr(addr)
+	}
+	return nil
 }
 
 // ParseSSRFPolicy parses CLI-supplied allowlist entries into an SSRFPolicy.
