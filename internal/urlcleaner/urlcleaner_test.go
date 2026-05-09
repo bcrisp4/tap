@@ -90,3 +90,41 @@ func TestClean_StripsPrefixedTrackers(t *testing.T) {
 		})
 	}
 }
+
+func TestClean_LegitimateParamsSurvive(t *testing.T) {
+	t.Parallel()
+	in := "https://example.com/article?id=42&page=3&q=hello"
+	if got := Clean(in); got != in {
+		t.Errorf("Clean(%q) modified URL with no tracking params: got %q", in, got)
+	}
+}
+
+func TestClean_UnchangedOnNoTrackingParams(t *testing.T) {
+	t.Parallel()
+	in := "https://example.com/article"
+	if got := Clean(in); got != in {
+		t.Errorf("Clean(%q) modified URL with no query string: got %q", in, got)
+	}
+}
+
+func TestClean_NonURLReturnsUnchanged(t *testing.T) {
+	t.Parallel()
+	// Inputs urlcleaner cannot make sense of: empty string, junk, malformed
+	// URL with no scheme. urlcleaner is not a security boundary — dangerous
+	// schemes (javascript:, data:) are dropped by sanitise's URL allowlist
+	// upstream, not here.
+	for _, in := range []string{"", "not a url", "://malformed"} {
+		if got := Clean(in); got != in {
+			t.Errorf("Clean(%q) = %q, want unchanged", in, got)
+		}
+	}
+}
+
+func TestClean_NoTrailingQuestionMarkAfterStrip(t *testing.T) {
+	t.Parallel()
+	in := "https://example.com/article?utm_source=foo"
+	want := "https://example.com/article"
+	if got := Clean(in); got != want {
+		t.Errorf("Clean(%q) = %q, want %q (no trailing '?')", in, got, want)
+	}
+}
