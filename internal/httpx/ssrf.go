@@ -12,8 +12,15 @@ import (
 	"strings"
 )
 
+// ErrSSRFBlocked is returned by AllowAddr / CheckRedirect when the policy
+// rejects a destination. errors.Is can distinguish SSRF errors from other
+// dial failures.
 var ErrSSRFBlocked = errors.New("ssrf: destination not allowed")
 
+// SSRFPolicy describes the destination policy applied to every outbound
+// request. Disabled bypasses both the dialer check and the redirect
+// re-check; AllowSuffixes match dot-boundary against URL hostnames before
+// DNS; AllowCIDRs match resolved IPs after DNS.
 type SSRFPolicy struct {
 	Disabled      bool
 	AllowSuffixes []string
@@ -34,6 +41,12 @@ var defaultRejectCIDRs = []netip.Prefix{
 	netip.MustParsePrefix("::/128"),
 }
 
+// AllowAddr returns nil if the resolved IP is permitted, ErrSSRFBlocked
+// (wrapped with location detail) if not. Disabled and CIDR allowlist
+// short-circuit the default-reject path. v4-mapped-v6 inputs are checked
+// in both their mapped and unmapped form against both lists so attackers
+// can't bypass with ::ffff:127.0.0.1 and operators can allow with a v4
+// CIDR.
 func (p SSRFPolicy) AllowAddr(addr netip.Addr) error {
 	if p.Disabled {
 		return nil
@@ -52,6 +65,9 @@ func (p SSRFPolicy) AllowAddr(addr netip.Addr) error {
 	return nil
 }
 
+// AllowHostname reports whether host matches an AllowSuffixes entry
+// (dot-boundary, case-insensitive, trailing dot ignored). Disabled
+// implies true.
 func (p SSRFPolicy) AllowHostname(host string) bool {
 	if p.Disabled {
 		return true
