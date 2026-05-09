@@ -30,7 +30,9 @@ func TestClean_StripsKnownInboundTrackers(t *testing.T) {
 		{"_hsmi", "https://e.com/?_hsmi=mno&keep=1", "https://e.com/?keep=1"},
 		{"_hsenc", "https://e.com/?_hsenc=pqr&keep=1", "https://e.com/?keep=1"},
 		{"vero_id", "https://e.com/?vero_id=stu&keep=1", "https://e.com/?keep=1"},
+		{"vero_conv", "https://e.com/?vero_conv=abc&keep=1", "https://e.com/?keep=1"},
 		{"oly_anon_id", "https://e.com/?oly_anon_id=vwx&keep=1", "https://e.com/?keep=1"},
+		{"oly_enc_id", "https://e.com/?oly_enc_id=def&keep=1", "https://e.com/?keep=1"},
 		{"wickedid", "https://e.com/?wickedid=yz&keep=1", "https://e.com/?keep=1"},
 	}
 	for _, tc := range cases {
