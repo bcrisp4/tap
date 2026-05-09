@@ -14,7 +14,7 @@ See [`docs/specs/`](docs/specs/) for milestone specs.
 
 ## Development
 
-Requires Go 1.24+, pnpm, Make.
+Requires Go 1.25+, pnpm, Make.
 
 ```bash
 make dev      # run Go on :8080 and Vite on :5173 — open http://localhost:5173

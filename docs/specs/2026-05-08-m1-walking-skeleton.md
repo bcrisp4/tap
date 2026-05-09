@@ -34,11 +34,14 @@ tap/
 └── go.sum
 ```
 
-The Go binary embeds `web/dist/` via `//go:embed all:web/dist`.
+The Go binary embeds the built SPA via `//go:embed all:dist` declared in
+`web/embed.go` (package `web`). Embed paths can't escape their package
+directory, so the directive lives next to `dist/` rather than at the project
+root; the Go server imports `web.Dist` to mount the embedded `embed.FS`.
 
 ### Build pipeline
 
-- `make dev` runs the Vite dev server on `:5173` and `go run ./cmd/tap` together; the Go server proxies non-API requests to Vite during development so the SPA hot-reloads while the API runs in real Go.
+- `make dev` runs `go run ./cmd/tap` on `:8080` and the Vite dev server on `:5173`. Visit Vite at http://localhost:5173 — Vite proxies `/api` and `/healthz` through to the Go server, so the SPA hot-reloads while the API runs in real Go. Vite is the page host (not the Go server), which keeps Vite's HMR client and WebSocket on their native port.
 - `make build` runs `pnpm --dir web run build` then `go build -o bin/tap ./cmd/tap`. The output is one static binary.
 - `make docker` produces a distroless image (`gcr.io/distroless/static-debian12:nonroot`) with the binary embedded. The image declares one volume (`/data`) and one port (`8080`). It runs as a non-root user.
 
