@@ -156,8 +156,8 @@ func UpdateAfterError(ctx context.Context, d *sql.DB, subID int64, errMsg string
 	return nil
 }
 
-// UpdateAfterNotModified bumps timestamps on a 304 path and writes the
-// recomputed velocity. error_count and last_error are reset.
+// UpdateAfterNotModified bumps timestamps on a 304 path without inserting
+// anything, writes the recomputed velocity, and resets error_count / last_error.
 func UpdateAfterNotModified(ctx context.Context, d *sql.DB, subID int64, nowUnix, nextPollAt int64, velocityX100 int) error {
 	_, err := d.ExecContext(ctx, `
 		UPDATE subscriptions

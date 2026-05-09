@@ -66,6 +66,8 @@ func (w *Worker) Run(ctx context.Context, sub db.DueSubscription) {
 
 	if res.Status == http.StatusNotModified {
 		slog.DebugContext(ctx, "poll 304", "feed_id", sub.ID)
+		// TODO(M4 Phase 5): recompute velocity via db.QueryVelocity; right now the
+		// 304 path resets velocity_24h_x100 to 0 every poll.
 		_ = db.UpdateAfterNotModified(ctx, w.db, sub.ID, now, nextPoll, 0)
 		return
 	}
@@ -96,8 +98,9 @@ func (w *Worker) Run(ctx context.Context, sub db.DueSubscription) {
 		NewLastModified: nullStr(res.LastModified),
 		NowUnix:         now,
 		NewEntries:      newEntries,
-		Floor:           15 * time.Minute,
-		Ceiling:         24 * time.Hour,
+		// TODO(M4 Phase 5): wire Floor / Ceiling from WorkerOpts (default 15m / 24h).
+		Floor:   15 * time.Minute,
+		Ceiling: 24 * time.Hour,
 	})
 	if err != nil {
 		slog.ErrorContext(ctx, "commit poll", "feed_id", sub.ID, "err", err)
