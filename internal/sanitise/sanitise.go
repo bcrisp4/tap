@@ -56,6 +56,7 @@ func New() *Policy {
 	// allows the element in current bluemonday, but explicit is safer.
 	bm.AllowElements("iframe")
 	bm.AllowAttrs("src", "width", "height", "frameborder", "allowfullscreen", "allow").OnElements("iframe")
+	bm.AllowAttrs("width", "height").OnElements("img")
 	return &Policy{
 		bm:          bm,
 		iframeHosts: defaultIframeHosts,
@@ -114,6 +115,12 @@ func (p *Policy) walk(n *html.Node) {
 					c = next
 					continue
 				}
+			case "img":
+				if isPixelTracker(c) {
+					n.RemoveChild(c)
+					c = next
+					continue
+				}
 			}
 		}
 		p.walk(c)
@@ -142,4 +149,22 @@ func getAttr(n *html.Node, key string) string {
 		}
 	}
 	return ""
+}
+
+// isPixelTracker matches <img> whose width AND height attributes are
+// both "0" or "1". Mirrors miniflux's heuristic
+// (internal/reader/sanitizer/sanitizer.go isPixelTracker).
+//
+// Known gaps (intentional — concept doc scopes us to "obvious" trackers):
+// CSS-styled trackers (<img style="width:1px">), 2x2 pixels, and naked
+// <img> with no dims that the browser sizes from a 1x1 source bitmap
+// all survive. Expanding the heuristic risks false positives on
+// legitimate content (icons, spacers).
+func isPixelTracker(n *html.Node) bool {
+	w := getAttr(n, "width")
+	h := getAttr(n, "height")
+	if w == "" || h == "" {
+		return false
+	}
+	return (w == "0" || w == "1") && (h == "0" || h == "1")
 }

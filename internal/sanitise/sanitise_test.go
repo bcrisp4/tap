@@ -102,3 +102,51 @@ func TestSanitise_IframeAllowlist(t *testing.T) {
 		})
 	}
 }
+
+func TestSanitise_PixelTracker(t *testing.T) {
+	t.Parallel()
+	p := DefaultPolicy()
+
+	dropped := []struct {
+		name string
+		in   string
+	}{
+		{"1x1", `<p>a</p><img src="https://t.example/p" width="1" height="1"><p>b</p>`},
+		{"0x0", `<p>a</p><img src="https://t.example/p" width="0" height="0"><p>b</p>`},
+		{"1x0", `<p>a</p><img src="https://t.example/p" width="1" height="0"><p>b</p>`},
+		{"0x1", `<p>a</p><img src="https://t.example/p" width="0" height="1"><p>b</p>`},
+	}
+	for _, tc := range dropped {
+		t.Run("dropped/"+tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := p.Sanitise(tc.in)
+			if strings.Contains(got, "<img") {
+				t.Errorf("pixel tracker survived: in=%q out=%q", tc.in, got)
+			}
+			if !strings.Contains(got, "<p>a</p>") || !strings.Contains(got, "<p>b</p>") {
+				t.Errorf("surrounding content damaged: in=%q out=%q", tc.in, got)
+			}
+		})
+	}
+
+	kept := []struct {
+		name string
+		in   string
+	}{
+		{"1x2", `<img src="https://e.com/i" width="1" height="2">`},
+		{"2x1", `<img src="https://e.com/i" width="2" height="1">`},
+		{"5x5", `<img src="https://e.com/i" width="5" height="5">`},
+		{"no dims", `<img src="https://e.com/i">`},
+		{"only width", `<img src="https://e.com/i" width="1">`},
+		{"only height", `<img src="https://e.com/i" height="1">`},
+	}
+	for _, tc := range kept {
+		t.Run("kept/"+tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := p.Sanitise(tc.in)
+			if !strings.Contains(got, "<img") {
+				t.Errorf("legitimate image dropped: in=%q out=%q", tc.in, got)
+			}
+		})
+	}
+}
