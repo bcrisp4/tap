@@ -9,7 +9,8 @@ DATA ?= ./data
 dev:
 	@echo "Starting Go on :8080 and Vite on :5173 — open http://localhost:5173"
 	@$(GO) run ./cmd/tap & \
-	 trap 'kill %1' EXIT; \
+	 GO_PID=$$!; \
+	 trap "kill $$GO_PID 2>/dev/null" EXIT; \
 	 $(PNPM) --dir web dev
 
 # CGO_ENABLED=0 keeps the binary truly static so it runs on a distroless image
