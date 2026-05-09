@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 )
 
@@ -12,7 +13,7 @@ func GetConfig(ctx context.Context, d *sql.DB, key string) (value []byte, ok boo
 	row := d.QueryRowContext(ctx, `SELECT value FROM configuration WHERE key = ?`, key)
 	var v []byte
 	if err := row.Scan(&v); err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, false, nil
 		}
 		return nil, false, fmt.Errorf("scan configuration[%s]: %w", key, err)

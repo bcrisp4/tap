@@ -12,7 +12,7 @@ func TestMigrate_AddsConfigurationTable(t *testing.T) {
 	t.Parallel()
 	d, err := db.Open(context.Background(), ":memory:")
 	require.NoError(t, err)
-	defer d.Close()
+	t.Cleanup(func() { _ = d.Close() })
 	require.NoError(t, db.Migrate(context.Background(), d))
 
 	var name string
@@ -26,7 +26,7 @@ func TestSetConfigIfAbsent_InsertsAndIsIdempotent(t *testing.T) {
 	t.Parallel()
 	d, err := db.Open(context.Background(), ":memory:")
 	require.NoError(t, err)
-	defer d.Close()
+	t.Cleanup(func() { _ = d.Close() })
 	require.NoError(t, db.Migrate(context.Background(), d))
 
 	got, err := db.SetConfigIfAbsent(context.Background(), d, "k", []byte("v1"))
@@ -43,7 +43,7 @@ func TestGetConfig_HitAndMiss(t *testing.T) {
 	t.Parallel()
 	d, err := db.Open(context.Background(), ":memory:")
 	require.NoError(t, err)
-	defer d.Close()
+	t.Cleanup(func() { _ = d.Close() })
 	require.NoError(t, db.Migrate(context.Background(), d))
 
 	val, ok, err := db.GetConfig(context.Background(), d, "missing")
