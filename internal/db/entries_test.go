@@ -87,15 +87,15 @@ func TestEntry_CompositeCursorPaginationDoesNotDropEntries(t *testing.T) {
 func ptrBool(b bool) *bool { return &b }
 
 func TestUpdateAfterPoll_ComputesVelocityAndNextPoll(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
 	ctx := context.Background()
-	d, _ := Open(ctx, ":memory:")
-	defer d.Close()
-	_ = Migrate(ctx, d)
 
 	now := time.Date(2026, 5, 9, 12, 0, 0, 0, time.UTC)
-	subID, _ := InsertSubscription(ctx, d, NewSubscription{
+	subID, err := InsertSubscription(ctx, d, NewSubscription{
 		Title: "Daily", FeedURL: "http://d/", NextPoll: 0, Created: now.Unix(),
 	})
+	require.NoError(t, err)
 
 	var newEntries []NewEntry
 	for i := 0; i < 14; i++ {
@@ -116,38 +116,30 @@ func TestUpdateAfterPoll_ComputesVelocityAndNextPoll(t *testing.T) {
 		RetryAfter:  time.Time{},
 		CacheMaxAge: 0,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if inserted != 14 {
-		t.Errorf("inserted = %d; want 14", inserted)
-	}
+	require.NoError(t, err)
+	require.Equal(t, 14, inserted, "all entries inserted")
 
 	var velocity int
 	var nextPoll int64
-	_ = d.QueryRowContext(ctx, `
-        SELECT velocity_24h_x100, next_poll_at FROM subscriptions WHERE id = ?
-    `, subID).Scan(&velocity, &nextPoll)
-	if velocity != 200 {
-		t.Errorf("velocity = %d; want 200", velocity)
-	}
+	require.NoError(t, d.QueryRowContext(ctx, `
+		SELECT velocity_24h_x100, next_poll_at FROM subscriptions WHERE id = ?
+	`, subID).Scan(&velocity, &nextPoll))
+	require.Equal(t, 200, velocity, "14 entries / 7 days * 100")
 	expected := now.Add(cadence.IntervalFromVelocity(200, 15*time.Minute, 24*time.Hour)).Unix()
-	if nextPoll != expected {
-		t.Errorf("next_poll = %d; want %d (12h after now)", nextPoll, expected)
-	}
+	require.Equal(t, expected, nextPoll, "next_poll = now + 12h")
 }
 
 func TestUpdateAfterPoll_RetryAfterPushesNextPoll(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
 	ctx := context.Background()
-	d, _ := Open(ctx, ":memory:")
-	defer d.Close()
-	_ = Migrate(ctx, d)
 
 	now := time.Date(2026, 5, 9, 12, 0, 0, 0, time.UTC)
 	retryAfter := now.Add(6 * time.Hour)
-	subID, _ := InsertSubscription(ctx, d, NewSubscription{
+	subID, err := InsertSubscription(ctx, d, NewSubscription{
 		Title: "Active", FeedURL: "http://a/", NextPoll: 0, Created: now.Unix(),
 	})
+	require.NoError(t, err)
 
 	var newEntries []NewEntry
 	for i := 0; i < 1400; i++ {
@@ -158,19 +150,17 @@ func TestUpdateAfterPoll_RetryAfterPushesNextPoll(t *testing.T) {
 			PublishedAt: now.Add(-time.Duration(i) * time.Minute).Unix(),
 		})
 	}
-	_, err := UpdateAfterPoll(ctx, d, subID, PollResult{
+	_, err = UpdateAfterPoll(ctx, d, subID, PollResult{
 		NowUnix:    now.Unix(),
 		NewEntries: newEntries,
 		Floor:      15 * time.Minute,
 		Ceiling:    24 * time.Hour,
 		RetryAfter: retryAfter,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+
 	var nextPoll int64
-	_ = d.QueryRowContext(ctx, `SELECT next_poll_at FROM subscriptions WHERE id = ?`, subID).Scan(&nextPoll)
-	if nextPoll != retryAfter.Unix() {
-		t.Errorf("next_poll = %d; want %d (retry-after wins over 15m floor)", nextPoll, retryAfter.Unix())
-	}
+	require.NoError(t, d.QueryRowContext(ctx,
+		`SELECT next_poll_at FROM subscriptions WHERE id = ?`, subID).Scan(&nextPoll))
+	require.Equal(t, retryAfter.Unix(), nextPoll, "retry-after wins over 15m floor")
 }

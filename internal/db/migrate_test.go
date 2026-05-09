@@ -35,25 +35,16 @@ func TestMigrate_AppliesAllMigrationsExactlyOnce(t *testing.T) {
 }
 
 func TestMigrate_AddsVelocityColumn(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
 	ctx := context.Background()
-	d, err := Open(ctx, ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer d.Close()
-	if err := Migrate(ctx, d); err != nil {
-		t.Fatalf("Migrate: %v", err)
-	}
+
 	var name string
 	var defaultVal sql.NullString
-	err = d.QueryRowContext(ctx, `
-        SELECT name, "dflt_value" FROM pragma_table_info('subscriptions')
-        WHERE name = 'velocity_24h_x100'
-    `).Scan(&name, &defaultVal)
-	if err != nil {
-		t.Fatalf("velocity_24h_x100 column not found: %v", err)
-	}
-	if defaultVal.String != "0" {
-		t.Errorf("default = %q; want 0", defaultVal.String)
-	}
+	err := d.QueryRowContext(ctx, `
+		SELECT name, "dflt_value" FROM pragma_table_info('subscriptions')
+		WHERE name = 'velocity_24h_x100'
+	`).Scan(&name, &defaultVal)
+	require.NoError(t, err, "velocity_24h_x100 column not found")
+	require.Equal(t, "0", defaultVal.String, "default value")
 }
