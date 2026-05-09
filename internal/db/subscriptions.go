@@ -3,8 +3,16 @@ package db
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"strings"
 )
+
+// ErrSubscriptionExists wraps the underlying SQLite UNIQUE-constraint failure
+// on subscriptions.feed_url. Use errors.Is(err, ErrSubscriptionExists) in
+// callers to map the duplicate case to a 409 without coupling them to the
+// SQLite driver.
+var ErrSubscriptionExists = errors.New("subscription with this feed_url already exists")
 
 type Subscription struct {
 	ID           int64
@@ -45,6 +53,12 @@ func InsertSubscription(ctx context.Context, d *sql.DB, s NewSubscription) (int6
 		VALUES (?, ?, NULLIF(?, ''), ?, ?)
 	`, s.Title, s.FeedURL, s.SiteURL, s.NextPoll, s.Created)
 	if err != nil {
+		// modernc.org/sqlite reports unique violations through the standard
+		// SQLite error text. We match on substring rather than the typed
+		// driver error so the api package stays driver-agnostic.
+		if strings.Contains(err.Error(), "UNIQUE constraint failed: subscriptions.feed_url") {
+			return 0, ErrSubscriptionExists
+		}
 		return 0, fmt.Errorf("insert subscription: %w", err)
 	}
 	return res.LastInsertId()

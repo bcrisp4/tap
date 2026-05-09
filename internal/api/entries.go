@@ -140,6 +140,10 @@ func registerEntryRoutes(m *http.ServeMux, d *sql.DB) {
 		}
 		e, err := db.GetEntry(r.Context(), d, id)
 		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				writeError(w, http.StatusNotFound, ErrCodeNotFound, "entry not found")
+				return
+			}
 			writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())
 			return
 		}

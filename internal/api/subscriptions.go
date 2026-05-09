@@ -3,11 +3,11 @@ package api
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/bcrisp4/tap/internal/db"
@@ -70,8 +70,13 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 			writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "invalid JSON body")
 			return
 		}
-		if _, err := url.ParseRequestURI(body.FeedURL); err != nil {
+		u, err := url.Parse(body.FeedURL)
+		if err != nil || !u.IsAbs() {
 			writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "feed_url must be an absolute URL")
+			return
+		}
+		if u.Scheme != "http" && u.Scheme != "https" {
+			writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "feed_url must use http or https")
 			return
 		}
 		title := body.Title
@@ -85,7 +90,7 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 			Created:  time.Now().Unix(),
 		})
 		if err != nil {
-			if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			if errors.Is(err, db.ErrSubscriptionExists) {
 				writeError(w, http.StatusConflict, ErrCodeConflict, "subscription already exists")
 				return
 			}
