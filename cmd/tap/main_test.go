@@ -44,7 +44,7 @@ func TestEndToEnd_SubscribePollServeEntries(t *testing.T) {
 	defer d.Close()
 	require.NoError(t, db.Migrate(context.Background(), d))
 
-	mux := api.NewMux(d, nil)
+	mux := api.NewMux(d, nil, nil)
 
 	// POST /api/v1/subscriptions
 	body := strings.NewReader(`{"feed_url":"` + feedSrv.URL + `"}`)

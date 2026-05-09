@@ -74,7 +74,7 @@ func main() {
 	// /api/ and /healthz both go through the same factory; sched.Poke is wired
 	// into POST /api/v1/subscriptions so a freshly added feed polls immediately
 	// rather than waiting up to TickInterval (60s).
-	apiMux := api.NewMux(d, sched.Poke)
+	apiMux := api.NewMux(d, sched.Poke, nil)
 	mux.Handle("/api/", apiMux)
 	mux.Handle("/healthz", apiMux)
 	mux.Handle("/", server.SPAHandler())

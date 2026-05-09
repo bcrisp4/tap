@@ -10,7 +10,7 @@ import (
 
 func TestHealthz(t *testing.T) {
 	t.Parallel()
-	mux := NewMux(nil, nil) // nil DB OK — healthz doesn't touch it
+	mux := NewMux(nil, nil, nil) // nil DB OK — healthz doesn't touch it
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	require.Equal(t, http.StatusOK, rr.Code)
