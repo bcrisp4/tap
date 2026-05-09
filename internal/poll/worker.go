@@ -139,7 +139,8 @@ func (w *Worker) Run(ctx context.Context, sub db.DueSubscription) {
 		NewEntries:      newEntries,
 		Floor:           w.opts.Floor,
 		Ceiling:         w.opts.Ceiling,
-		// Task 5.4 wires RetryAfter / CacheMaxAge.
+		RetryAfter:      res.RetryAfter,
+		CacheMaxAge:     res.CacheMaxAge,
 	})
 	if perr != nil {
 		slog.ErrorContext(ctx, "commit poll", "feed_id", sub.ID, "err", perr)

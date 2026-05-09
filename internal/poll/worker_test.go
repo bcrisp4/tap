@@ -282,3 +282,56 @@ func TestWorker_NotModified_RecomputesVelocityAndCadence(t *testing.T) {
 	expected := fixedNow.Add(12 * time.Hour).Unix()
 	require.Equal(t, expected, nextPoll)
 }
+
+func TestWorker_Success_RetryAfterAdvisoryFloor(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d, err := db.Open(ctx, ":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = d.Close() })
+	require.NoError(t, db.Migrate(ctx, d))
+
+	// fixedNow must align with the wall clock because feed.Fetch parses
+	// Retry-After against time.Now() (Phase 4); the success branch then
+	// floors next_poll against the parsed timestamp.
+	fixedNow := time.Now().UTC()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "3600")
+		_, _ = w.Write([]byte(`<rss version="2.0"><channel><title>t</title>
+            <item><title>e1</title><link>http://x/1</link></item>
+        </channel></rss>`))
+	}))
+	t.Cleanup(srv.Close)
+
+	subID, err := db.InsertSubscription(ctx, d, db.NewSubscription{
+		Title: "X", FeedURL: srv.URL, NextPoll: 0, Created: fixedNow.Unix(),
+	})
+	require.NoError(t, err)
+
+	// Pre-seed the velocity window with enough entries that
+	// IntervalFromVelocity collapses to Floor (15m). Without that, a single
+	// entry yields velocity < 100 and the candidate hits Ceiling = 24h, which
+	// would mask the Retry-After test.
+	for i := 0; i < 700; i++ {
+		_, err := d.ExecContext(ctx, `INSERT INTO entries
+			(subscription_id, hash, title, url, content, published_at, fetched_at)
+			VALUES (?, ?, '', '', '', ?, ?)`,
+			subID, fmt.Sprintf("seed%d", i),
+			fixedNow.Add(-time.Duration(i)*time.Minute).Unix(), fixedNow.Unix())
+		require.NoError(t, err)
+	}
+
+	w := NewWorker(d, srv.Client(), WorkerOpts{
+		Processor: processor.New(sanitise.DefaultPolicy(), nil),
+		Floor:     15 * time.Minute,
+		Ceiling:   24 * time.Hour,
+		Now:       func() time.Time { return fixedNow },
+	})
+	w.Run(ctx, db.DueSubscription{ID: subID, FeedURL: srv.URL})
+
+	var nextPoll int64
+	require.NoError(t, d.QueryRowContext(ctx,
+		`SELECT next_poll_at FROM subscriptions WHERE id = ?`, subID).Scan(&nextPoll))
+	expected := fixedNow.Add(time.Hour - 5*time.Second).Unix()
+	require.GreaterOrEqual(t, nextPoll, expected, "Retry-After:3600 must floor next_poll on success")
+}
