@@ -4,7 +4,6 @@
   import type { EntryDetail } from '../lib/types';
   import FeedAvatar from '../components/FeedAvatar.svelte';
   import JunctionDot from '../components/JunctionDot.svelte';
-  import { onMount } from 'svelte';
 
   type Props = { id: number };
   let { id }: Props = $props();
@@ -12,23 +11,36 @@
   let entry = $state<EntryDetail | null>(null);
   let error = $state<string | null>(null);
 
-  onMount(async () => {
-    try {
-      entry = await api.getEntry(id);
-      // Auto-mark-read on open. If the PATCH fails we leave the entry as unread
-      // — the user can retry via the MARK READ button, which has the same shape.
-      // NOTE (M1 security): content_html is rendered unsanitised below via {@html}.
-      // HTML sanitisation is deferred to M2. Until then, do NOT expose this app
-      // on a network address reachable by untrusted feed authors.
-      if (entry && !entry.read) {
-        try {
-          await api.patchEntry(id, { read: true });
-          entry = { ...entry, read: true };
-        } catch { /* swallow; user can manually toggle */ }
+  // Refetch whenever the route's entry id changes. Cancellation guards
+  // against late writes from a previous fetch when the user navigates
+  // between entries faster than the network responds.
+  $effect(() => {
+    const targetId = id;
+    entry = null;
+    error = null;
+    let cancelled = false;
+    (async () => {
+      try {
+        const fetched = await api.getEntry(targetId);
+        if (cancelled) return;
+        entry = fetched;
+        // Auto-mark-read on open. If the PATCH fails we leave the entry as
+        // unread — the user can retry via the MARK READ button.
+        // NOTE (M1 security): content is rendered unsanitised below via
+        // {@html}. HTML sanitisation is deferred to M2.
+        if (fetched && !fetched.read) {
+          try {
+            await api.patchEntry(targetId, { read: true });
+            if (cancelled) return;
+            entry = { ...fetched, read: true };
+          } catch { /* swallow; user can manually toggle */ }
+        }
+      } catch (e) {
+        if (cancelled) return;
+        error = (e as Error).message;
       }
-    } catch (e) {
-      error = (e as Error).message;
-    }
+    })();
+    return () => { cancelled = true; };
   });
 
   async function toggleRead() {
@@ -69,7 +81,11 @@
       <p class="loading">Loading…</p>
     {:else}
       <div class="source">
-        <FeedAvatar feedURL={entry.url} size={10} radius={2} />
+        <!-- Key the avatar off the host (stable per feed) rather than the
+             article URL, so all entries from the same source render the
+             same colour. EntryDetail doesn't carry feed_url today; using
+             the host of entry.url is a safe proxy in practice. -->
+        <FeedAvatar feedURL={host(entry.url)} size={10} radius={2} />
         <span class="src-host">{host(entry.url)}</span>
       </div>
       <h1>{entry.title}</h1>

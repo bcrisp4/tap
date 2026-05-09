@@ -55,9 +55,19 @@ function subscriptionsStore() {
   return {
     subscribe,
     async load() {
-      set(await api.listSubscriptions());
+      // Don't propagate the rejection: this is called from onMount with no
+      // awaiter, so an unhandled rejection would crash the page. Sidebar
+      // simply renders an empty feed list on failure; the developer sees
+      // the cause in console.
+      try {
+        set(await api.listSubscriptions());
+      } catch (e) {
+        console.error('subscriptions.load failed:', e);
+      }
     },
     async add(feed_url: string) {
+      // add() callers (AddFeedForm) await and surface errors in the UI,
+      // so propagation is intentional here.
       await api.addSubscription(feed_url);
       await this.load();
     },

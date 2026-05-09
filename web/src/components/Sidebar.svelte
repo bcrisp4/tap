@@ -2,9 +2,8 @@
   import FeedAvatar from './FeedAvatar.svelte';
   import AddFeedForm from './AddFeedForm.svelte';
   import { subscriptions } from '../lib/store';
-  import { onMount } from 'svelte';
-
-  onMount(() => { subscriptions.load(); });
+  // Sidebar is purely presentational — the parent view (Unread) owns the
+  // subscriptions.load() call so the request fires once per page render.
 </script>
 
 <aside class="sidebar">
