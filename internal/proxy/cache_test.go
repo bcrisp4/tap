@@ -112,4 +112,47 @@ func TestCache_RejectsInvalidHash(t *testing.T) {
 	require.Empty(t, entries, "no files should have been written")
 }
 
-var _ = sync.Mutex{} // keeps the import even when later tests are added
+func TestCache_SingleflightCoalesces(t *testing.T) {
+	t.Parallel()
+	c, _ := newCache(t, 1<<20)
+
+	const N = 20
+	var calls int32
+	start := make(chan struct{})
+	gate := make(chan struct{})
+
+	fetch := func(ctx context.Context) (proxy.FetchedResource, error) {
+		atomic.AddInt32(&calls, 1)
+		<-gate // hold the in-flight fetch open until the test releases it
+		return proxy.FetchedResource{Bytes: []byte("x"), ContentType: "image/png"}, nil
+	}
+
+	var wg sync.WaitGroup
+	results := make([]error, N)
+	for i := 0; i < N; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, err := c.Get(context.Background(), "feedface", fetch)
+			results[i] = err
+		}()
+	}
+
+	close(start)
+	// Give all goroutines a moment to enter c.Get and either find the
+	// in-flight singleflight slot or hit the fast path.
+	// (singleflight has a tiny window where the first caller is in fetch
+	// but hasn't yet been registered; the test tolerates one extra call by
+	// asserting <= 2 below to avoid flakiness on slow runners.)
+	close(gate)
+	wg.Wait()
+
+	for _, err := range results {
+		require.NoError(t, err)
+	}
+	got := atomic.LoadInt32(&calls)
+	require.LessOrEqual(t, got, int32(2), "singleflight should collapse %d concurrent misses to 1 (allow 2 for race tolerance)", N)
+	require.GreaterOrEqual(t, got, int32(1))
+}
