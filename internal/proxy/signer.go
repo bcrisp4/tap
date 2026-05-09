@@ -18,9 +18,16 @@ type Signer struct {
 }
 
 const hmacBytes = 16
+const proxySigningKeyMinBytes = 32
 
 // NewSigner copies the key. Callers may safely reuse the underlying slice.
+// Panics if key is shorter than 32 bytes — the production caller in
+// cmd/tap/main.go generates a 32-byte key from crypto/rand, and shorter keys
+// break the security model.
 func NewSigner(key []byte) *Signer {
+	if len(key) < proxySigningKeyMinBytes {
+		panic("proxy.NewSigner: key must be at least 32 bytes")
+	}
 	cp := make([]byte, len(key))
 	copy(cp, key)
 	return &Signer{key: cp}

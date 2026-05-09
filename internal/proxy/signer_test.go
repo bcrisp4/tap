@@ -54,6 +54,16 @@ func TestSigner_VerifyRejectsMalformed(t *testing.T) {
 	}
 }
 
+func TestSigner_SignEmptyURL_VerifyRejects(t *testing.T) {
+	t.Parallel()
+	s := proxy.NewSigner(testKey)
+	tok := s.Sign("")
+	// Sign produces a syntactically-shaped token, but Verify rejects it
+	// because the URL component is empty (dot at position 0).
+	_, ok := s.Verify(tok)
+	require.False(t, ok, "tokens for empty URLs must not round-trip")
+}
+
 func TestSigner_RewriteImageURL(t *testing.T) {
 	t.Parallel()
 	s := proxy.NewSigner(testKey)
