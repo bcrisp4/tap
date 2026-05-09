@@ -1,0 +1,16 @@
+.git
+.github
+.claude
+.agents
+.playwright-mcp
+docs
+ui_design
+bin
+**/node_modules
+**/dist
+*.db
+*.db-shm
+*.db-wal
+data
+README.md
+Makefile
