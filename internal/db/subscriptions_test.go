@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"testing"
 	"time"
 
@@ -64,4 +65,90 @@ func TestSubscription_ListDuePolls(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	require.Equal(t, due, rows[0].ID)
+}
+
+func TestListDuePolls_IncludesErrorCount(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	ctx := context.Background()
+
+	subID, err := InsertSubscription(ctx, d, NewSubscription{
+		Title: "T", FeedURL: "http://x/", NextPoll: 0, Created: 0,
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, UpdateAfterError(ctx, d, subID, "transient", 0))
+	require.NoError(t, UpdateAfterError(ctx, d, subID, "transient again", 0))
+
+	due, err := ListDuePolls(ctx, d, time.Now().Unix(), 10)
+	require.NoError(t, err)
+	require.Len(t, due, 1)
+	require.Equal(t, 2, due[0].ErrorCount)
+}
+
+func TestQueryVelocity_RollingWindow(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	ctx := context.Background()
+
+	now := time.Date(2026, 5, 9, 12, 0, 0, 0, time.UTC)
+	subID, err := InsertSubscription(ctx, d, NewSubscription{
+		Title: "Test", FeedURL: "http://x/feed", NextPoll: 0, Created: now.Unix(),
+	})
+	require.NoError(t, err)
+
+	// 14 entries within last 7 days, 1 entry from 8 days ago (out of window).
+	for i := 0; i < 14; i++ {
+		_, err := d.ExecContext(ctx, `
+			INSERT INTO entries (subscription_id, hash, title, url, content, published_at, fetched_at)
+			VALUES (?, ?, '', '', '', ?, ?)
+		`, subID, fmt.Sprintf("h%d", i), now.Add(-time.Duration(i)*time.Hour).Unix(), now.Unix())
+		require.NoError(t, err)
+	}
+	_, err = d.ExecContext(ctx, `
+		INSERT INTO entries (subscription_id, hash, title, url, content, published_at, fetched_at)
+		VALUES (?, 'old', '', '', '', ?, ?)
+	`, subID, now.Add(-8*24*time.Hour).Unix(), now.Unix())
+	require.NoError(t, err)
+
+	velocity, err := QueryVelocity(ctx, d, subID, now)
+	require.NoError(t, err)
+	require.Equal(t, 200, velocity, "14 entries / 7 days * 100")
+}
+
+func TestQueryVelocity_NoEntries(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	ctx := context.Background()
+
+	subID, err := InsertSubscription(ctx, d, NewSubscription{
+		Title: "Empty", FeedURL: "http://e/feed", NextPoll: 0, Created: 0,
+	})
+	require.NoError(t, err)
+
+	v, err := QueryVelocity(ctx, d, subID, time.Now())
+	require.NoError(t, err)
+	require.Equal(t, 0, v, "velocity for empty feed")
+}
+
+func TestUpdateAfterNotModified_WritesVelocity(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	ctx := context.Background()
+
+	subID, err := InsertSubscription(ctx, d, NewSubscription{
+		Title: "T", FeedURL: "http://x/", NextPoll: 0, Created: 0,
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, UpdateAfterNotModified(ctx, d, subID, 1000, 2000, 350))
+
+	var velocity int
+	var lastPoll, nextPoll int64
+	require.NoError(t, d.QueryRowContext(ctx,
+		`SELECT velocity_24h_x100, last_poll_at, next_poll_at FROM subscriptions WHERE id = ?`,
+		subID).Scan(&velocity, &lastPoll, &nextPoll))
+	require.Equal(t, 350, velocity, "velocity_24h_x100")
+	require.Equal(t, int64(1000), lastPoll, "last_poll_at")
+	require.Equal(t, int64(2000), nextPoll, "next_poll_at")
 }

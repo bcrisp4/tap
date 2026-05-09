@@ -13,11 +13,13 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/bcrisp4/tap/internal/api"
 	"github.com/bcrisp4/tap/internal/db"
+	"github.com/bcrisp4/tap/internal/httpx"
 	"github.com/bcrisp4/tap/internal/poll"
 	"github.com/bcrisp4/tap/internal/processor"
 	"github.com/bcrisp4/tap/internal/proxy"
@@ -27,15 +29,37 @@ import (
 
 func main() {
 	var (
-		addr          = flag.String("addr", "127.0.0.1:8080", "HTTP listen address (set 0.0.0.0:8080 in containers)")
-		dataDir       = flag.String("data", envOr("TAP_DATA_DIR", "./data"), "data directory containing tap.db")
-		logFmt        = flag.String("log-format", "json", "log format: json or text")
+		addr    = flag.String("addr", "127.0.0.1:8080", "HTTP listen address (set 0.0.0.0:8080 in containers)")
+		dataDir = flag.String("data", envOr("TAP_DATA_DIR", "./data"), "data directory containing tap.db")
+		logFmt  = flag.String("log-format", "json", "log format: json or text")
+
+		httpTimeout   = flag.Duration("http-timeout", envOrDuration("TAP_HTTP_TIMEOUT", 30*time.Second), "total per-request HTTP deadline")
+		perHostInfl   = flag.Int("per-host-inflight", envOrInt("TAP_PER_HOST_INFLIGHT", 4), "concurrent outbound HTTP requests per hostname")
+		ssrfDisabled  = flag.Bool("ssrf-disabled", envOrBool("TAP_SSRF_DISABLED", false), "disable the SSRF guard (use only on fully trusted networks)")
+		pollFloor     = flag.Duration("poll-floor", envOrDuration("TAP_POLL_FLOOR", 15*time.Minute), "adaptive cadence floor")
+		pollCeiling   = flag.Duration("poll-ceiling", envOrDuration("TAP_POLL_CEILING", 24*time.Hour), "adaptive cadence ceiling and error backoff cap")
+		pollErrorBase = flag.Duration("poll-error-base", envOrDuration("TAP_POLL_ERROR_BASE", 5*time.Minute), "base of exponential error backoff")
+		userAgent     = flag.String("user-agent", envOr("TAP_USER_AGENT", "tap/0.1 (+https://github.com/bcrisp4/tap)"), "User-Agent header on outbound HTTP")
+
 		proxyCacheDir = flag.String("proxy-cache-dir", envOr("TAP_PROXY_CACHE_DIR", ""), "media cache directory (default: <data>/cache)")
 		proxyCacheCap = flag.Int64("proxy-cache-cap-bytes", envOrInt64("TAP_PROXY_CACHE_CAP_BYTES", 524288000), "media cache size cap in bytes")
-		proxyFetchTO  = flag.Duration("proxy-fetch-timeout", envOrDuration("TAP_PROXY_FETCH_TIMEOUT", 30*time.Second), "per-fetch deadline for media proxy origin requests")
 		proxyBodyCap  = flag.Int64("proxy-body-cap-bytes", envOrInt64("TAP_PROXY_BODY_CAP_BYTES", 10485760), "per-response body cap for media proxy origin fetches")
+
+		ssrfAllow stringSlice
 	)
+	flag.Var(&ssrfAllow, "ssrf-allow", "SSRF allowlist entry (CIDR, IP literal, or hostname suffix). Repeatable; env TAP_SSRF_ALLOW is comma-separated.")
 	flag.Parse()
+
+	// Hydrate ssrfAllow from env if not set via flag.
+	if len(ssrfAllow) == 0 {
+		if env := os.Getenv("TAP_SSRF_ALLOW"); env != "" {
+			for _, p := range strings.Split(env, ",") {
+				if p = strings.TrimSpace(p); p != "" {
+					ssrfAllow = append(ssrfAllow, p)
+				}
+			}
+		}
+	}
 
 	configureLogger(*logFmt)
 
@@ -80,17 +104,24 @@ func main() {
 	signer := proxy.NewSigner(proxyKey)
 	cache := proxy.NewCache(cacheDir, *proxyCacheCap)
 
-	// HTTP client used for both feed polls and proxy origin fetches.
-	// M4 will replace this with a shared SSRF-aware client.
-	client := &http.Client{
-		Timeout: *proxyFetchTO,
-		Transport: &http.Transport{
-			MaxIdleConns:        32,
-			MaxIdleConnsPerHost: 4,
-			IdleConnTimeout:     90 * time.Second,
-			TLSHandshakeTimeout: 10 * time.Second,
-		},
+	// Build the shared SSRF-aware HTTP client. The same client serves both
+	// feed polls (via the scheduler) and proxy origin fetches, so the per-host
+	// concurrency cap, SSRF guard, and User-Agent apply uniformly.
+	ssrfPolicy, err := httpx.ParseSSRFPolicy(*ssrfDisabled, []string(ssrfAllow))
+	if err != nil {
+		slog.Error("parse ssrf-allow", "err", err)
+		os.Exit(1)
 	}
+	if *ssrfDisabled {
+		slog.Warn("SSRF guard disabled — outbound HTTP unrestricted")
+	}
+
+	client := httpx.NewClient(httpx.Opts{
+		Timeout:         *httpTimeout,
+		PerHostInflight: *perHostInfl,
+		SSRF:            ssrfPolicy,
+		UserAgent:       *userAgent,
+	})
 
 	proxyHandler := proxy.NewHandler(signer, cache, client, *proxyBodyCap)
 
@@ -98,6 +129,9 @@ func main() {
 
 	sched := poll.NewScheduler(ctx, d, client, poll.SchedulerOpts{
 		Processor: proc,
+		Floor:     *pollFloor,
+		Ceiling:   *pollCeiling,
+		ErrorBase: *pollErrorBase,
 	})
 	sched.Start()
 
@@ -196,4 +230,34 @@ func envOrDuration(k string, def time.Duration) time.Duration {
 		fmt.Fprintf(os.Stderr, "warning: %s=%q is not a valid duration; using default %s\n", k, v, def)
 	}
 	return def
+}
+
+func envOrInt(k string, def int) int {
+	if v := os.Getenv(k); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+		fmt.Fprintf(os.Stderr, "warning: %s=%q is not a valid int; using default %d\n", k, v, def)
+	}
+	return def
+}
+
+func envOrBool(k string, def bool) bool {
+	if v := os.Getenv(k); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			return b
+		}
+		fmt.Fprintf(os.Stderr, "warning: %s=%q is not a valid bool; using default %v\n", k, v, def)
+	}
+	return def
+}
+
+// stringSlice implements flag.Value for repeatable string flags.
+// Env-var form is comma-separated; flag form is repeatable.
+type stringSlice []string
+
+func (s *stringSlice) String() string { return strings.Join(*s, ",") }
+func (s *stringSlice) Set(v string) error {
+	*s = append(*s, v)
+	return nil
 }

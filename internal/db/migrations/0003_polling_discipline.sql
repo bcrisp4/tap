@@ -1,0 +1,1 @@
+ALTER TABLE subscriptions ADD COLUMN velocity_24h_x100 INTEGER NOT NULL DEFAULT 0;

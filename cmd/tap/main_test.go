@@ -2,17 +2,22 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/bcrisp4/tap/internal/api"
 	"github.com/bcrisp4/tap/internal/db"
+	"github.com/bcrisp4/tap/internal/httpx"
 	"github.com/bcrisp4/tap/internal/poll"
 	"github.com/bcrisp4/tap/internal/processor"
 	"github.com/bcrisp4/tap/internal/proxy"
@@ -58,8 +63,7 @@ func TestEndToEnd_SubscribePollServeEntries(t *testing.T) {
 
 	// Drive the scheduler.
 	sched := poll.NewScheduler(context.Background(), d, http.DefaultClient, poll.SchedulerOpts{
-		Workers: 1,
-		Cadence: time.Hour,
+		Workers:   1,
 		Processor: processor.New(sanitise.DefaultPolicy(), nil),
 	})
 	defer sched.Stop()
@@ -161,7 +165,6 @@ func TestEndToEnd_ProxyURLsRewriteAndServe(t *testing.T) {
 	proc := processor.New(sanitise.DefaultPolicy(), signer.RewriteImageURL)
 	sched := poll.NewScheduler(context.Background(), d, http.DefaultClient, poll.SchedulerOpts{
 		Workers:   1,
-		Cadence:   time.Hour,
 		Processor: proc,
 	})
 	defer sched.Stop()
@@ -224,4 +227,163 @@ func TestEndToEnd_ProxyURLsRewriteAndServe(t *testing.T) {
 	gotURL, ok := signer2.Verify(tok)
 	require.True(t, ok)
 	require.Equal(t, imageURL, gotURL)
+}
+
+func TestE2E_SSRFRejectsLoopbackByDefault(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	tmp := t.TempDir()
+	d, err := db.Open(ctx, filepath.Join(tmp, "tap.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = d.Close() })
+	require.NoError(t, db.Migrate(ctx, d))
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`<rss version="2.0"><channel><title>t</title></channel></rss>`))
+	}))
+	t.Cleanup(srv.Close)
+
+	client := httpx.NewClient(httpx.Opts{Timeout: 5 * time.Second, SSRF: httpx.SSRFPolicy{}})
+	sched := poll.NewScheduler(ctx, d, client, poll.SchedulerOpts{
+		Processor: processor.New(sanitise.DefaultPolicy(), nil),
+		Workers:   1,
+		Floor:     15 * time.Minute,
+		Ceiling:   24 * time.Hour,
+	})
+	sched.Start()
+	t.Cleanup(sched.Stop)
+
+	subID, err := db.InsertSubscription(ctx, d, db.NewSubscription{
+		Title: "Loopback", FeedURL: srv.URL, NextPoll: 0, Created: time.Now().Unix(),
+	})
+	require.NoError(t, err)
+	sched.Tick(ctx)
+	require.NoError(t, sched.Wait(2*time.Second))
+
+	var lastError sql.NullString
+	require.NoError(t, d.QueryRowContext(ctx, `SELECT last_error FROM subscriptions WHERE id=?`, subID).Scan(&lastError))
+	require.True(t, lastError.Valid, "expected last_error to be set")
+	require.Contains(t, lastError.String, "ssrf", "expected ssrf in error: %s", lastError.String)
+}
+
+func TestE2E_SSRFAllowlistAcceptsLoopback(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	tmp := t.TempDir()
+	d, err := db.Open(ctx, filepath.Join(tmp, "tap.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = d.Close() })
+	require.NoError(t, db.Migrate(ctx, d))
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`<rss version="2.0"><channel><title>t</title></channel></rss>`))
+	}))
+	t.Cleanup(srv.Close)
+
+	policy, err := httpx.ParseSSRFPolicy(false, []string{"127.0.0.0/8"})
+	require.NoError(t, err)
+	client := httpx.NewClient(httpx.Opts{Timeout: 5 * time.Second, SSRF: policy})
+	sched := poll.NewScheduler(ctx, d, client, poll.SchedulerOpts{
+		Processor: processor.New(sanitise.DefaultPolicy(), nil),
+		Workers:   1,
+		Floor:     15 * time.Minute,
+		Ceiling:   24 * time.Hour,
+	})
+	sched.Start()
+	t.Cleanup(sched.Stop)
+
+	subID, err := db.InsertSubscription(ctx, d, db.NewSubscription{
+		Title: "Allowed", FeedURL: srv.URL, NextPoll: 0, Created: time.Now().Unix(),
+	})
+	require.NoError(t, err)
+	sched.Tick(ctx)
+	require.NoError(t, sched.Wait(2*time.Second))
+
+	var lastError sql.NullString
+	require.NoError(t, d.QueryRowContext(ctx, `SELECT last_error FROM subscriptions WHERE id=?`, subID).Scan(&lastError))
+	require.False(t, lastError.Valid, "expected no error, got %q", lastError.String)
+}
+
+func TestE2E_RetryAfterFloorOnSuccess(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	tmp := t.TempDir()
+	d, err := db.Open(ctx, filepath.Join(tmp, "tap.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = d.Close() })
+	require.NoError(t, db.Migrate(ctx, d))
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "3600")
+		_, _ = w.Write([]byte(`<rss version="2.0"><channel><title>t</title></channel></rss>`))
+	}))
+	t.Cleanup(srv.Close)
+
+	policy, err := httpx.ParseSSRFPolicy(false, []string{"127.0.0.0/8"})
+	require.NoError(t, err)
+	client := httpx.NewClient(httpx.Opts{Timeout: 5 * time.Second, SSRF: policy})
+	sched := poll.NewScheduler(ctx, d, client, poll.SchedulerOpts{
+		Processor: processor.New(sanitise.DefaultPolicy(), nil),
+		Workers:   1,
+		Floor:     15 * time.Minute,
+		Ceiling:   24 * time.Hour,
+	})
+	sched.Start()
+	t.Cleanup(sched.Stop)
+
+	pollStart := time.Now().Unix()
+	subID, err := db.InsertSubscription(ctx, d, db.NewSubscription{
+		Title: "Slow", FeedURL: srv.URL, NextPoll: 0, Created: pollStart,
+	})
+	require.NoError(t, err)
+	sched.Tick(ctx)
+	require.NoError(t, sched.Wait(2*time.Second))
+
+	var nextPoll int64
+	require.NoError(t, d.QueryRowContext(ctx, `SELECT next_poll_at FROM subscriptions WHERE id=?`, subID).Scan(&nextPoll))
+	// 5s slack absorbs the small drift between pollStart (test-side) and the
+	// time.Now() that feed.Fetch uses to parse Retry-After.
+	require.GreaterOrEqual(t, nextPoll, pollStart+3600-5, "Retry-After:3600 should floor next_poll")
+}
+
+func TestE2E_PerHostInflightSerialises(t *testing.T) {
+	t.Parallel()
+	var inflight, maxObserved atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := inflight.Add(1)
+		for {
+			m := maxObserved.Load()
+			if n <= m || maxObserved.CompareAndSwap(m, n) {
+				break
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+		inflight.Add(-1)
+		_, _ = w.Write([]byte(`<rss version="2.0"><channel><title>t</title></channel></rss>`))
+	}))
+	t.Cleanup(srv.Close)
+
+	policy, err := httpx.ParseSSRFPolicy(false, []string{"127.0.0.0/8"})
+	require.NoError(t, err)
+	client := httpx.NewClient(httpx.Opts{
+		Timeout:         5 * time.Second,
+		PerHostInflight: 1,
+		SSRF:            policy,
+	})
+
+	var wg sync.WaitGroup
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resp, err := client.Get(srv.URL)
+			if err == nil {
+				_, _ = io.Copy(io.Discard, resp.Body)
+				_ = resp.Body.Close()
+			}
+		}()
+	}
+	wg.Wait()
+
+	require.Equal(t, int32(1), maxObserved.Load(), "PerHostInflight=1 should serialise")
 }

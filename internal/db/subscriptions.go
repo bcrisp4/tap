@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // ErrSubscriptionExists wraps the underlying SQLite UNIQUE-constraint failure
@@ -13,6 +14,11 @@ import (
 // callers to map the duplicate case to a 409 without coupling them to the
 // SQLite driver.
 var ErrSubscriptionExists = errors.New("subscription with this feed_url already exists")
+
+// velocityWindow is the rolling window over which entries/day is computed.
+// Used by QueryVelocity (time form) and UpdateAfterPoll's inline cutoff
+// (unix-seconds form) so both callers compute the same boundary.
+const velocityWindow = 7 * 24 * time.Hour
 
 type Subscription struct {
 	ID           int64
@@ -41,11 +47,10 @@ type DueSubscription struct {
 	FeedURL      string
 	ETag         sql.NullString
 	LastModified sql.NullString
+	ErrorCount   int
 }
 
-// PollResult and UpdateAfterPoll live in entries.go because they reference
-// db.NewEntry, which is defined there. Keeping them together avoids a forward
-// reference and lets Task 2.5 commit cleanly without depending on Task 2.6.
+// PollResult and UpdateAfterPoll live in entries.go because they reference db.NewEntry.
 
 func InsertSubscription(ctx context.Context, d *sql.DB, s NewSubscription) (int64, error) {
 	res, err := d.ExecContext(ctx, `
@@ -113,7 +118,7 @@ func DeleteSubscription(ctx context.Context, d *sql.DB, id int64) error {
 // The caller is responsible for excluding currently in-flight subscriptions.
 func ListDuePolls(ctx context.Context, d *sql.DB, now int64, limit int) ([]DueSubscription, error) {
 	rows, err := d.QueryContext(ctx, `
-		SELECT id, feed_url, etag, last_modified
+		SELECT id, feed_url, etag, last_modified, error_count
 		FROM subscriptions
 		WHERE next_poll_at <= ?
 		ORDER BY next_poll_at
@@ -127,7 +132,7 @@ func ListDuePolls(ctx context.Context, d *sql.DB, now int64, limit int) ([]DueSu
 	var out []DueSubscription
 	for rows.Next() {
 		var s DueSubscription
-		if err := rows.Scan(&s.ID, &s.FeedURL, &s.ETag, &s.LastModified); err != nil {
+		if err := rows.Scan(&s.ID, &s.FeedURL, &s.ETag, &s.LastModified, &s.ErrorCount); err != nil {
 			return nil, fmt.Errorf("scan due poll: %w", err)
 		}
 		out = append(out, s)
@@ -150,15 +155,38 @@ func UpdateAfterError(ctx context.Context, d *sql.DB, subID int64, errMsg string
 	return nil
 }
 
-// UpdateAfterNotModified bumps timestamps without inserting anything (304 path).
-func UpdateAfterNotModified(ctx context.Context, d *sql.DB, subID int64, nowUnix, nextPollAt int64) error {
+// UpdateAfterNotModified bumps timestamps on a 304 path without inserting
+// anything, writes the recomputed velocity, and resets error_count / last_error.
+func UpdateAfterNotModified(ctx context.Context, d *sql.DB, subID int64, nowUnix, nextPollAt int64, velocityX100 int) error {
 	_, err := d.ExecContext(ctx, `
 		UPDATE subscriptions
-		SET last_poll_at = ?, next_poll_at = ?, error_count = 0, last_error = NULL
+		SET last_poll_at      = ?,
+		    next_poll_at      = ?,
+		    error_count       = 0,
+		    last_error        = NULL,
+		    velocity_24h_x100 = ?
 		WHERE id = ?
-	`, nowUnix, nextPollAt, subID)
+	`, nowUnix, nextPollAt, velocityX100, subID)
 	if err != nil {
 		return fmt.Errorf("record 304: %w", err)
 	}
 	return nil
+}
+
+// QueryVelocity returns the rolling 7-day entries-per-day rate × 100 for a
+// single subscription. Returns 0 if the subscription has no entries in the
+// window. The caller is responsible for calling this inside the same logical
+// poll boundary so the count reflects the post-insert state.
+func QueryVelocity(ctx context.Context, d *sql.DB, subID int64, now time.Time) (int, error) {
+	cutoff := now.Add(-velocityWindow).Unix()
+	var velocity int
+	err := d.QueryRowContext(ctx, `
+		SELECT COUNT(*) * 100 / 7
+		FROM entries
+		WHERE subscription_id = ? AND published_at >= ?
+	`, subID, cutoff).Scan(&velocity)
+	if err != nil {
+		return 0, fmt.Errorf("query velocity: %w", err)
+	}
+	return velocity, nil
 }

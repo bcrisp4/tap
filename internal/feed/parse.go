@@ -5,25 +5,34 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
+	"github.com/bcrisp4/tap/internal/cadence"
 	"github.com/mmcdole/gofeed"
 )
 
 type FetchOpts struct {
 	PriorETag         string
 	PriorLastModified string
-	UserAgent         string
 }
 
 type FetchResult struct {
 	Status       int
 	ETag         string
 	LastModified string
-	Feed         *gofeed.Feed // nil on 304
+	RetryAfter   time.Time     // zero if absent
+	CacheMaxAge  time.Duration // 0 if absent
+	Feed         *gofeed.Feed  // nil on 304 or error
 }
 
 // Fetch issues a conditional GET against feedURL and parses the response.
 // Returns 304 with Feed=nil on Not Modified. Errors include any non-2xx/304 response.
+//
+// FetchResult is populated from response headers (Status, ETag, Last-Modified,
+// RetryAfter, CacheMaxAge) even when Fetch returns a non-nil error, so the
+// caller can floor the next-poll time against an origin's Retry-After on a 503.
+// FetchResult is the zero value only when no response was received at all
+// (e.g. transport error, malformed request).
 func Fetch(ctx context.Context, client *http.Client, feedURL string, opts FetchOpts) (FetchResult, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, feedURL, nil)
 	if err != nil {
@@ -35,11 +44,6 @@ func Fetch(ctx context.Context, client *http.Client, feedURL string, opts FetchO
 	if opts.PriorLastModified != "" {
 		req.Header.Set("If-Modified-Since", opts.PriorLastModified)
 	}
-	ua := opts.UserAgent
-	if ua == "" {
-		ua = "tap/0.1 (+https://github.com/bcrisp4/tap)"
-	}
-	req.Header.Set("User-Agent", ua)
 	req.Header.Set("Accept", "application/atom+xml, application/rss+xml, application/json, application/xml;q=0.9, */*;q=0.5")
 
 	resp, err := client.Do(req)
@@ -53,6 +57,16 @@ func Fetch(ctx context.Context, client *http.Client, feedURL string, opts FetchO
 		ETag:         resp.Header.Get("ETag"),
 		LastModified: resp.Header.Get("Last-Modified"),
 	}
+	if h := resp.Header.Get("Retry-After"); h != "" {
+		if t, ok := cadence.ParseRetryAfter(h, time.Now()); ok {
+			res.RetryAfter = t
+		}
+	}
+	if h := resp.Header.Get("Cache-Control"); h != "" {
+		if d, ok := cadence.ParseCacheMaxAge(h); ok {
+			res.CacheMaxAge = d
+		}
+	}
 
 	switch {
 	case resp.StatusCode == http.StatusNotModified:
@@ -63,11 +77,11 @@ func Fetch(ctx context.Context, client *http.Client, feedURL string, opts FetchO
 		const maxBody = 10 << 20 // 10 MiB
 		f, err := gofeed.NewParser().Parse(io.LimitReader(resp.Body, maxBody))
 		if err != nil {
-			return FetchResult{}, fmt.Errorf("parse feed: %w", err)
+			return res, fmt.Errorf("parse feed: %w", err)
 		}
 		res.Feed = f
 		return res, nil
 	default:
-		return FetchResult{}, fmt.Errorf("unexpected status %d", resp.StatusCode)
+		return res, fmt.Errorf("unexpected status %d", resp.StatusCode)
 	}
 }

@@ -9,7 +9,9 @@ embedded SPA, no external dependencies.
 
 ## Status
 
-M3 in progress — media proxy and FS cache. M2 sanitisation pipeline merged.
+M4 in review — polling discipline (adaptive cadence, SSRF guard,
+per-host concurrency cap, exponential error backoff, shared HTTP client).
+M3 media proxy + FS cache merged. M2 sanitisation pipeline merged.
 See [`docs/specs/`](docs/specs/) for milestone specs.
 
 ## Development
@@ -38,9 +40,40 @@ WebP, AVIF) and rejects any response that doesn't match. Proxy URLs are
 HMAC-signed against a server-generated secret in the database, so a peer
 with API access can't construct proxy URLs that point at arbitrary URLs.
 
+Outbound HTTP runs through one shared client (M4). Destinations resolving
+to loopback, RFC1918, link-local, CGNAT, or ULA are rejected before
+connect. Tailscale users on the default `100.64.0.0/10` CGNAT range need
+`--ssrf-allow=100.64.0.0/10` (or their tailnet's specific subnet, or
+`--ssrf-allow=<tailnet>.ts.net` for a hostname suffix). Redirects are
+re-checked independently. The same per-hostname concurrency cap
+(default 4) applies to feed fetches and media-proxy origin fetches.
+Polling cadence is adaptive: a fast feed polls every 15 minutes, a quiet
+feed every 24 hours; origin-mandated `Retry-After` and
+`Cache-Control: max-age` are honoured as floors. Failed polls back off
+exponentially (5m → 10m → 20m → 40m … capped at 24h, with 25% jitter).
+Set `--ssrf-disabled` only on fully-trusted networks; the binary logs a
+startup WARN when this flag is on.
+
 The binary still defaults to `-addr 127.0.0.1:8080` as defence in depth
 (concept §6.11). The container variant binds `0.0.0.0:8080` because
 Docker port mapping requires it.
+
+## Configuration knobs added by M4
+
+- `--http-timeout` (env `TAP_HTTP_TIMEOUT`, default `30s`) — total
+  per-request HTTP deadline. (Replaces M3's `--proxy-fetch-timeout`,
+  which is removed.)
+- `--per-host-inflight` (env `TAP_PER_HOST_INFLIGHT`, default `4`) —
+  concurrent outbound requests per hostname.
+- `--ssrf-disabled` (env `TAP_SSRF_DISABLED`, default `false`) — global
+  escape hatch.
+- `--ssrf-allow` (env `TAP_SSRF_ALLOW`, default `""`) — repeatable
+  allowlist entry. CSV in env. Auto-detect: `/`-bearing entries are
+  CIDR; bare IPs become `/32` or `/128`; otherwise hostname suffix.
+- `--poll-floor` / `--poll-ceiling` / `--poll-error-base` — adaptive
+  cadence and error-backoff tuning.
+- `--user-agent` (env `TAP_USER_AGENT`) — set centrally on the shared
+  client.
 
 ## Data layout
 
@@ -71,3 +104,9 @@ entries keep their direct `<img src="origin">` URLs and won't be
 retroactively rewritten to proxy URLs — only entries inserted from M3
 onwards get proxied URLs. To proxy all entries' images, delete `tap.db`
 (binary) or the `/data` volume (container) and re-subscribe.
+
+## Upgrading from M3
+
+No destructive change required. M4 adds one column to `subscriptions`:
+`velocity_24h_x100`. Existing rows start at velocity 0 (24h ceiling) and
+back-fill on their next successful poll or 304.

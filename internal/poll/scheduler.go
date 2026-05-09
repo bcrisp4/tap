@@ -18,8 +18,11 @@ import (
 type SchedulerOpts struct {
 	TickInterval time.Duration        // default 60s
 	Workers      int                  // default 3
-	Cadence      time.Duration        // default 30m
 	Processor    *processor.Processor // default processor.New(sanitise.DefaultPolicy(), nil)
+	Floor        time.Duration        // min interval between polls; default 15m
+	Ceiling      time.Duration        // max interval between polls; default 24h
+	ErrorBase    time.Duration        // first-error backoff base, doubled per consecutive error; default 5m
+	Now          func() time.Time     // default time.Now (overridable in tests)
 }
 
 type Scheduler struct {
@@ -52,19 +55,34 @@ func NewScheduler(base context.Context, d *sql.DB, c *http.Client, o SchedulerOp
 	if o.Workers <= 0 {
 		o.Workers = 3
 	}
-	if o.Cadence <= 0 {
-		o.Cadence = 30 * time.Minute
-	}
 	if o.Processor == nil {
 		o.Processor = processor.New(sanitise.DefaultPolicy(), nil)
 	}
+	if o.Floor <= 0 {
+		o.Floor = 15 * time.Minute
+	}
+	if o.Ceiling <= 0 {
+		o.Ceiling = 24 * time.Hour
+	}
+	if o.ErrorBase <= 0 {
+		o.ErrorBase = 5 * time.Minute
+	}
+	if o.Now == nil {
+		o.Now = time.Now
+	}
 	parentCtx, parentCancel := context.WithCancel(base)
 	s := &Scheduler{
-		db:           d,
-		client:       c,
-		opts:         o,
-		inflight:     NewInflight(),
-		worker:       NewWorker(d, c, WorkerOpts{Cadence: o.Cadence, Processor: o.Processor}),
+		db:       d,
+		client:   c,
+		opts:     o,
+		inflight: NewInflight(),
+		worker: NewWorker(d, c, WorkerOpts{
+			Processor: o.Processor,
+			Floor:     o.Floor,
+			Ceiling:   o.Ceiling,
+			ErrorBase: o.ErrorBase,
+			Now:       o.Now,
+		}),
 		jobs:         make(chan db.DueSubscription, o.Workers*2),
 		tickDone:     make(chan struct{}),
 		poke:         make(chan struct{}, 1),
@@ -126,7 +144,7 @@ func (s *Scheduler) tickLoop() {
 // Tick selects due subscriptions and dispatches them. Returns dispatched count.
 // Public for tests; production code uses Start() / Poke().
 func (s *Scheduler) Tick(ctx context.Context) int {
-	now := time.Now().Unix()
+	now := s.opts.Now().Unix()
 	due, err := db.ListDuePolls(ctx, s.db, now, 100)
 	if err != nil {
 		slog.ErrorContext(ctx, "list due polls", "err", err)
