@@ -33,6 +33,8 @@ type Cache struct {
 	evictMu  sync.Mutex
 }
 
+// NewCache returns a Cache rooted at dir with a storage cap of capBytes.
+// The dir need not exist; it is created on first write.
 func NewCache(dir string, capBytes int64) *Cache {
 	return &Cache{dir: dir, capBytes: capBytes}
 }
@@ -46,7 +48,12 @@ type sidecar struct {
 
 // Get returns cached bytes (hit) or invokes fetch (miss), caches the result,
 // and returns the bytes. Concurrent misses for the same hash run fetch once.
+// Get returns an error immediately if hash fails the lowercase-hex validation
+// — the fetcher is never invoked for invalid hashes.
 func (c *Cache) Get(ctx context.Context, hash string, fetch func(ctx context.Context) (FetchedResource, error)) (FetchedResource, error) {
+	if _, _, dir := c.paths(hash); dir == "" {
+		return FetchedResource{}, fmt.Errorf("proxy cache: invalid hash %q", hash)
+	}
 	if got, ok := c.tryHit(hash); ok {
 		return got, nil
 	}
@@ -74,6 +81,11 @@ func (c *Cache) Get(ctx context.Context, hash string, fetch func(ctx context.Con
 func (c *Cache) paths(hash string) (binPath, metaPath, dirPath string) {
 	if len(hash) < 2 {
 		return "", "", ""
+	}
+	for _, r := range hash {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')) {
+			return "", "", ""
+		}
 	}
 	dirPath = filepath.Join(c.dir, hash[:2])
 	binPath = filepath.Join(dirPath, hash+".bin")
@@ -107,10 +119,16 @@ func (c *Cache) tryHit(hash string) (FetchedResource, bool) {
 
 func (c *Cache) write(hash string, res FetchedResource) error {
 	binPath, metaPath, dirPath := c.paths(hash)
+	if dirPath == "" {
+		return fmt.Errorf("proxy cache: invalid hash %q", hash)
+	}
 	if err := os.MkdirAll(dirPath, 0o755); err != nil {
 		return err
 	}
 
+	// binTmp and metaTmp may survive a crash before the rename below. The
+	// next Get treats the absent .bin / .meta as a miss and overwrites them.
+	// Startup cleanup of *.tmp files is a future operator convenience.
 	binTmp := binPath + ".tmp"
 	metaTmp := metaPath + ".tmp"
 	if err := os.WriteFile(binTmp, res.Bytes, 0o644); err != nil {

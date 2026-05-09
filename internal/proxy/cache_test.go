@@ -86,4 +86,30 @@ func TestCache_OrphanBinTreatsAsMiss(t *testing.T) {
 	require.Equal(t, int32(1), atomic.LoadInt32(&calls))
 }
 
+func TestCache_RejectsInvalidHash(t *testing.T) {
+	t.Parallel()
+	c, dir := newCache(t, 1<<20)
+
+	cases := []string{
+		"../evil",  // path traversal
+		"AB",       // upper-case hex (we accept lower only)
+		"g",        // too short AND non-hex
+		"ab/cd",    // slash
+		"ab.cd",    // dot
+	}
+	var calls int32
+	fetch := func(ctx context.Context) (proxy.FetchedResource, error) {
+		atomic.AddInt32(&calls, 1)
+		return proxy.FetchedResource{Bytes: []byte("x"), ContentType: "image/png"}, nil
+	}
+	for _, hash := range cases {
+		_, err := c.Get(context.Background(), hash, fetch)
+		require.Error(t, err, "hash %q must be rejected", hash)
+	}
+	require.Equal(t, int32(0), atomic.LoadInt32(&calls), "fetcher must not run for invalid hash")
+	// No files should have been written anywhere under dir.
+	entries, _ := os.ReadDir(dir)
+	require.Empty(t, entries, "no files should have been written")
+}
+
 var _ = sync.Mutex{} // keeps the import even when later tests are added
