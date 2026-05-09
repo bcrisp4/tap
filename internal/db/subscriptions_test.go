@@ -67,6 +67,25 @@ func TestSubscription_ListDuePolls(t *testing.T) {
 	require.Equal(t, due, rows[0].ID)
 }
 
+func TestListDuePolls_IncludesErrorCount(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	ctx := context.Background()
+
+	subID, err := InsertSubscription(ctx, d, NewSubscription{
+		Title: "T", FeedURL: "http://x/", NextPoll: 0, Created: 0,
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, UpdateAfterError(ctx, d, subID, "transient", 0))
+	require.NoError(t, UpdateAfterError(ctx, d, subID, "transient again", 0))
+
+	due, err := ListDuePolls(ctx, d, time.Now().Unix(), 10)
+	require.NoError(t, err)
+	require.Len(t, due, 1)
+	require.Equal(t, 2, due[0].ErrorCount)
+}
+
 func TestQueryVelocity_RollingWindow(t *testing.T) {
 	t.Parallel()
 	d := newTestDB(t)
