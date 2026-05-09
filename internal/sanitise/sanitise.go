@@ -117,7 +117,10 @@ func (p *Policy) postProcess(s string) (string, walkStats) {
 	body := &html.Node{Type: html.ElementNode, Data: "body", DataAtom: atom.Body}
 	nodes, err := html.ParseFragment(strings.NewReader(s), body)
 	if err != nil {
-		return s, stats
+		// Worst-case path per Sanitise's contract: better to lose
+		// content than to render unwalked HTML.
+		slog.Error("sanitise.postProcess: html.ParseFragment failed", "err", err)
+		return "", stats
 	}
 	// Create a synthetic root to hold all fragment nodes so we can safely
 	// remove nodes during traversal.
@@ -130,7 +133,8 @@ func (p *Policy) postProcess(s string) (string, walkStats) {
 	var buf bytes.Buffer
 	for c := root.FirstChild; c != nil; c = c.NextSibling {
 		if err := html.Render(&buf, c); err != nil {
-			return s, stats
+			slog.Error("sanitise.postProcess: html.Render failed", "err", err)
+			return "", stats
 		}
 	}
 	return buf.String(), stats
