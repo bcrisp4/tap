@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/bcrisp4/tap/internal/db"
+	"github.com/bcrisp4/tap/internal/processor"
 	"github.com/bcrisp4/tap/internal/sanitise"
 	"github.com/stretchr/testify/require"
 )
@@ -67,7 +68,7 @@ func TestWorker_SuccessfulPoll(t *testing.T) {
 
 	w := NewWorker(d, http.DefaultClient, WorkerOpts{
 		Cadence: 30 * time.Minute,
-		Policy:  sanitise.DefaultPolicy(),
+		Processor: processor.New(sanitise.DefaultPolicy(), nil),
 	})
 	w.Run(context.Background(), db.DueSubscription{ID: subID, FeedURL: srv.URL})
 
@@ -96,7 +97,7 @@ func TestWorker_ErrorIncrementsCount(t *testing.T) {
 
 	w := NewWorker(d, http.DefaultClient, WorkerOpts{
 		Cadence: 30 * time.Minute,
-		Policy:  sanitise.DefaultPolicy(),
+		Processor: processor.New(sanitise.DefaultPolicy(), nil),
 	})
 	w.Run(context.Background(), db.DueSubscription{ID: subID, FeedURL: srv.URL})
 
@@ -120,7 +121,7 @@ func TestWorker_SanitisesContent(t *testing.T) {
 
 	w := NewWorker(d, http.DefaultClient, WorkerOpts{
 		Cadence: 30 * time.Minute,
-		Policy:  sanitise.DefaultPolicy(),
+		Processor: processor.New(sanitise.DefaultPolicy(), nil),
 	})
 	w.Run(context.Background(), db.DueSubscription{ID: subID, FeedURL: srv.URL})
 

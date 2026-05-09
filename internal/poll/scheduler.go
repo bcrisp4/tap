@@ -11,14 +11,15 @@ import (
 	"time"
 
 	"github.com/bcrisp4/tap/internal/db"
+	"github.com/bcrisp4/tap/internal/processor"
 	"github.com/bcrisp4/tap/internal/sanitise"
 )
 
 type SchedulerOpts struct {
-	TickInterval time.Duration    // default 60s
-	Workers      int              // default 3
-	Cadence      time.Duration    // default 30m
-	Policy       *sanitise.Policy // default sanitise.DefaultPolicy()
+	TickInterval time.Duration        // default 60s
+	Workers      int                  // default 3
+	Cadence      time.Duration        // default 30m
+	Processor    *processor.Processor // default processor.New(sanitise.DefaultPolicy(), nil)
 }
 
 type Scheduler struct {
@@ -54,8 +55,8 @@ func NewScheduler(base context.Context, d *sql.DB, c *http.Client, o SchedulerOp
 	if o.Cadence <= 0 {
 		o.Cadence = 30 * time.Minute
 	}
-	if o.Policy == nil {
-		o.Policy = sanitise.DefaultPolicy()
+	if o.Processor == nil {
+		o.Processor = processor.New(sanitise.DefaultPolicy(), nil)
 	}
 	parentCtx, parentCancel := context.WithCancel(base)
 	s := &Scheduler{
@@ -63,7 +64,7 @@ func NewScheduler(base context.Context, d *sql.DB, c *http.Client, o SchedulerOp
 		client:       c,
 		opts:         o,
 		inflight:     NewInflight(),
-		worker:       NewWorker(d, c, WorkerOpts{Cadence: o.Cadence, Policy: o.Policy}),
+		worker:       NewWorker(d, c, WorkerOpts{Cadence: o.Cadence, Processor: o.Processor}),
 		jobs:         make(chan db.DueSubscription, o.Workers*2),
 		tickDone:     make(chan struct{}),
 		poke:         make(chan struct{}, 1),

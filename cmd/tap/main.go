@@ -15,6 +15,7 @@ import (
 	"github.com/bcrisp4/tap/internal/api"
 	"github.com/bcrisp4/tap/internal/db"
 	"github.com/bcrisp4/tap/internal/poll"
+	"github.com/bcrisp4/tap/internal/processor"
 	"github.com/bcrisp4/tap/internal/sanitise"
 	"github.com/bcrisp4/tap/internal/server"
 )
@@ -65,7 +66,7 @@ func main() {
 	}
 
 	sched := poll.NewScheduler(ctx, d, client, poll.SchedulerOpts{
-		Policy: sanitise.DefaultPolicy(),
+		Processor: processor.New(sanitise.DefaultPolicy(), nil),
 	})
 	sched.Start()
 

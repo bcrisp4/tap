@@ -13,6 +13,7 @@ import (
 	"github.com/bcrisp4/tap/internal/api"
 	"github.com/bcrisp4/tap/internal/db"
 	"github.com/bcrisp4/tap/internal/poll"
+	"github.com/bcrisp4/tap/internal/processor"
 	"github.com/bcrisp4/tap/internal/sanitise"
 	"github.com/stretchr/testify/require"
 )
@@ -57,7 +58,7 @@ func TestEndToEnd_SubscribePollServeEntries(t *testing.T) {
 	sched := poll.NewScheduler(context.Background(), d, http.DefaultClient, poll.SchedulerOpts{
 		Workers: 1,
 		Cadence: time.Hour,
-		Policy:  sanitise.DefaultPolicy(),
+		Processor: processor.New(sanitise.DefaultPolicy(), nil),
 	})
 	defer sched.Stop()
 	sched.Tick(context.Background())
