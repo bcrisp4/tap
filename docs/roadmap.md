@@ -23,8 +23,8 @@ These are locked in before M1 begins.
 | # | Milestone | One-line goal | Spec |
 |---|---|---|---|
 | M1 | Walking skeleton | Run the binary, subscribe to a feed, see entries appear, read one. No safety, no polish. | [`specs/2026-05-08-m1-walking-skeleton.md`](specs/2026-05-08-m1-walking-skeleton.md) |
-| M2 | Sanitisation pipeline | Allowlist-based HTML cleaning and image-URL rewriting hooks so feed content is safe to render. | TBD |
-| M3 | Media proxy + cache | `/api/v1/proxy/{token}` with signed tokens, sharded FS cache, MIME allowlist, request coalescing. | TBD |
+| M2 | Sanitisation pipeline | Allowlist-based HTML cleaning and image-URL rewriting hooks so feed content is safe to render. | [`specs/2026-05-08-m2-sanitisation.md`](specs/2026-05-08-m2-sanitisation.md) |
+| M3 | Media proxy + cache | `/api/v1/proxy/{token}` with signed tokens, sharded FS cache, MIME allowlist, request coalescing. | [`specs/2026-05-09-m3-media-proxy.md`](specs/2026-05-09-m3-media-proxy.md) |
 | M4 | Polling discipline | Adaptive cadence, per-host concurrency cap, SSRF guard with allowlist + redirect re-check, retry/backoff. | TBD |
 | M5 | Article extraction | Readability-style extractor + per-feed CSS rules, opt-in flag, graceful degradation. | TBD |
 | M6 | Auth foundations | Password login, sessions (cookie, hashed-at-rest, idle + absolute expiry), CSRF, admin bootstrap (CLI + env-var), credential redaction. | TBD |
@@ -42,6 +42,7 @@ Items committed in the design but not yet sequenced into a specific milestone. T
 | Item | Depends on | Notes |
 |---|---|---|
 | Per-user iframe-host allowlist | M6 user table | M2 ships a hard-coded default sourced from miniflux's `iframeAllowList` (13 hosts including `youtube.com`, `player.vimeo.com`, `bandcamp.com`, etc. — see `internal/sanitise/sanitise.go`). Per-user override stored in DB-backed preferences once the user table exists. |
+| SVG support in the media proxy | None (own decision) | M3 ships an `image/{png,jpeg,gif,webp,avif}` MIME allowlist and 415s SVG. No well-trodden pure-Go SVG sanitiser exists; two real options when we revisit: (a) roll our own XML allowlist walker mirroring M2's HTML post-pass (~200 LoC, edge cases around namespaces / SMIL / CSS in style attrs), or (b) rasterise SVG → PNG inside the proxy via `srwiley/oksvg` or similar (heavier dep, loses scalability). Likely a small follow-up extension to `internal/sanitise` rather than its own milestone. |
 
 ## Working cadence
 
