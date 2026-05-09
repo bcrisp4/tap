@@ -1,1 +1,16 @@
 docs/superpowers/
+
+# Build output
+bin/
+web/dist/*
+!web/dist/.gitkeep
+web/node_modules/
+
+# Local data
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# OS
+.DS_Store
