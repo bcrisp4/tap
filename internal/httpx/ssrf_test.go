@@ -101,6 +101,10 @@ func TestAllowHostname_Suffix(t *testing.T) {
 		{"foo.ts.net", true},
 		{"barts.net", false},
 		{"unrelated.com", false},
+		// Absolute DNS form with trailing dot — defence-in-depth: a feed URL
+		// like http://nas.home.lan./feed.xml must still match.
+		{"nas.home.lan.", true},
+		{"home.lan.", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.host, func(t *testing.T) {

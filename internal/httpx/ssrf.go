@@ -56,7 +56,7 @@ func (p SSRFPolicy) AllowHostname(host string) bool {
 	if p.Disabled {
 		return true
 	}
-	host = strings.ToLower(host)
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
 	for _, suffix := range p.AllowSuffixes {
 		suffix = strings.ToLower(suffix)
 		if host == suffix || strings.HasSuffix(host, "."+suffix) {
