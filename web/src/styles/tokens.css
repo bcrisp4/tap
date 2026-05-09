@@ -1,0 +1,16 @@
+:root {
+  --bg: #fafaf7;
+  --bg-soft: #f3f3ee;
+  --surface: #ffffff;
+  --ink: #1a1a1a;
+  --ink-2: #4a4a48;
+  --ink-3: #8a8a86;
+  --ink-4: #c8c8c2;
+  --rule: #e6e6df;
+  --accent: #002FA7;
+  --accent-soft: rgba(0, 47, 167, 0.08);
+
+  --serif: "Source Serif 4", "Iowan Old Style", Charter, Georgia, serif;
+  --sans:  "Inter Tight", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --mono:  "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
