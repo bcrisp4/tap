@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Tap is a self-hosted RSS / Atom / JSON Feed reader. It ships as **one static Go binary** with an embedded SQLite database, an embedded Svelte SPA, and no external services. See `docs/concept.md` for the full design and `docs/roadmap.md` for the milestone plan; current state is **pre-M1 walking skeleton**, spec at `docs/specs/2026-05-08-m1-walking-skeleton.md`.
+Tap is a self-hosted RSS / Atom / JSON Feed reader. It ships as **one static Go binary** with an embedded SQLite database, an embedded Svelte SPA, and no external services. See `docs/concept.md` for the full design and `docs/roadmap.md` for the milestone plan; **M2 in progress** (sanitisation pipeline complete, awaiting merge — spec at `docs/specs/2026-05-08-m2-sanitisation.md`; M1 walking-skeleton spec at `docs/specs/2026-05-08-m1-walking-skeleton.md`).
 
 ## Commands
 
@@ -64,6 +64,13 @@ Single-process server with three concerns living alongside each other (M11 will 
 - **API DTOs are explicit.** `internal/api/*.go` defines per-endpoint DTOs and converts from `db.*` rows; do not return `db` types directly. Errors flow through `writeError(w, status, code, message)` from `internal/api/errors.go` so codes are stable.
 - **Request bodies are size-capped** (`http.MaxBytesReader`, 1 MiB) on every write handler.
 
-## M1 deployment safety (relevant when reasoning about defaults)
+## Trust posture (relevant when reasoning about defaults)
 
-In M1 the server renders feed HTML **without sanitisation** — that's M2's job. The binary defaults to `-addr 127.0.0.1:8080` to contain that risk; the container variant binds `0.0.0.0:8080` because Docker port mapping requires it. Do not change these defaults or weaken the `web/dist` validation check until the sanitisation pipeline lands.
+Feed HTML is sanitised on the server before storage by `internal/sanitise.Policy.Sanitise` (M2 — bluemonday-based allowlist + `golang.org/x/net/html` post-pass for iframe-host allowlisting, pixel-tracker drop, URL tracking-param stripping). The SPA renders the stored HTML directly without a runtime sanitiser, so anything that bypasses the worker's `policy.Sanitise(content)` call lands raw in the DB and gets rendered.
+
+Defence-in-depth defaults that should not be weakened lightly:
+
+- The binary still defaults to `-addr 127.0.0.1:8080` (concept §6.11). Container binds `0.0.0.0:8080` because the network namespace is the boundary there.
+- `internal/server.SPAHandler` validates `web/dist/index.html` exists at construction time. Removing that turns a missing-bundle bug into silent 404s on every route.
+- `WorkerOpts.Policy` is required (`NewWorker` panics on nil); `SchedulerOpts.Policy` defaults to `sanitise.DefaultPolicy()`. Don't reintroduce a nil-default in the worker — it would silently render unsanitised HTML.
+- Per-feed `<iframe>` host allowlist override is a deferred-items entry on the roadmap (post-M6); the current set is hard-coded in `internal/sanitise/sanitise.go`.
