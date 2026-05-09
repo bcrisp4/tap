@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -70,4 +71,22 @@ func TestFetch_ServerError(t *testing.T) {
 
 	_, err := Fetch(context.Background(), http.DefaultClient, srv.URL, FetchOpts{})
 	require.Error(t, err)
+}
+
+func TestFetch_DoesNotSetUserAgent(t *testing.T) {
+	t.Parallel()
+	var sawUA atomic.Value
+	sawUA.Store("")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawUA.Store(r.Header.Get("User-Agent"))
+		_, _ = w.Write([]byte(`<rss version="2.0"><channel><title>t</title></channel></rss>`))
+	}))
+	t.Cleanup(srv.Close)
+
+	_, err := Fetch(context.Background(), srv.Client(), srv.URL, FetchOpts{})
+	require.NoError(t, err)
+	ua := sawUA.Load().(string)
+	// The shared client (Phase 6) injects the tap UA. feed.Fetch itself must
+	// not set "tap/" — that string is owned by httpx.Opts.UserAgent.
+	require.NotContains(t, ua, "tap/", "Fetch should not set tap-specific UA")
 }

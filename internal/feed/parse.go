@@ -12,7 +12,6 @@ import (
 type FetchOpts struct {
 	PriorETag         string
 	PriorLastModified string
-	UserAgent         string
 }
 
 type FetchResult struct {
@@ -35,11 +34,6 @@ func Fetch(ctx context.Context, client *http.Client, feedURL string, opts FetchO
 	if opts.PriorLastModified != "" {
 		req.Header.Set("If-Modified-Since", opts.PriorLastModified)
 	}
-	ua := opts.UserAgent
-	if ua == "" {
-		ua = "tap/0.1 (+https://github.com/bcrisp4/tap)"
-	}
-	req.Header.Set("User-Agent", ua)
 	req.Header.Set("Accept", "application/atom+xml, application/rss+xml, application/json, application/xml;q=0.9, */*;q=0.5")
 
 	resp, err := client.Do(req)
