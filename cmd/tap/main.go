@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -124,6 +125,7 @@ func main() {
 	defer sCancel()
 	_ = srv.Shutdown(shutdownCtx)
 	sched.Stop()
+	client.CloseIdleConnections()
 }
 
 func envOr(k, def string) string {
@@ -146,6 +148,8 @@ func configureLogger(format string) {
 const proxySigningKeySize = 32
 
 func loadOrCreateProxyKey(ctx context.Context, d *sql.DB) ([]byte, error) {
+	// len check: reject malformed/truncated stored keys and generate a fresh one.
+	// A future migration should update proxySigningKeySize if the key size changes.
 	if v, ok, err := db.GetConfig(ctx, d, "proxy.signing_key"); err != nil {
 		return nil, fmt.Errorf("read signing key: %w", err)
 	} else if ok && len(v) == proxySigningKeySize {
@@ -158,15 +162,14 @@ func loadOrCreateProxyKey(ctx context.Context, d *sql.DB) ([]byte, error) {
 	}
 	got, err := db.SetConfigIfAbsent(ctx, d, "proxy.signing_key", key)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("persist signing key: %w", err)
 	}
 	return got, nil
 }
 
 func envOrInt64(k string, def int64) int64 {
 	if v := os.Getenv(k); v != "" {
-		var n int64
-		if _, err := fmt.Sscanf(v, "%d", &n); err == nil {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
 			return n
 		}
 		slog.Warn("invalid int64 env var; falling back to default", "key", k, "value", v, "default", def)
