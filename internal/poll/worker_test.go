@@ -327,3 +327,48 @@ func TestWorker_Success_RetryAfterAdvisoryFloor(t *testing.T) {
 	expected := fixedNow.Add(time.Hour - 5*time.Second).Unix()
 	require.GreaterOrEqual(t, nextPoll, expected, "Retry-After:3600 must floor next_poll on success")
 }
+
+func TestWorker_CommitFailure_UsesExponentialBackoff(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d, err := db.Open(ctx, ":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = d.Close() })
+	require.NoError(t, db.Migrate(ctx, d))
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(sampleAtom))
+	}))
+	t.Cleanup(srv.Close)
+
+	subID, err := db.InsertSubscription(ctx, d, db.NewSubscription{
+		Title: "X", FeedURL: srv.URL, NextPoll: 0, Created: 0,
+	})
+	require.NoError(t, err)
+	// Bump error_count so the backoff lands at 2*ErrorBase (10m), giving a
+	// distinguishable [10m, 12m30s) window vs the prior 5m flat behaviour.
+	require.NoError(t, db.UpdateAfterError(ctx, d, subID, "prior", 0))
+
+	// Drop the entries table so the INSERT inside UpdateAfterPoll fails. Fetch
+	// still succeeds — this is the commit-failure branch, not fetch-failure.
+	_, err = d.ExecContext(ctx, `DROP TABLE entries`)
+	require.NoError(t, err)
+
+	fixedNow := time.Date(2026, 5, 9, 12, 0, 0, 0, time.UTC)
+	w := NewWorker(d, srv.Client(), WorkerOpts{
+		Processor: processor.New(sanitise.DefaultPolicy(), nil),
+		Floor:     15 * time.Minute,
+		Ceiling:   24 * time.Hour,
+		ErrorBase: 5 * time.Minute,
+		Now:       func() time.Time { return fixedNow },
+	})
+	w.Run(ctx, db.DueSubscription{ID: subID, FeedURL: srv.URL, ErrorCount: 1})
+
+	var nextPoll int64
+	require.NoError(t, d.QueryRowContext(ctx,
+		`SELECT next_poll_at FROM subscriptions WHERE id = ?`, subID).Scan(&nextPoll))
+	earliest := fixedNow.Add(10 * time.Minute).Unix()
+	latest := fixedNow.Add(10*time.Minute + 10*time.Minute/4).Unix()
+	require.GreaterOrEqual(t, nextPoll, earliest, "commit failure must back off, not retry in 5m flat")
+	require.Less(t, nextPoll, latest)
+}

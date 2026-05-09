@@ -131,8 +131,15 @@ func (w *Worker) Run(ctx context.Context, sub db.DueSubscription) {
 		CacheMaxAge:     res.CacheMaxAge,
 	})
 	if perr != nil {
-		slog.ErrorContext(ctx, "commit poll", "feed_id", sub.ID, "err", perr)
-		_ = db.UpdateAfterError(ctx, w.db, sub.ID, perr.Error(), now.Add(w.opts.ErrorBase).Unix())
+		// Commit failure is just as much a poll failure as a fetch error —
+		// use the same exponential backoff so a stuck DB doesn't get
+		// hammered every 5 minutes on a high-velocity feed.
+		delay := cadence.BackoffFromErrorCount(sub.ErrorCount+1, w.opts.ErrorBase, w.opts.Ceiling, 0.25)
+		next := now.Add(delay)
+		slog.ErrorContext(ctx, "commit poll",
+			"feed_id", sub.ID, "error_count", sub.ErrorCount+1,
+			"next_poll_at", next.Unix(), "err", perr)
+		_ = db.UpdateAfterError(ctx, w.db, sub.ID, perr.Error(), next.Unix())
 		return
 	}
 	slog.InfoContext(ctx, "poll ok", "feed_id", sub.ID, "inserted", inserted, "total_items", len(res.Feed.Items))
