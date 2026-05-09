@@ -3,10 +3,8 @@ package poll
 import (
 	"context"
 	"database/sql"
-	"encoding/binary"
 	"fmt"
 	"log/slog"
-	"math/rand/v2"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -20,13 +18,11 @@ import (
 type SchedulerOpts struct {
 	TickInterval time.Duration        // default 60s
 	Workers      int                  // default 3
-	Cadence      time.Duration        // legacy; M4 supersedes with Floor/Ceiling. Retained so callers compile.
 	Processor    *processor.Processor // default processor.New(sanitise.DefaultPolicy(), nil)
 	Floor        time.Duration        // min interval between polls; default 15m
 	Ceiling      time.Duration        // max interval between polls; default 24h
 	ErrorBase    time.Duration        // first-error backoff base, doubled per consecutive error; default 5m
 	Now          func() time.Time     // default time.Now (overridable in tests)
-	Rand         *rand.Rand           // default fresh ChaCha8-seeded Rand (overridable in tests)
 }
 
 type Scheduler struct {
@@ -59,9 +55,6 @@ func NewScheduler(base context.Context, d *sql.DB, c *http.Client, o SchedulerOp
 	if o.Workers <= 0 {
 		o.Workers = 3
 	}
-	if o.Cadence <= 0 {
-		o.Cadence = 30 * time.Minute
-	}
 	if o.Processor == nil {
 		o.Processor = processor.New(sanitise.DefaultPolicy(), nil)
 	}
@@ -77,11 +70,6 @@ func NewScheduler(base context.Context, d *sql.DB, c *http.Client, o SchedulerOp
 	if o.Now == nil {
 		o.Now = time.Now
 	}
-	if o.Rand == nil {
-		var seed [32]byte
-		binary.LittleEndian.PutUint64(seed[:8], uint64(time.Now().UnixNano()))
-		o.Rand = rand.New(rand.NewChaCha8(seed))
-	}
 	parentCtx, parentCancel := context.WithCancel(base)
 	s := &Scheduler{
 		db:       d,
@@ -89,13 +77,11 @@ func NewScheduler(base context.Context, d *sql.DB, c *http.Client, o SchedulerOp
 		opts:     o,
 		inflight: NewInflight(),
 		worker: NewWorker(d, c, WorkerOpts{
-			Cadence:   o.Cadence,
 			Processor: o.Processor,
 			Floor:     o.Floor,
 			Ceiling:   o.Ceiling,
 			ErrorBase: o.ErrorBase,
 			Now:       o.Now,
-			Rand:      o.Rand,
 		}),
 		jobs:         make(chan db.DueSubscription, o.Workers*2),
 		tickDone:     make(chan struct{}),

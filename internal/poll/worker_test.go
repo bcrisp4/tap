@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -69,7 +68,6 @@ func TestWorker_SuccessfulPoll(t *testing.T) {
 	require.NoError(t, err)
 
 	w := NewWorker(d, http.DefaultClient, WorkerOpts{
-		Cadence: 30 * time.Minute,
 		Processor: processor.New(sanitise.DefaultPolicy(), nil),
 	})
 	w.Run(context.Background(), db.DueSubscription{ID: subID, FeedURL: srv.URL})
@@ -98,7 +96,6 @@ func TestWorker_ErrorIncrementsCount(t *testing.T) {
 	})
 
 	w := NewWorker(d, http.DefaultClient, WorkerOpts{
-		Cadence: 30 * time.Minute,
 		Processor: processor.New(sanitise.DefaultPolicy(), nil),
 	})
 	w.Run(context.Background(), db.DueSubscription{ID: subID, FeedURL: srv.URL})
@@ -122,7 +119,6 @@ func TestWorker_SanitisesContent(t *testing.T) {
 	require.NoError(t, err)
 
 	w := NewWorker(d, http.DefaultClient, WorkerOpts{
-		Cadence: 30 * time.Minute,
 		Processor: processor.New(sanitise.DefaultPolicy(), nil),
 	})
 	w.Run(context.Background(), db.DueSubscription{ID: subID, FeedURL: srv.URL})
@@ -155,14 +151,12 @@ func TestWorker_ErrorPath_ExponentialBackoff(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	fixedNow := time.Date(2026, 5, 9, 12, 0, 0, 0, time.UTC)
-	rng := rand.New(rand.NewChaCha8([32]byte{}))
 	w := NewWorker(d, srv.Client(), WorkerOpts{
 		Processor: processor.New(sanitise.DefaultPolicy(), nil),
 		Floor:     15 * time.Minute,
 		Ceiling:   24 * time.Hour,
 		ErrorBase: 5 * time.Minute,
 		Now:       func() time.Time { return fixedNow },
-		Rand:      rng,
 	})
 	subID, err := db.InsertSubscription(ctx, d, db.NewSubscription{
 		Title: "Bad", FeedURL: srv.URL, NextPoll: 0, Created: fixedNow.Unix(),
@@ -202,14 +196,12 @@ func TestWorker_RetryAfterOverridesBackoff(t *testing.T) {
 	// Retry-After against time.Now() (Phase 4), and the server-floor branch
 	// only fires when res.RetryAfter > next = fixedNow + delay.
 	fixedNow := time.Now().UTC()
-	rng := rand.New(rand.NewChaCha8([32]byte{}))
 	w := NewWorker(d, srv.Client(), WorkerOpts{
 		Processor: processor.New(sanitise.DefaultPolicy(), nil),
 		Floor:     15 * time.Minute,
 		Ceiling:   24 * time.Hour,
 		ErrorBase: 5 * time.Minute,
 		Now:       func() time.Time { return fixedNow },
-		Rand:      rng,
 	})
 	subID, err := db.InsertSubscription(ctx, d, db.NewSubscription{
 		Title: "Slow", FeedURL: srv.URL, NextPoll: 0, Created: fixedNow.Unix(),

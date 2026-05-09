@@ -32,11 +32,13 @@ func IntervalFromVelocity(velocityX100 int, floor, ceiling time.Duration) time.D
 
 // BackoffFromErrorCount returns the delay before the next attempt after
 // errorCount consecutive errors, doubling base each time and capping at
-// ceiling. When jitterFrac > 0 and rng is non-nil, the result is increased
-// by a uniform random fraction in [0, jitterFrac) of the computed delay.
-// The jitter can push the result above ceiling; that's intentional, to
-// spread thundering-herd recovery across feeds that errored together.
-func BackoffFromErrorCount(errorCount int, base, ceiling time.Duration, jitterFrac float64, rng *rand.Rand) time.Duration {
+// ceiling. When jitterFrac > 0, the result is increased by a uniform
+// random fraction in [0, jitterFrac) of the computed delay using the
+// package-level rand.Int64N (which math/rand/v2 documents as safe for
+// concurrent use, unlike *Rand methods). The jitter can push the result
+// above ceiling; that's intentional, to spread thundering-herd recovery
+// across feeds that errored together.
+func BackoffFromErrorCount(errorCount int, base, ceiling time.Duration, jitterFrac float64) time.Duration {
 	if errorCount < 1 {
 		errorCount = 1
 	}
@@ -51,10 +53,10 @@ func BackoffFromErrorCount(errorCount int, base, ceiling time.Duration, jitterFr
 	if delay > ceiling {
 		delay = ceiling
 	}
-	if jitterFrac > 0 && rng != nil {
+	if jitterFrac > 0 {
 		jitterCap := time.Duration(float64(delay) * jitterFrac)
 		if jitterCap > 0 {
-			delay += time.Duration(rng.Int64N(int64(jitterCap)))
+			delay += time.Duration(rand.Int64N(int64(jitterCap)))
 		}
 	}
 	return delay

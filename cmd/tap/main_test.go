@@ -58,8 +58,7 @@ func TestEndToEnd_SubscribePollServeEntries(t *testing.T) {
 
 	// Drive the scheduler.
 	sched := poll.NewScheduler(context.Background(), d, http.DefaultClient, poll.SchedulerOpts{
-		Workers: 1,
-		Cadence: time.Hour,
+		Workers:   1,
 		Processor: processor.New(sanitise.DefaultPolicy(), nil),
 	})
 	defer sched.Stop()
@@ -161,7 +160,6 @@ func TestEndToEnd_ProxyURLsRewriteAndServe(t *testing.T) {
 	proc := processor.New(sanitise.DefaultPolicy(), signer.RewriteImageURL)
 	sched := poll.NewScheduler(context.Background(), d, http.DefaultClient, poll.SchedulerOpts{
 		Workers:   1,
-		Cadence:   time.Hour,
 		Processor: proc,
 	})
 	defer sched.Stop()

@@ -21,11 +21,10 @@ func TestSchedulerOpts_DefaultsApplied(t *testing.T) {
 	require.NoError(t, db.Migrate(ctx, d))
 
 	s := NewScheduler(ctx, d, http.DefaultClient, SchedulerOpts{})
-	require.NotZero(t, s.opts.Floor, "Floor should default to 15m")
-	require.NotZero(t, s.opts.Ceiling, "Ceiling should default to 24h")
-	require.NotZero(t, s.opts.ErrorBase, "ErrorBase should default to 5m")
-	require.NotNil(t, s.opts.Now, "Now should default to time.Now")
-	require.NotNil(t, s.opts.Rand, "Rand should default to a fresh rand.Rand")
+	require.Equal(t, 15*time.Minute, s.opts.Floor)
+	require.Equal(t, 24*time.Hour, s.opts.Ceiling)
+	require.Equal(t, 5*time.Minute, s.opts.ErrorBase)
+	require.NotNil(t, s.opts.Now)
 }
 
 func TestScheduler_TickDispatchesDueFeeds(t *testing.T) {
@@ -42,7 +41,7 @@ func TestScheduler_TickDispatchesDueFeeds(t *testing.T) {
 	id1, _ := db.InsertSubscription(context.Background(), d, db.NewSubscription{Title: "a", FeedURL: srv.URL + "/a", NextPoll: 0, Created: 0})
 	id2, _ := db.InsertSubscription(context.Background(), d, db.NewSubscription{Title: "b", FeedURL: srv.URL + "/b", NextPoll: 0, Created: 0})
 
-	sch := NewScheduler(context.Background(), d, http.DefaultClient, SchedulerOpts{Workers: 2, Cadence: 30 * time.Minute})
+	sch := NewScheduler(context.Background(), d, http.DefaultClient, SchedulerOpts{Workers: 2})
 	t.Cleanup(sch.Stop)
 	sch.Tick(context.Background())
 	require.NoError(t, sch.Wait(5*time.Second))
@@ -64,7 +63,7 @@ func TestScheduler_SkipsInflight(t *testing.T) {
 	d := newDB(t)
 	id, _ := db.InsertSubscription(context.Background(), d, db.NewSubscription{Title: "a", FeedURL: "http://invalid.invalid", NextPoll: 0, Created: 0})
 
-	sch := NewScheduler(context.Background(), d, http.DefaultClient, SchedulerOpts{Workers: 1, Cadence: 30 * time.Minute})
+	sch := NewScheduler(context.Background(), d, http.DefaultClient, SchedulerOpts{Workers: 1})
 	t.Cleanup(sch.Stop)
 
 	// Manually mark in-flight; Tick must skip it.
