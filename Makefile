@@ -23,7 +23,7 @@ web/dist/index.html: $(shell find web/src -type f) web/index.html web/package.js
 docker: build
 	docker build -t tap:dev .
 
-test:
+test: web/dist/index.html
 	$(GO) test ./... -race
 
 clean:

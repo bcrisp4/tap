@@ -5,12 +5,12 @@ FROM node:22-alpine AS web
 WORKDIR /web
 RUN corepack enable
 COPY web/package.json web/pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile --ignore-scripts
 COPY web/ ./
 RUN pnpm build
 
 # ---- go build stage ----
-FROM golang:1.24-alpine AS go
+FROM golang:1.25-alpine AS go
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
