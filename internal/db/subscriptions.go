@@ -151,13 +151,18 @@ func UpdateAfterError(ctx context.Context, d *sql.DB, subID int64, errMsg string
 	return nil
 }
 
-// UpdateAfterNotModified bumps timestamps without inserting anything (304 path).
-func UpdateAfterNotModified(ctx context.Context, d *sql.DB, subID int64, nowUnix, nextPollAt int64) error {
+// UpdateAfterNotModified bumps timestamps on a 304 path and writes the
+// recomputed velocity. error_count and last_error are reset.
+func UpdateAfterNotModified(ctx context.Context, d *sql.DB, subID int64, nowUnix, nextPollAt int64, velocityX100 int) error {
 	_, err := d.ExecContext(ctx, `
 		UPDATE subscriptions
-		SET last_poll_at = ?, next_poll_at = ?, error_count = 0, last_error = NULL
+		SET last_poll_at      = ?,
+		    next_poll_at      = ?,
+		    error_count       = 0,
+		    last_error        = NULL,
+		    velocity_24h_x100 = ?
 		WHERE id = ?
-	`, nowUnix, nextPollAt, subID)
+	`, nowUnix, nextPollAt, velocityX100, subID)
 	if err != nil {
 		return fmt.Errorf("record 304: %w", err)
 	}

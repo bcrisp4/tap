@@ -66,7 +66,7 @@ func (w *Worker) Run(ctx context.Context, sub db.DueSubscription) {
 
 	if res.Status == http.StatusNotModified {
 		slog.DebugContext(ctx, "poll 304", "feed_id", sub.ID)
-		_ = db.UpdateAfterNotModified(ctx, w.db, sub.ID, now, nextPoll)
+		_ = db.UpdateAfterNotModified(ctx, w.db, sub.ID, now, nextPoll, 0)
 		return
 	}
 

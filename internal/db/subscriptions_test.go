@@ -131,3 +131,31 @@ func TestQueryVelocity_NoEntries(t *testing.T) {
 		t.Errorf("velocity for empty feed = %d; want 0", v)
 	}
 }
+
+func TestUpdateAfterNotModified_WritesVelocity(t *testing.T) {
+	ctx := context.Background()
+	d, _ := Open(ctx, ":memory:")
+	defer d.Close()
+	_ = Migrate(ctx, d)
+
+	subID, _ := InsertSubscription(ctx, d, NewSubscription{
+		Title: "T", FeedURL: "http://x/", NextPoll: 0, Created: 0,
+	})
+
+	if err := UpdateAfterNotModified(ctx, d, subID, 1000, 2000, 350); err != nil {
+		t.Fatal(err)
+	}
+
+	var velocity int
+	var lastPoll, nextPoll int64
+	err := d.QueryRowContext(ctx,
+		`SELECT velocity_24h_x100, last_poll_at, next_poll_at FROM subscriptions WHERE id = ?`,
+		subID).Scan(&velocity, &lastPoll, &nextPoll)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if velocity != 350 || lastPoll != 1000 || nextPoll != 2000 {
+		t.Errorf("got velocity=%d last=%d next=%d; want 350,1000,2000",
+			velocity, lastPoll, nextPoll)
+	}
+}
