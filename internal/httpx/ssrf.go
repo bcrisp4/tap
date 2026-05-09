@@ -64,3 +64,35 @@ func (p SSRFPolicy) AllowHostname(host string) bool {
 	}
 	return false
 }
+
+// ParseSSRFPolicy parses CLI-supplied allowlist entries into an SSRFPolicy.
+// Entries can be CIDR blocks (192.168.1.0/24), bare IPs (127.0.0.1, ::1),
+// or hostname suffixes (marlin-tet.ts.net). Whitespace and empty entries
+// are ignored. Bare IPs become /32 (IPv4) or /128 (IPv6) prefixes.
+func ParseSSRFPolicy(disabled bool, entries []string) (SSRFPolicy, error) {
+	p := SSRFPolicy{Disabled: disabled}
+	for _, e := range entries {
+		e = strings.TrimSpace(e)
+		if e == "" {
+			continue
+		}
+		if strings.Contains(e, "/") {
+			prefix, err := netip.ParsePrefix(e)
+			if err != nil {
+				return SSRFPolicy{}, fmt.Errorf("ssrf-allow: invalid CIDR %q: %w", e, err)
+			}
+			p.AllowCIDRs = append(p.AllowCIDRs, prefix)
+			continue
+		}
+		if addr, err := netip.ParseAddr(e); err == nil {
+			bits := 32
+			if addr.Is6() {
+				bits = 128
+			}
+			p.AllowCIDRs = append(p.AllowCIDRs, netip.PrefixFrom(addr, bits))
+			continue
+		}
+		p.AllowSuffixes = append(p.AllowSuffixes, strings.ToLower(e))
+	}
+	return p, nil
+}

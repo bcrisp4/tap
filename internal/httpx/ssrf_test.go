@@ -100,3 +100,50 @@ func TestAllowHostname_DisabledAllowsAll(t *testing.T) {
 		t.Error("Disabled should allow any hostname")
 	}
 }
+
+func TestParseSSRFPolicy_Empty(t *testing.T) {
+	p, err := ParseSSRFPolicy(false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Disabled || len(p.AllowSuffixes) != 0 || len(p.AllowCIDRs) != 0 {
+		t.Errorf("expected empty policy, got %+v", p)
+	}
+}
+
+func TestParseSSRFPolicy_AutoDetect(t *testing.T) {
+	p, err := ParseSSRFPolicy(false, []string{
+		"192.168.1.0/24",
+		"127.0.0.1",
+		"::1",
+		"marlin-tet.ts.net",
+		"  10.0.0.0/8  ",
+		"",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.AllowCIDRs) != 4 {
+		t.Errorf("AllowCIDRs len = %d; want 4 (got %v)", len(p.AllowCIDRs), p.AllowCIDRs)
+	}
+	if len(p.AllowSuffixes) != 1 || p.AllowSuffixes[0] != "marlin-tet.ts.net" {
+		t.Errorf("AllowSuffixes = %v", p.AllowSuffixes)
+	}
+}
+
+func TestParseSSRFPolicy_MalformedCIDR(t *testing.T) {
+	_, err := ParseSSRFPolicy(false, []string{"not/a/cidr"})
+	if err == nil {
+		t.Error("expected error for malformed entry")
+	}
+}
+
+func TestParseSSRFPolicy_DisabledFlag(t *testing.T) {
+	p, err := ParseSSRFPolicy(true, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.Disabled {
+		t.Error("Disabled should be true")
+	}
+}
