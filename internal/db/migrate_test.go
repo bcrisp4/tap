@@ -16,10 +16,10 @@ func TestMigrate_AppliesAllMigrationsExactlyOnce(t *testing.T) {
 
 	require.NoError(t, Migrate(context.Background(), d))
 
-	// schema_migrations should have version 1 recorded.
+	// schema_migrations should have version 2 recorded (0001_initial + 0002_configuration).
 	var version int
 	require.NoError(t, d.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version))
-	require.Equal(t, 1, version)
+	require.Equal(t, 2, version)
 
 	// subscriptions table should exist (introduced in 0001).
 	_, err = d.Exec("INSERT INTO subscriptions (title, feed_url, next_poll_at, created_at) VALUES (?, ?, ?, ?)",
@@ -29,5 +29,5 @@ func TestMigrate_AppliesAllMigrationsExactlyOnce(t *testing.T) {
 	// Re-running Migrate must be a no-op.
 	require.NoError(t, Migrate(context.Background(), d))
 	require.NoError(t, d.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version))
-	require.Equal(t, 1, version)
+	require.Equal(t, 2, version)
 }

@@ -19,7 +19,7 @@ func newAPI(t *testing.T) (*http.ServeMux, *sql.DB) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = d.Close() })
 	require.NoError(t, db.Migrate(context.Background(), d))
-	return NewMux(d, nil), d
+	return NewMux(d, MuxOpts{}), d
 }
 
 func TestSubscriptions_PostThenList(t *testing.T) {

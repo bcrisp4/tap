@@ -10,13 +10,13 @@ import (
 
 	"github.com/bcrisp4/tap/internal/db"
 	"github.com/bcrisp4/tap/internal/feed"
-	"github.com/bcrisp4/tap/internal/sanitise"
+	"github.com/bcrisp4/tap/internal/processor"
 	"github.com/mmcdole/gofeed"
 )
 
 type WorkerOpts struct {
-	Cadence time.Duration    // fixed retry/next-poll interval for M1
-	Policy  *sanitise.Policy // sanitiser applied to every entry's HTML body. Required (panics on nil).
+	Cadence   time.Duration        // fixed retry/next-poll interval for M1
+	Processor *processor.Processor // applied to every entry's HTML body. Required (panics on nil).
 }
 
 type Worker struct {
@@ -25,12 +25,12 @@ type Worker struct {
 	opts   WorkerOpts
 }
 
-// NewWorker requires a non-nil Policy. Defaulting it here would silently
+// NewWorker requires a non-nil Processor. Defaulting it here would silently
 // hide tests that forget to pass one — the public construction surface
 // (Scheduler) supplies the production default.
 func NewWorker(d *sql.DB, c *http.Client, o WorkerOpts) *Worker {
-	if o.Policy == nil {
-		panic("poll.NewWorker: Policy is required")
+	if o.Processor == nil {
+		panic("poll.NewWorker: Processor is required")
 	}
 	if o.Cadence <= 0 {
 		o.Cadence = 30 * time.Minute
@@ -80,7 +80,7 @@ func (w *Worker) Run(ctx context.Context, sub db.DueSubscription) {
 		if content == "" {
 			content = item.Description
 		}
-		content = w.opts.Policy.Sanitise(content)
+		content = w.opts.Processor.Process(content)
 		newEntries = append(newEntries, db.NewEntry{
 			Hash:        feed.EntryHash(sub.ID, item),
 			Title:       item.Title,
