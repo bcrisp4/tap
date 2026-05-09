@@ -118,12 +118,18 @@ func main() {
 	}
 
 	// Resolve the http-timeout, honouring the deprecated --proxy-fetch-timeout
-	// alias only when --http-timeout is at its default (i.e. the operator did
-	// not override it explicitly).
+	// alias only when --http-timeout was not explicitly set (flag or env).
+	// Spec: "if both are set, --http-timeout wins."
+	httpTimeoutExplicit := os.Getenv("TAP_HTTP_TIMEOUT") != ""
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "http-timeout" {
+			httpTimeoutExplicit = true
+		}
+	})
 	timeout := *httpTimeout
 	if *proxyFetchTO > 0 {
 		slog.Warn("--proxy-fetch-timeout is deprecated; use --http-timeout")
-		if *httpTimeout == 30*time.Second {
+		if !httpTimeoutExplicit {
 			timeout = *proxyFetchTO
 		}
 	}
