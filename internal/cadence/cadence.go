@@ -96,12 +96,12 @@ func ParseRetryAfter(header string, now time.Time) (time.Time, bool) {
 // ParseCacheMaxAge extracts max-age from a Cache-Control header.
 // Returns (duration, true) when present and non-negative; (0, false) otherwise.
 // max-age=0 returns (0, true) — the caller decides whether zero floors anything.
+// Directive names are matched case-insensitively per RFC 9111 §5.2.
 func ParseCacheMaxAge(header string) (time.Duration, bool) {
 	for _, part := range strings.Split(header, ",") {
 		part = strings.TrimSpace(part)
-		const prefix = "max-age="
-		if strings.HasPrefix(part, prefix) {
-			secs, err := strconv.Atoi(part[len(prefix):])
+		if eq := strings.IndexByte(part, '='); eq >= 0 && strings.EqualFold(part[:eq], "max-age") {
+			secs, err := strconv.Atoi(part[eq+1:])
 			if err != nil || secs < 0 {
 				return 0, false
 			}

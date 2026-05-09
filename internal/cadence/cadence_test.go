@@ -138,6 +138,8 @@ func TestParseCacheMaxAge(t *testing.T) {
 		{"max-age=0", "max-age=0", true, 0},
 		{"negative rejected", "max-age=-5", false, 0},
 		{"non-numeric rejected", "max-age=foo", false, 0},
+		{"capitalised name", "Max-Age=600", true, 600 * time.Second},
+		{"upper-cased among other directives", "public, MAX-AGE=3600", true, 3600 * time.Second},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
