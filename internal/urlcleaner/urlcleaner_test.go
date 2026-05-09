@@ -58,6 +58,8 @@ func TestClean_StripsKnownOutboundTrackers(t *testing.T) {
 		{"msclkid", "https://e.com/?msclkid=d&keep=1", "https://e.com/?keep=1"},
 		{"yclid", "https://e.com/?yclid=e&keep=1", "https://e.com/?keep=1"},
 		{"igshid", "https://e.com/?igshid=f&keep=1", "https://e.com/?keep=1"},
+		{"ScCid", "https://e.com/?ScCid=g&keep=1", "https://e.com/?keep=1"},
+		{"s_cid", "https://e.com/?s_cid=h&keep=1", "https://e.com/?keep=1"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

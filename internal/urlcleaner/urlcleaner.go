@@ -34,6 +34,8 @@ var trackingParams = map[string]struct{}{
 	"msclkid":       {},
 	"yclid":         {},
 	"igshid":        {},
+	"sccid":         {}, // ScCid — case-insensitive match
+	"s_cid":         {},
 }
 
 // trackingPrefixes is the set of query-parameter name prefixes to drop.
