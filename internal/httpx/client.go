@@ -85,8 +85,9 @@ type uaRoundTripper struct {
 
 func (u *uaRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	if req.Header.Get("User-Agent") == "" {
+		// req.Clone deep-copies Header per stdlib docs, so no manual
+		// re-clone is needed before mutating.
 		cloned := req.Clone(req.Context())
-		cloned.Header = req.Header.Clone()
 		cloned.Header.Set("User-Agent", u.ua)
 		return u.inner.RoundTrip(cloned)
 	}
