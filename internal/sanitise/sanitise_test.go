@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"unicode/utf8"
 )
@@ -245,4 +246,29 @@ func TestSanitise_LogsDropStats(t *testing.T) {
 			t.Errorf("missing %q in slog output: %s", want, out)
 		}
 	}
+}
+
+func TestSanitise_ConcurrentSafe(t *testing.T) {
+	t.Parallel()
+	p := DefaultPolicy()
+	inputs := []string{
+		`<p>hello</p><script>alert(1)</script>`,
+		`<a href="https://e.com/x?utm_source=foo&id=1">link</a>`,
+		`<img width="1" height="1" src="https://t.example/p">`,
+		`<iframe src="https://www.youtube.com/embed/abc"></iframe>`,
+		`<p>` + strings.Repeat("x", 10000) + `</p>`,
+	}
+	const goroutines = 50
+	const perGoroutine = 100
+	var wg sync.WaitGroup
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			for j := 0; j < perGoroutine; j++ {
+				_ = p.Sanitise(inputs[(i+j)%len(inputs)])
+			}
+		}(i)
+	}
+	wg.Wait()
 }
