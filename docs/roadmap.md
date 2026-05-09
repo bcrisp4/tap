@@ -25,7 +25,7 @@ These are locked in before M1 begins.
 | M1 | Walking skeleton | Run the binary, subscribe to a feed, see entries appear, read one. No safety, no polish. | [`specs/2026-05-08-m1-walking-skeleton.md`](specs/2026-05-08-m1-walking-skeleton.md) |
 | M2 | Sanitisation pipeline | Allowlist-based HTML cleaning and image-URL rewriting hooks so feed content is safe to render. | [`specs/2026-05-08-m2-sanitisation.md`](specs/2026-05-08-m2-sanitisation.md) |
 | M3 | Media proxy + cache | `/api/v1/proxy/{token}` with signed tokens, sharded FS cache, MIME allowlist, request coalescing. | [`specs/2026-05-09-m3-media-proxy.md`](specs/2026-05-09-m3-media-proxy.md) |
-| M4 | Polling discipline | Adaptive cadence, per-host concurrency cap, SSRF guard with allowlist + redirect re-check, retry/backoff. | TBD |
+| M4 | Polling discipline | Adaptive cadence, per-host concurrency cap, SSRF guard with allowlist + redirect re-check, retry/backoff. | [`specs/2026-05-09-m4-polling-discipline.md`](specs/2026-05-09-m4-polling-discipline.md) |
 | M5 | Article extraction | Readability-style extractor + per-feed CSS rules, opt-in flag, graceful degradation. | TBD |
 | M6 | Auth foundations | Password login, sessions (cookie, hashed-at-rest, idle + absolute expiry), CSRF, admin bootstrap (CLI + env-var), credential redaction. | TBD |
 | M7 | 2FA + passkeys | TOTP enrolment, recovery codes, WebAuthn, session listing/revocation, admin reset paths. | TBD |
