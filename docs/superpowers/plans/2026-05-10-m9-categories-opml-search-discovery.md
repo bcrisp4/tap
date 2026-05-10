@@ -76,6 +76,7 @@ MCP tools:
 | `web/src/views/__tests__/Search.test.ts` | **create** | q<3 no request; q≥3 fires after debounce; URL updated; pre-populated from ?q= |
 | `web/src/views/__tests__/Category.test.ts` | **create** | Entries fetched with category filter; mark-all-read fires after confirm |
 | `web/src/components/Sidebar.svelte` | **modify** | Category-grouped feeds, inline create/rename/delete, uncategorised group |
+| `web/src/components/__tests__/Sidebar.test.ts` | **create** | Sidebar category management state tests (create, delete, confirm) |
 | `web/src/App.svelte` | **modify** | Add `/search` and `/categories/:id` route arms |
 | `CLAUDE.md` | **modify** | Update M9 status line |
 
@@ -1769,7 +1770,85 @@ git commit -m "feat(api): categories CRUD and mark-read endpoints"
 - Create: `internal/api/discover.go`
 - Create: `internal/api/discover_test.go`
 
-- [ ] **Step 1: Implement `internal/api/search.go`**
+- [ ] **Step 1: Write failing tests for the search handler**
+
+Create `internal/api/search_test.go`:
+
+```go
+package api
+
+import (
+    "context"
+    "database/sql"
+    "net/http"
+    "net/http/httptest"
+    "testing"
+
+    "github.com/bcrisp4/tap/internal/db"
+    "github.com/stretchr/testify/require"
+)
+
+func TestSearch_QueryTooShort(t *testing.T) {
+    t.Parallel()
+    m, _, userID := newSearchAPI(t)
+    req := withUser(httptest.NewRequest(http.MethodGet, "/api/v1/search?q=ab", nil), userID)
+    rr := httptest.NewRecorder()
+    m.ServeHTTP(rr, req)
+    require.Equal(t, http.StatusBadRequest, rr.Code)
+    requireErrorCode(t, rr, ErrCodeQueryTooShort)
+}
+
+func TestSearch_ValidQuery(t *testing.T) {
+    t.Parallel()
+    m, d, userID := newSearchAPI(t)
+    subID := insertAPITestSubscription(t, d, userID, "https://example.com/feed")
+    insertAPITestEntry(t, d, subID, "Golang concurrency", "<p>goroutines</p>")
+    req := withUser(httptest.NewRequest(http.MethodGet, "/api/v1/search?q=concurrency", nil), userID)
+    rr := httptest.NewRecorder()
+    m.ServeHTTP(rr, req)
+    require.Equal(t, http.StatusOK, rr.Code)
+    var resp struct{ Data []searchResultDTO }
+    require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+    require.Len(t, resp.Data, 1)
+}
+
+func TestSearch_CrossUserIsolation(t *testing.T) {
+    t.Parallel()
+    m, d, u1 := newSearchAPI(t)
+    u2 := insertAPITestUserWithName(t, d, "other")
+    sub1 := insertAPITestSubscription(t, d, u1, "https://a.com/feed")
+    insertAPITestEntry(t, d, sub1, "secret entry", "<p>private</p>")
+    req := withUser(httptest.NewRequest(http.MethodGet, "/api/v1/search?q=secret", nil), u2)
+    rr := httptest.NewRecorder()
+    m.ServeHTTP(rr, req)
+    require.Equal(t, http.StatusOK, rr.Code)
+    var resp struct{ Data []searchResultDTO }
+    require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+    require.Empty(t, resp.Data)
+}
+
+func newSearchAPI(t *testing.T) (*http.ServeMux, *sql.DB, int64) {
+    t.Helper()
+    d, err := db.Open(context.Background(), ":memory:")
+    require.NoError(t, err)
+    t.Cleanup(func() { _ = d.Close() })
+    require.NoError(t, db.Migrate(context.Background(), d))
+    userID := insertAPITestUser(t, d)
+    m := http.NewServeMux()
+    registerSearchRoutes(m, d)
+    return m, d, userID
+}
+```
+
+- [ ] **Step 2: Run search tests — confirm FAIL**
+
+```bash
+cd /home/ben.guest/Users/ben/src/tap && go test ./internal/api/... -run "TestSearch" -race -v
+```
+
+Expected: FAIL — `registerSearchRoutes` undefined.
+
+- [ ] **Step 3: Implement `internal/api/search.go`**
 
 ```go
 package api
@@ -1834,15 +1913,102 @@ func registerSearchRoutes(m *http.ServeMux, d *sql.DB) {
 }
 ```
 
-- [ ] **Step 2: Write and run search tests**
-
-Create `internal/api/search_test.go` with tests for q<3→400, valid query→results, cross-user isolation, and 401. Run:
+- [ ] **Step 4: Run search tests — confirm PASS**
 
 ```bash
 cd /home/ben.guest/Users/ben/src/tap && go test ./internal/api/... -run "TestSearch" -race -v
 ```
 
-- [ ] **Step 3: Implement `internal/api/opml.go`**
+Expected: all search tests PASS.
+
+- [ ] **Step 5: Write failing tests for the OPML handler**
+
+Create `internal/api/opml_test.go`:
+
+```go
+package api
+
+import (
+    "bytes"
+    "context"
+    "database/sql"
+    "net/http"
+    "net/http/httptest"
+    "strings"
+    "testing"
+
+    "github.com/bcrisp4/tap/internal/db"
+    "github.com/stretchr/testify/require"
+)
+
+func newOPMLAPI(t *testing.T) (*http.ServeMux, *sql.DB, int64) {
+    t.Helper()
+    d, err := db.Open(context.Background(), ":memory:")
+    require.NoError(t, err)
+    t.Cleanup(func() { _ = d.Close() })
+    require.NoError(t, db.Migrate(context.Background(), d))
+    userID := insertAPITestUser(t, d)
+    m := http.NewServeMux()
+    registerOPMLRoutes(m, d)
+    return m, d, userID
+}
+
+func TestOPML_Export(t *testing.T) {
+    t.Parallel()
+    m, _, userID := newOPMLAPI(t)
+    req := withUser(httptest.NewRequest(http.MethodGet, "/api/v1/opml", nil), userID)
+    rr := httptest.NewRecorder()
+    m.ServeHTTP(rr, req)
+    require.Equal(t, http.StatusOK, rr.Code)
+    require.Contains(t, rr.Header().Get("Content-Type"), "text/x-opml")
+    require.Contains(t, rr.Body.String(), `<opml version="2.0">`)
+}
+
+func TestOPML_ImportBodyTooLarge(t *testing.T) {
+    t.Parallel()
+    m, _, userID := newOPMLAPI(t)
+    // 11 MiB body — over the 10 MiB cap
+    body := strings.NewReader(strings.Repeat("x", 11<<20))
+    req := withUser(httptest.NewRequest(http.MethodPost, "/api/v1/opml", body), userID)
+    req.Header.Set("Content-Type", "text/x-opml")
+    rr := httptest.NewRecorder()
+    m.ServeHTTP(rr, req)
+    require.Equal(t, http.StatusRequestEntityTooLarge, rr.Code)
+}
+
+func TestOPML_ImportResponseShape(t *testing.T) {
+    t.Parallel()
+    m, _, userID := newOPMLAPI(t)
+    opmlBody := `<?xml version="1.0"?><opml version="2.0"><head/><body>
+      <outline type="rss" text="Example" xmlUrl="https://example.com/feed"/>
+    </body></opml>`
+    req := withUser(httptest.NewRequest(http.MethodPost, "/api/v1/opml",
+        bytes.NewBufferString(opmlBody)), userID)
+    req.Header.Set("Content-Type", "text/x-opml")
+    rr := httptest.NewRecorder()
+    m.ServeHTTP(rr, req)
+    require.Equal(t, http.StatusOK, rr.Code)
+    var resp struct {
+        Imported int      `json:"imported"`
+        Skipped  int      `json:"skipped"`
+        Errors   []string `json:"errors"`
+    }
+    require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+    require.Equal(t, 1, resp.Imported)
+    require.Equal(t, 0, resp.Skipped)
+    require.Empty(t, resp.Errors)
+}
+```
+
+- [ ] **Step 6: Run OPML tests — confirm FAIL**
+
+```bash
+cd /home/ben.guest/Users/ben/src/tap && go test ./internal/api/... -run "TestOPML" -race -v
+```
+
+Expected: FAIL — `registerOPMLRoutes` undefined.
+
+- [ ] **Step 7: Implement `internal/api/opml.go`**
 
 ```go
 package api
@@ -1899,15 +2065,108 @@ func registerOPMLRoutes(m *http.ServeMux, d *sql.DB) {
 }
 ```
 
-- [ ] **Step 4: Write and run OPML tests**
-
-Create `internal/api/opml_test.go` testing export, >10 MiB → 413, import response shape, and 401. Run:
+- [ ] **Step 8: Run OPML tests — confirm PASS**
 
 ```bash
 cd /home/ben.guest/Users/ben/src/tap && go test ./internal/api/... -run "TestOPML" -race -v
 ```
 
-- [ ] **Step 5: Implement `internal/api/discover.go`**
+Expected: all OPML tests PASS.
+
+- [ ] **Step 9: Write failing tests for the discover handler**
+
+Create `internal/api/discover_test.go`:
+
+```go
+package api
+
+import (
+    "bytes"
+    "context"
+    "database/sql"
+    "net/http"
+    "net/http/httptest"
+    "testing"
+
+    "github.com/bcrisp4/tap/internal/db"
+    "github.com/stretchr/testify/require"
+)
+
+func newDiscoverAPI(t *testing.T, discoverSrv *httptest.Server) (*http.ServeMux, int64) {
+    t.Helper()
+    d, err := db.Open(context.Background(), ":memory:")
+    require.NoError(t, err)
+    t.Cleanup(func() { _ = d.Close() })
+    require.NoError(t, db.Migrate(context.Background(), d))
+    userID := insertAPITestUser(t, d)
+    m := http.NewServeMux()
+    registerDiscoverRoutes(m, d, discoverSrv.Client())
+    return m, userID
+}
+
+func TestDiscover_CandidatesReturned(t *testing.T) {
+    t.Parallel()
+    origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        w.Header().Set("Content-Type", "text/html")
+        w.Write([]byte(`<html><head>
+            <link rel="alternate" type="application/rss+xml" href="/feed.rss" title="My Feed"/>
+        </head></html>`))
+    }))
+    defer origin.Close()
+
+    m, userID := newDiscoverAPI(t, origin)
+    body := bytes.NewBufferString(`{"url":"` + origin.URL + `"}`)
+    req := withUser(httptest.NewRequest(http.MethodPost, "/api/v1/discover", body), userID)
+    req.Header.Set("Content-Type", "application/json")
+    rr := httptest.NewRecorder()
+    m.ServeHTTP(rr, req)
+    require.Equal(t, http.StatusOK, rr.Code)
+    var resp struct{ Candidates []discoverCandidateDTO }
+    require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+    require.Len(t, resp.Candidates, 1)
+}
+
+func TestDiscover_NoFeeds(t *testing.T) {
+    t.Parallel()
+    origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        w.Header().Set("Content-Type", "text/html")
+        w.Write([]byte(`<html><head></head></html>`))
+    }))
+    defer origin.Close()
+
+    m, userID := newDiscoverAPI(t, origin)
+    body := bytes.NewBufferString(`{"url":"` + origin.URL + `"}`)
+    req := withUser(httptest.NewRequest(http.MethodPost, "/api/v1/discover", body), userID)
+    req.Header.Set("Content-Type", "application/json")
+    rr := httptest.NewRecorder()
+    m.ServeHTTP(rr, req)
+    require.Equal(t, http.StatusBadRequest, rr.Code)
+    requireErrorCode(t, rr, ErrCodeNoFeedsFound)
+}
+
+func TestDiscover_MalformedURL(t *testing.T) {
+    t.Parallel()
+    origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+    defer origin.Close()
+    m, userID := newDiscoverAPI(t, origin)
+    body := bytes.NewBufferString(`{"url":"not a url"}`)
+    req := withUser(httptest.NewRequest(http.MethodPost, "/api/v1/discover", body), userID)
+    req.Header.Set("Content-Type", "application/json")
+    rr := httptest.NewRecorder()
+    m.ServeHTTP(rr, req)
+    require.Equal(t, http.StatusBadRequest, rr.Code)
+}
+```
+
+- [ ] **Step 10: Run discover tests — confirm FAIL**
+
+```bash
+cd /home/ben.guest/Users/ben/src/tap && go test ./internal/api/... -run "TestDiscover" -race -v
+```
+
+Expected: FAIL — `registerDiscoverRoutes` undefined.
+
+- [ ] **Step 11: Implement `internal/api/discover.go`**
 
 ```go
 package api
@@ -1965,15 +2224,15 @@ func registerDiscoverRoutes(m *http.ServeMux, _ *sql.DB, client interface {
 }
 ```
 
-- [ ] **Step 6: Write and run discover tests**
-
-Create `internal/api/discover_test.go`. Run:
+- [ ] **Step 12: Run discover tests — confirm PASS**
 
 ```bash
 cd /home/ben.guest/Users/ben/src/tap && go test ./internal/api/... -run "TestDiscover" -race -v
 ```
 
-- [ ] **Step 7: Wire all new routes into `internal/api/api.go`**
+Expected: all discover tests PASS.
+
+- [ ] **Step 13: Wire all new routes into `internal/api/api.go`**
 
 In `NewMux`, add `MuxOpts.HTTPClient *http.Client` and wire the new route groups after the existing ones:
 
@@ -2011,13 +2270,13 @@ for _, p := range []struct{ method, path string; handler http.Handler }{
 }
 ```
 
-- [ ] **Step 8: Run full API + build**
+- [ ] **Step 14: Run full API + build**
 
 ```bash
 cd /home/ben.guest/Users/ben/src/tap && go test ./internal/api/... -race && go build ./...
 ```
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 15: Commit**
 
 ```bash
 git add internal/api/search.go internal/api/search_test.go \
@@ -2038,7 +2297,62 @@ git commit -m "feat(api): search, OPML, discover handlers and route wiring"
 - Modify: `web/src/lib/api.ts`
 - Modify: `web/src/lib/router.ts`
 
-- [ ] **Step 1: Extend `types.ts`**
+- [ ] **Step 1: Write failing tests for the new `api.ts` functions**
+
+Add to `web/src/lib/__tests__/api.test.ts`:
+
+```typescript
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { api } from '../api';
+
+// Mock fetch for each test
+beforeEach(() => { vi.resetAllMocks(); });
+
+describe('api.listCategories', () => {
+  it('returns categories array', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true, status: 200,
+      json: () => Promise.resolve({ data: [{ id: 1, name: 'Tech', unread: 3, created_at: 0 }] }),
+    }));
+    const cats = await api.listCategories();
+    expect(cats).toHaveLength(1);
+    expect(cats[0].name).toBe('Tech');
+  });
+});
+
+describe('api.searchEntries', () => {
+  it('sends q param and returns data', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true, status: 200,
+      json: () => Promise.resolve({ data: [] }),
+    }));
+    await api.searchEntries('rust');
+    const url = (fetch as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(url).toContain('q=rust');
+  });
+});
+
+describe('api.discoverFeeds', () => {
+  it('posts url and returns candidates', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true, status: 200,
+      json: () => Promise.resolve({ candidates: [{ title: 'Feed', feed_url: 'https://x.com/feed', site_url: '', type: 'rss' }] }),
+    }));
+    const result = await api.discoverFeeds('https://x.com');
+    expect(result.candidates).toHaveLength(1);
+  });
+});
+```
+
+- [ ] **Step 2: Run — confirm FAIL**
+
+```bash
+cd /home/ben.guest/Users/ben/src/tap && pnpm --dir web test -- src/lib/__tests__/api.test.ts
+```
+
+Expected: FAIL — `api.listCategories`, `api.searchEntries`, `api.discoverFeeds` undefined.
+
+- [ ] **Step 3: Extend `types.ts`**
 
 ```typescript
 // Add to web/src/lib/types.ts:
@@ -2068,7 +2382,7 @@ export type OPMLImportResult = {
 
 Also add `category_id: number | null` to the `Subscription` type.
 
-- [ ] **Step 2: Extend `api.ts`**
+- [ ] **Step 4: Extend `api.ts`**
 
 Add to the `api` export object in `web/src/lib/api.ts`:
 
@@ -2116,16 +2430,29 @@ Add to the `api` export object in `web/src/lib/api.ts`:
     request<Subscription>(`/subscriptions/${id}`),
 ```
 
-- [ ] **Step 3: Extend `router.ts`**
+- [ ] **Step 5: Run api tests — confirm PASS**
+
+```bash
+cd /home/ben.guest/Users/ben/src/tap && pnpm --dir web test -- src/lib/__tests__/api.test.ts
+```
+
+Expected: all api tests PASS.
+
+- [ ] **Step 6: Extend `router.ts`**
 
 ```typescript
-// Replace the RouteState union and parse function:
+// Replace the RouteState union and parse function.
+// IMPORTANT: M8 also modifies router.ts — check for M8's /settings and /saved
+// route arms and preserve them when rewriting RouteState. Do NOT remove arms
+// that M8 added; only add the M9 arms.
 
 type RouteState =
   | { name: 'unread' }
   | { name: 'reader'; params: { id: number } }
   | { name: 'search'; params: { q: string } }
-  | { name: 'category'; params: { id: number } };
+  | { name: 'category'; params: { id: number } }
+  // …plus any arms M8 added (settings, saved, history, etc.)
+  ;
 
 function parse(pathname: string, search: string): RouteState {
   const params = new URLSearchParams(search);
@@ -2138,6 +2465,7 @@ function parse(pathname: string, search: string): RouteState {
   if ((m = pathname.match(/^\/categories\/(\d+)$/)))
     return { name: 'category', params: { id: Number(m[1]) } };
 
+  // Preserve any M8-added arms here before the fallback.
   return { name: 'unread' };
 }
 
@@ -2146,25 +2474,17 @@ window.addEventListener('popstate', () =>
   internal.set(parse(window.location.pathname, window.location.search)));
 ```
 
-Update `navigate` to pass `window.location.search` as well, and to accept an optional `query` param for the search route.
+Update `navigate` to pass `window.location.search` as well.
 
-- [ ] **Step 4: Build check**
+- [ ] **Step 7: Build check**
 
 ```bash
 cd /home/ben.guest/Users/ben/src/tap && pnpm --dir web run check
 ```
 
-Fix any TypeScript errors.
+Fix any TypeScript errors, especially from the M8/M9 RouteState merge.
 
-- [ ] **Step 5: Extend api.test.ts and run**
-
-Add tests for `listCategories`, `createCategory`, `deleteCategory`, `markCategoryRead`, `searchEntries`, `discoverFeeds` to `web/src/lib/__tests__/api.test.ts`. Run:
-
-```bash
-cd /home/ben.guest/Users/ben/src/tap && pnpm --dir web test -- src/lib/__tests__/api.test.ts
-```
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add web/src/lib/types.ts web/src/lib/api.ts web/src/lib/router.ts web/src/lib/__tests__/api.test.ts
@@ -2181,7 +2501,96 @@ git commit -m "feat(spa): types, api client, and router extensions for M9"
 - Create: `web/src/views/__tests__/Search.test.ts`
 - Create: `web/src/views/__tests__/Category.test.ts`
 
-- [ ] **Step 1: Create `Search.svelte`**
+- [ ] **Step 1: Write failing Search component tests**
+
+Create `web/src/views/__tests__/Search.test.ts`:
+
+```typescript
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, fireEvent, waitFor } from '@testing-library/svelte';
+import Search from '../Search.svelte';
+import { api } from '../../lib/api';
+
+vi.mock('../../lib/api');
+
+describe('Search', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  it('does not fire request for query < 3 chars', async () => {
+    const { getByRole } = render(Search);
+    const input = getByRole('searchbox');
+    await fireEvent.input(input, { target: { value: 'ab' } });
+    await waitFor(() => expect(api.searchEntries).not.toHaveBeenCalled());
+  });
+
+  it('fires request after debounce for query >= 3 chars', async () => {
+    vi.mocked(api.searchEntries).mockResolvedValue({ data: [] });
+    vi.useFakeTimers();
+    const { getByRole } = render(Search);
+    const input = getByRole('searchbox');
+    await fireEvent.input(input, { target: { value: 'rust' } });
+    vi.advanceTimersByTime(300);
+    await waitFor(() => expect(api.searchEntries).toHaveBeenCalledWith('rust', 50, undefined));
+    vi.useRealTimers();
+  });
+
+  it('updates URL with ?q= on input', async () => {
+    vi.mocked(api.searchEntries).mockResolvedValue({ data: [] });
+    const replaceSpy = vi.spyOn(window.history, 'replaceState');
+    const { getByRole } = render(Search);
+    const input = getByRole('searchbox');
+    await fireEvent.input(input, { target: { value: 'golang' } });
+    expect(replaceSpy).toHaveBeenCalledWith({}, '', '/search?q=golang');
+  });
+});
+```
+
+- [ ] **Step 2: Write failing Category component tests**
+
+Create `web/src/views/__tests__/Category.test.ts`:
+
+```typescript
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, fireEvent, waitFor } from '@testing-library/svelte';
+import Category from '../Category.svelte';
+import { api } from '../../lib/api';
+
+vi.mock('../../lib/api');
+
+describe('Category', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(api.listCategories).mockResolvedValue([{ id: 1, name: 'Tech', unread: 2, created_at: 0 }]);
+    vi.mocked(api.listEntries).mockResolvedValue({ data: [] });
+  });
+
+  it('fetches entries with category filter', async () => {
+    render(Category, { props: { id: 1 } });
+    await waitFor(() => expect(api.listEntries).toHaveBeenCalledWith(
+      expect.objectContaining({ category: 1 })
+    ));
+  });
+
+  it('calls markCategoryRead after confirmation', async () => {
+    vi.mocked(api.markCategoryRead).mockResolvedValue(undefined);
+    vi.stubGlobal('confirm', () => true);
+    const { getByRole } = render(Category, { props: { id: 1 } });
+    await waitFor(() => getByRole('button', { name: /mark all read/i }));
+    await fireEvent.click(getByRole('button', { name: /mark all read/i }));
+    await waitFor(() => expect(api.markCategoryRead).toHaveBeenCalledWith(1));
+  });
+});
+```
+
+- [ ] **Step 3: Run component tests — confirm FAIL**
+
+```bash
+cd /home/ben.guest/Users/ben/src/tap && pnpm --dir web test -- src/views/__tests__/Search.test.ts src/views/__tests__/Category.test.ts
+```
+
+Expected: FAIL — `Search.svelte` and `Category.svelte` don't exist yet.
+
+- [ ] **Step 4: Create `Search.svelte`**
 
 ```svelte
 <script lang="ts">
@@ -2362,67 +2771,15 @@ git commit -m "feat(spa): types, api client, and router extensions for M9"
 </style>
 ```
 
-- [ ] **Step 3: Write Search tests**
-
-Create `web/src/views/__tests__/Search.test.ts`:
-
-```typescript
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, fireEvent, waitFor } from '@testing-library/svelte';
-import Search from '../Search.svelte';
-import { api } from '../../lib/api';
-
-vi.mock('../../lib/api');
-
-describe('Search', () => {
-  beforeEach(() => { vi.clearAllMocks(); });
-
-  it('does not fire request for query < 3 chars', async () => {
-    const { getByRole } = render(Search);
-    const input = getByRole('searchbox');
-    await fireEvent.input(input, { target: { value: 'ab' } });
-    await waitFor(() => expect(api.searchEntries).not.toHaveBeenCalled());
-  });
-
-  it('fires request after debounce for query >= 3 chars', async () => {
-    vi.mocked(api.searchEntries).mockResolvedValue({ data: [] });
-    vi.useFakeTimers();
-    const { getByRole } = render(Search);
-    const input = getByRole('searchbox');
-    await fireEvent.input(input, { target: { value: 'rust' } });
-    vi.advanceTimersByTime(300);
-    await waitFor(() => expect(api.searchEntries).toHaveBeenCalledWith('rust', 50, undefined));
-    vi.useRealTimers();
-  });
-
-  it('updates URL with ?q= on input', async () => {
-    vi.mocked(api.searchEntries).mockResolvedValue({ data: [] });
-    const replaceSpy = vi.spyOn(window.history, 'replaceState');
-    vi.useFakeTimers();
-    const { getByRole } = render(Search);
-    const input = getByRole('searchbox');
-    await fireEvent.input(input, { target: { value: 'golang' } });
-    expect(replaceSpy).toHaveBeenCalledWith({}, '', '/search?q=golang');
-    vi.useRealTimers();
-  });
-});
-```
-
-Run:
+- [ ] **Step 7: Run component tests — confirm PASS**
 
 ```bash
-cd /home/ben.guest/Users/ben/src/tap && pnpm --dir web test -- src/views/__tests__/Search.test.ts
+cd /home/ben.guest/Users/ben/src/tap && pnpm --dir web test -- src/views/__tests__/Search.test.ts src/views/__tests__/Category.test.ts
 ```
 
-- [ ] **Step 4: Write Category tests and run**
+Expected: all component tests PASS.
 
-Create `web/src/views/__tests__/Category.test.ts` testing that entries are fetched with the category filter and that the mark-all-read button calls `markCategoryRead` after confirm. Run:
-
-```bash
-cd /home/ben.guest/Users/ben/src/tap && pnpm --dir web test -- src/views/__tests__/Category.test.ts
-```
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add web/src/views/Search.svelte web/src/views/Category.svelte \
@@ -2438,7 +2795,71 @@ git commit -m "feat(spa): Search and Category views"
 - Modify: `web/src/components/Sidebar.svelte`
 - Modify: `web/src/App.svelte`
 
-- [ ] **Step 1: Update `Sidebar.svelte`**
+- [ ] **Step 1: Write failing Sidebar tests**
+
+Create `web/src/components/__tests__/Sidebar.test.ts`:
+
+```typescript
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, fireEvent, waitFor } from '@testing-library/svelte';
+import Sidebar from '../Sidebar.svelte';
+import { api } from '../../lib/api';
+
+vi.mock('../../lib/api');
+vi.mock('../../lib/store', () => ({
+  subscriptions: { subscribe: vi.fn((fn) => { fn([]); return () => {}; }) },
+}));
+
+describe('Sidebar', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(api.listCategories).mockResolvedValue([]);
+  });
+
+  it('loads categories on mount', async () => {
+    render(Sidebar);
+    await waitFor(() => expect(api.listCategories).toHaveBeenCalledOnce());
+  });
+
+  it('shows new category input when + is clicked', async () => {
+    const { getByTitle, getByPlaceholderText } = render(Sidebar);
+    await waitFor(() => {});
+    await fireEvent.click(getByTitle('New category'));
+    expect(getByPlaceholderText('Category name')).toBeTruthy();
+  });
+
+  it('calls createCategory on Enter in new-category input', async () => {
+    vi.mocked(api.createCategory).mockResolvedValue({ id: 1, name: 'Tech', unread: 0, created_at: 0 });
+    const { getByTitle, getByPlaceholderText } = render(Sidebar);
+    await waitFor(() => {});
+    await fireEvent.click(getByTitle('New category'));
+    const input = getByPlaceholderText('Category name');
+    await fireEvent.input(input, { target: { value: 'Tech' } });
+    await fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(api.createCategory).toHaveBeenCalledWith('Tech'));
+  });
+
+  it('calls deleteCategory after confirmation', async () => {
+    vi.mocked(api.listCategories).mockResolvedValue([{ id: 1, name: 'Tech', unread: 0, created_at: 0 }]);
+    vi.mocked(api.deleteCategory).mockResolvedValue(undefined);
+    vi.stubGlobal('confirm', () => true);
+    const { getByTitle } = render(Sidebar);
+    await waitFor(() => getByTitle('Delete category'));
+    await fireEvent.click(getByTitle('Delete category'));
+    await waitFor(() => expect(api.deleteCategory).toHaveBeenCalledWith(1));
+  });
+});
+```
+
+- [ ] **Step 2: Run Sidebar tests — confirm FAIL**
+
+```bash
+cd /home/ben.guest/Users/ben/src/tap && pnpm --dir web test -- src/components/__tests__/Sidebar.test.ts
+```
+
+Expected: FAIL — Sidebar doesn't have the new category management UI yet.
+
+- [ ] **Step 3: Update `Sidebar.svelte`**
 
 Replace the flat FEEDS group with a category-grouped layout. Key changes:
 
@@ -2529,7 +2950,15 @@ Replace the flat FEEDS group with a category-grouped layout. Key changes:
 </aside>
 ```
 
-- [ ] **Step 2: Update `App.svelte`**
+- [ ] **Step 4: Run Sidebar tests — confirm PASS**
+
+```bash
+cd /home/ben.guest/Users/ben/src/tap && pnpm --dir web test -- src/components/__tests__/Sidebar.test.ts
+```
+
+Expected: all Sidebar tests PASS.
+
+- [ ] **Step 5: Update `App.svelte`**
 
 Add the `/search` and `/categories/:id` route arms:
 
@@ -2540,24 +2969,26 @@ Add the `/search` and `/categories/:id` route arms:
   <Category id={$route.params.id} />
 ```
 
-Import the new views at the top of the script block.
+Import the new views at the top of the script block. Preserve any M8-added route arms (`settings`, `saved`, `history`, etc.) — do not remove them.
 
-- [ ] **Step 3: Build check**
+- [ ] **Step 6: Build check**
 
 ```bash
 cd /home/ben.guest/Users/ben/src/tap && pnpm --dir web run check
 ```
 
-- [ ] **Step 4: Run full SPA test suite**
+- [ ] **Step 7: Run full SPA test suite**
 
 ```bash
 cd /home/ben.guest/Users/ben/src/tap && pnpm --dir web test
 ```
 
-- [ ] **Step 5: Commit**
+Expected: all tests PASS.
+
+- [ ] **Step 8: Commit**
 
 ```bash
-git add web/src/components/Sidebar.svelte web/src/App.svelte
+git add web/src/components/Sidebar.svelte web/src/components/__tests__/Sidebar.test.ts web/src/App.svelte
 git commit -m "feat(spa): category-grouped sidebar and route arms for search and category views"
 ```
 
@@ -2622,7 +3053,7 @@ git commit -m "docs: update CLAUDE.md for M9 status"
 
 ---
 
-### Task F3: Final commit
+### Task F3: Final commit and simplify
 
 - [ ] **Step 1: Verify git status is clean**
 
@@ -2639,6 +3070,10 @@ cd /home/ben.guest/Users/ben/src/tap && git log --oneline -15
 ```
 
 Confirm all M9 tasks are represented in the commit log.
+
+- [ ] **Step 3: Run `/simplify`**
+
+Invoke the `simplify` skill to review all M9 changed code for reuse, quality, and efficiency. Fix any issues found before marking the milestone complete. This step is mandated by the global `CLAUDE.md`.
 
 ---
 
