@@ -265,3 +265,28 @@ var timeNow = time.Now
 // timeNowUnix is broken out so tests can inject a fixed clock by overriding
 // timeNow. Used by runAdminCreate and (later) bootstrapAdmin.
 func timeNowUnix() int64 { return timeNow().Unix() }
+
+// bootstrapAdmin creates an admin user from the supplied credentials. Used
+// by the env-var first-launch shortcut after migrations. Validates the
+// password (so a too-short bootstrap password aborts loudly rather than
+// producing an unusable account) and inserts the user atomically.
+//
+// logs is reserved for future use (an audit-style log line). The current
+// caller already emits an INFO log on success at the call site, so this
+// helper stays quiet.
+func bootstrapAdmin(ctx context.Context, d *sql.DB, username, password string, hashParams auth.Params, logs io.Writer) error {
+	_ = logs // reserved for future audit logging
+	if err := auth.ValidatePassword(password); err != nil {
+		return err
+	}
+	hash, err := auth.Hash(password, hashParams)
+	if err != nil {
+		return fmt.Errorf("hash bootstrap password: %w", err)
+	}
+	if _, err := db.InsertUser(ctx, d, db.NewUser{
+		Username: username, PasswordHash: hash, Role: "admin", CreatedAt: timeNowUnix(),
+	}); err != nil {
+		return fmt.Errorf("insert bootstrap admin: %w", err)
+	}
+	return nil
+}
