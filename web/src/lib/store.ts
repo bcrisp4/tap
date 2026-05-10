@@ -1,5 +1,5 @@
 import { writable } from 'svelte/store';
-import type { EntryListItem, Subscription } from './types';
+import type { EntryListItem, Subscription, Category } from './types';
 import { api } from './api';
 
 function entriesStore() {
@@ -75,3 +75,19 @@ function subscriptionsStore() {
 }
 
 export const subscriptions = subscriptionsStore();
+
+function categoriesStore() {
+  const { subscribe, set } = writable<Category[]>([]);
+  return {
+    subscribe,
+    async load() {
+      try {
+        set(await api.listCategories());
+      } catch (e) {
+        console.error('categories.load failed:', e);
+      }
+    },
+  };
+}
+
+export const categories = categoriesStore();

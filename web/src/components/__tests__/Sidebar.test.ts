@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/svelte';
 
 vi.mock('../../lib/store', () => ({
   subscriptions: { subscribe: (fn: (v: unknown[]) => void) => { fn([]); return () => {}; } },
+  categories: { subscribe: (fn: (v: unknown[]) => void) => { fn([]); return () => {}; }, load: vi.fn() },
 }));
 vi.mock('../../lib/router', () => ({
   route: { subscribe: (fn: (v: { name: string }) => void) => { fn({ name: 'unread' }); return () => {}; } },

@@ -11,6 +11,9 @@ import type {
   TOTPConfirmResponse,
   Passkey,
   AdminUser,
+  Category,
+  DiscoverResult,
+  OPMLImportResult,
 } from './types';
 import { auth, ERR_UNAUTHORIZED } from './auth';
 
@@ -89,14 +92,16 @@ export const api = {
   listEntries: (params: {
     unread?: boolean;
     feed?: number;
+    category?: number;
     limit?: number;
     cursor?: string;
   } = {}) => {
     const qs = new URLSearchParams();
-    if (params.unread) qs.set('unread', '1');
-    if (params.feed)   qs.set('feed', String(params.feed));
-    if (params.limit)  qs.set('limit', String(params.limit));
-    if (params.cursor) qs.set('cursor', params.cursor);
+    if (params.unread)    qs.set('unread', '1');
+    if (params.feed)      qs.set('feed', String(params.feed));
+    if (params.category)  qs.set('category', String(params.category));
+    if (params.limit)     qs.set('limit', String(params.limit));
+    if (params.cursor)    qs.set('cursor', params.cursor);
     const suffix = qs.toString() ? `?${qs}` : '';
     return request<ListResponse<EntryListItem>>(`/entries${suffix}`);
   },
@@ -212,4 +217,63 @@ export const api = {
 
   deleteUser: (id: number) =>
     request<void>(`/admin/users/${id}`, { method: 'DELETE' }),
+
+  // --- Subscriptions (M9 extensions) ---
+  getSubscription: (id: number) =>
+    request<Subscription>(`/subscriptions/${id}`),
+
+  // --- Categories (M9) ---
+  listCategories: () =>
+    request<{ data: Category[] }>('/categories').then(r => r.data),
+
+  createCategory: (name: string) =>
+    request<Category>('/categories', {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    }),
+
+  renameCategory: (id: number, name: string) =>
+    request<Category>(`/categories/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    }),
+
+  deleteCategory: (id: number) =>
+    request<void>(`/categories/${id}`, { method: 'DELETE' }),
+
+  markCategoryRead: (id: number) =>
+    request<void>(`/categories/${id}/mark-read`, { method: 'POST', body: '{}' }),
+
+  // --- Search (M9) ---
+  searchEntries: (q: string, limit = 50, cursor?: number) => {
+    const qs = new URLSearchParams({ q, limit: String(limit) });
+    if (cursor !== undefined) qs.set('cursor', String(cursor));
+    return request<{ data: EntryListItem[]; next_cursor?: number }>(`/search?${qs}`);
+  },
+
+  // --- OPML (M9) ---
+  exportOPML: () =>
+    fetch('/api/v1/opml').then(r => r.blob()),
+
+  importOPML: (data: ArrayBuffer) => {
+    const csrf = get(auth).csrfToken ?? '';
+    return fetch('/api/v1/opml', {
+      method: 'POST',
+      headers: { 'X-CSRF-Token': csrf },
+      body: data,
+    }).then(async r => {
+      if (!r.ok) {
+        const detail: ApiError | null = await r.json().catch(() => null);
+        throw new Error(detail?.error?.message ?? `${r.status}`);
+      }
+      return r.json() as Promise<OPMLImportResult>;
+    });
+  },
+
+  // --- Discover (M9) ---
+  discoverFeeds: (url: string) =>
+    request<DiscoverResult>('/discover', {
+      method: 'POST',
+      body: JSON.stringify({ url }),
+    }),
 };
