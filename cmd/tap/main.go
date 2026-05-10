@@ -21,6 +21,7 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 
 	"github.com/bcrisp4/tap/internal/api"
+	"github.com/bcrisp4/tap/internal/archival"
 	"github.com/bcrisp4/tap/internal/auth"
 	"github.com/bcrisp4/tap/internal/db"
 	"github.com/bcrisp4/tap/internal/httpx"
@@ -66,6 +67,16 @@ func runServer() {
 		proxyCacheDir = flag.String("proxy-cache-dir", envOr("TAP_PROXY_CACHE_DIR", ""), "media cache directory (default: <data>/cache)")
 		proxyCacheCap = flag.Int64("proxy-cache-cap-bytes", envOrInt64("TAP_PROXY_CACHE_CAP_BYTES", 524288000), "media cache size cap in bytes")
 		proxyBodyCap  = flag.Int64("proxy-body-cap-bytes", envOrInt64("TAP_PROXY_BODY_CAP_BYTES", 10485760), "per-response body cap for media proxy origin fetches")
+
+		archiveInterval = flag.Duration("archive-interval",
+			envOrDuration("TAP_ARCHIVE_INTERVAL", 24*time.Hour),
+			"how often the archival sweep runs")
+		archiveHorizon = flag.Duration("archive-horizon",
+			envOrDuration("TAP_ARCHIVE_HORIZON", 2160*time.Hour), // 90d
+			"delete read+unsaved entries older than this horizon")
+		cacheAgeCap = flag.Duration("cache-age-cap",
+			envOrDuration("TAP_CACHE_AGE_CAP", 336*time.Hour), // 14d
+			"unlink proxy cache files with fetched_at older than this age")
 
 		// Auth-related flags. The defaults track concept §7.4: 7-day idle TTL
 		// (refreshed on activity), 90-day absolute cap. Cookie Secure default
@@ -202,6 +213,15 @@ func runServer() {
 	})
 	sched.Start()
 
+	archiver := archival.NewArchiver(d, archival.ArchiverOpts{
+		Horizon:     *archiveHorizon,
+		CacheAgeCap: *cacheAgeCap,
+		Interval:    *archiveInterval,
+		CacheDir:    cacheDir,
+		OnEvict:     nil, // M12 wires tap_proxy_cache_evictions_total{reason="age_sweep"}
+	})
+	archiver.Start()
+
 	// Resolve --cookie-secure once at startup. "auto" (the default) inspects
 	// --addr: loopback bind => Secure off, anything else => Secure on. Any
 	// other token is a startup error.
@@ -288,6 +308,7 @@ func runServer() {
 	shutdownCtx, sCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer sCancel()
 	_ = srv.Shutdown(shutdownCtx)
+	archiver.Stop()
 	sched.Stop()
 	client.CloseIdleConnections()
 }

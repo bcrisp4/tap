@@ -169,6 +169,39 @@ func UpdateEntry(ctx context.Context, d *sql.DB, id, userID int64, u EntryUpdate
 	return nil
 }
 
+// ArchivableEntry is the minimal row shape returned by ListArchivable.
+type ArchivableEntry struct {
+	ID             int64
+	SubscriptionID int64
+	Hash           string
+}
+
+// ListArchivable returns up to limit entries eligible for archival:
+// read=1, saved=0, published_at < horizonUnix. Ordered oldest-first.
+func ListArchivable(ctx context.Context, d *sql.DB, horizonUnix int64, limit int) ([]ArchivableEntry, error) {
+	rows, err := d.QueryContext(ctx, `
+		SELECT id, subscription_id, hash
+		FROM entries
+		WHERE read = 1 AND saved = 0 AND published_at < ?
+		ORDER BY published_at ASC
+		LIMIT ?
+	`, horizonUnix, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list archivable: %w", err)
+	}
+	defer rows.Close()
+
+	var out []ArchivableEntry
+	for rows.Next() {
+		var e ArchivableEntry
+		if err := rows.Scan(&e.ID, &e.SubscriptionID, &e.Hash); err != nil {
+			return nil, fmt.Errorf("scan archivable entry: %w", err)
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 func boolToInt(b bool) int {
 	if b {
 		return 1

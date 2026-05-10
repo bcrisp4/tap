@@ -7,7 +7,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Tap is a self-hosted RSS / Atom / JSON Feed reader. It ships as **one
 static Go binary** with an embedded SQLite database, an embedded Svelte
 SPA, and no external services. See `docs/concept.md` for the full design
-and `docs/roadmap.md` for the milestone plan; **M7 merged** (2FA + passkeys
+and `docs/roadmap.md` for the milestone plan; **M11 in progress** (archival +
+tombstones — spec at `docs/specs/2026-05-10-m11-archival-tombstones.md`);
+**M7 merged** (2FA + passkeys
 + per-user data isolation; **M6 merged** — auth
 foundations — spec at
 `docs/specs/2026-05-10-m6-auth-foundations.md`; M5 article extraction
@@ -54,11 +56,12 @@ The embed directive lives in `web/embed.go` (package `web`) rather than under `i
 
 ## Architecture
 
-Single-process server with three concerns living alongside each other (M11 will add the archival ticker):
+Single-process server with four concerns living alongside each other:
 
 1. **HTTP server** (`internal/server`) — owns lifecycle and the embedded SPA fallback. The SPA handler serves `web/dist` and falls back to `index.html` for unknown paths so client-side routing works for deep links. There is no dev-mode branch in the Go server: in dev, you visit Vite on :5173 and Vite proxies `/api` + `/healthz` to Go on :8080 (config in `web/vite.config.ts`).
 2. **Polling pipeline** (`internal/poll`) — `Scheduler` ticks every 60s, picks due subscriptions via `db.ListDuePolls`, and dispatches to a fixed worker pool. Each `Worker.Run` does fetch → parse → commit in one transaction. `Scheduler.Poke()` is wired into `POST /api/v1/subscriptions` so a freshly added feed polls within seconds, not up to `TickInterval`.
 3. **REST API** (`internal/api`) — `NewMux(db, poke)` wires `/api/v1/subscriptions` and `/api/v1/entries` plus `/healthz`. `cmd/tap/main.go` mounts the same mux under both `/api/` and `/healthz`.
+4. **Archival ticker** (`internal/archival`) — `Archiver` ticks daily (configurable), deletes read-and-unsaved entries older than `--archive-horizon`, writes tombstones atomically, and evicts proxy cache files older than `--cache-age-cap`. Starts after migrations, stops before the scheduler on shutdown.
 
 **Database is the queue.** There is no separate queue table or in-memory queue. `subscriptions.next_poll_at` (unix seconds) is the schedule; new subscriptions insert with `next_poll_at = 0` so the next tick picks them up. The `(subscription_id, hash)` UNIQUE constraint dedupes re-fetched entries silently.
 
@@ -109,12 +112,23 @@ populated DBs) or `tap admin create` interactively from the host.
 force-logs-out that user's active sessions. There is no SPA-visible
 bootstrap path.
 
-**Multi-user data isolation is M7 work**, not M6. The `users` table
-exists; subscriptions and entries do not yet carry a `user_id` column
-or per-user query filters. M6 deployments are effectively single-admin
-via env-var bootstrap; do not light up the non-admin role until M7
-closes the isolation gap. The intended posture is strict per-user
-privacy with no admin override on feed visibility.
+**Multi-user data isolation is M7 scope.** All subscription/entry queries
+are scoped by `user_id`; strict per-user privacy with no admin override
+on feed visibility.
+
+**Archival + tombstones (M11).** A daily sweep deletes read-and-unsaved
+entries older than `--archive-horizon` (default 90d), recording tombstones
+so re-published entries do not resurface as unread. A second daily pass
+unlinks proxy cache files older than `--cache-age-cap` (default 14d). Both
+bounds are configurable via flags or environment variables. The tombstone
+table (`tombstones`) is small and grows slowly; tombstones are permanent by
+design — the dedup guarantee requires durability. The archival sweep is the
+fourth concurrent concern alongside the HTTP server, polling pipeline, and REST API; it
+starts after migrations and stops cleanly on shutdown.
+
+**Upgrade note (migration 0010):** adds the `tombstones` table. Existing
+databases migrate cleanly. Entries already in the database are subject to
+archival on the next sweep if they meet the horizon criterion.
 
 Defence-in-depth defaults that should not be weakened lightly:
 

@@ -248,3 +248,52 @@ func TestUpdateAfterPoll_WritesExtractFailed(t *testing.T) {
 	}
 	require.Equal(t, map[string]int{"bad": 1, "ok": 0}, got)
 }
+
+func TestListArchivable_EligibleCriteria(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	ctx := context.Background()
+	subID, uid := seedSub(t, d)
+
+	insertE := func(hash string, publishedAt int64, read, saved bool) {
+		t.Helper()
+		_, err := d.ExecContext(ctx, `
+			INSERT INTO entries (user_id, subscription_id, hash, title, author, url, content,
+			                     published_at, fetched_at, read, saved, extract_failed)
+			VALUES (?, ?, ?, 'T', NULL, 'https://x', 'c', ?, 0, ?, ?, 0)
+		`, uid, subID, hash, publishedAt, boolToInt(read), boolToInt(saved))
+		require.NoError(t, err)
+	}
+
+	horizon := int64(1000)
+	insertE("old-read-unsaved", 500, true, false)  // eligible
+	insertE("old-read-saved", 500, true, true)     // saved — retain
+	insertE("old-unread", 500, false, false)       // unread — retain
+	insertE("new-read-unsaved", 2000, true, false) // too new — retain
+
+	rows, err := ListArchivable(ctx, d, horizon, 100)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, "old-read-unsaved", rows[0].Hash)
+	require.Equal(t, subID, rows[0].SubscriptionID)
+}
+
+func TestListArchivable_RespectsLimit(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	ctx := context.Background()
+	subID, uid := seedSub(t, d)
+
+	for i := range 5 {
+		_, err := d.ExecContext(ctx, `
+			INSERT INTO entries (user_id, subscription_id, hash, title, author, url, content,
+			                     published_at, fetched_at, read, saved, extract_failed)
+			VALUES (?, ?, ?, 'T', NULL, 'https://x', 'c', 100, 0, 1, 0, 0)
+		`, uid, subID, fmt.Sprintf("h%d", i))
+		require.NoError(t, err)
+	}
+
+	rows, err := ListArchivable(ctx, d, 500, 3)
+	require.NoError(t, err)
+	require.Len(t, rows, 3)
+}
