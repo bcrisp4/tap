@@ -4,7 +4,14 @@ import { offlineQueue } from './offlineQueue';
 import type { SWMessage } from '../sw/workerTypes';
 
 function notifySW(msg: SWMessage): void {
-  navigator.serviceWorker?.controller?.postMessage(msg);
+  const sw = navigator.serviceWorker;
+  if (!sw) return;
+  if (sw.controller) {
+    sw.controller.postMessage(msg);
+  } else {
+    // SW not yet controlling this page (first load after install); wait for it.
+    sw.ready.then(reg => reg.active?.postMessage(msg)).catch(() => {});
+  }
 }
 
 export const ERR_UNAUTHORIZED = 'unauthorized';
@@ -67,7 +74,9 @@ export const auth = {
       // Return the TOTP-required shape without setting user state.
       return body;
     }
-    internal.set({ user: (body as SessionResponse).user, csrfToken: (body as SessionResponse).csrf_token, bootstrapped: true });
+    const session = body as SessionResponse;
+    internal.set({ user: session.user, csrfToken: session.csrf_token, bootstrapped: true });
+    notifySW({ type: 'set-user', userId: session.user.id });
     return body;
   },
 
@@ -83,6 +92,7 @@ export const auth = {
     });
     const body: SessionResponse = await jsonOr401(res);
     internal.set({ user: body.user, csrfToken: body.csrf_token, bootstrapped: true });
+    notifySW({ type: 'set-user', userId: body.user.id });
   },
 
   async beginPasskeyLogin(): Promise<{ session_id: number; options: unknown }> {
@@ -102,6 +112,7 @@ export const auth = {
     });
     const body: SessionResponse = await jsonOr401(res);
     internal.set({ user: body.user, csrfToken: body.csrf_token, bootstrapped: true });
+    notifySW({ type: 'set-user', userId: body.user.id });
   },
 
   async logout(): Promise<void> {

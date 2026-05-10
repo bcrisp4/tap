@@ -89,6 +89,8 @@ export const offlineQueue = {
           const freshToken = await fetchCSRF();
           if (freshToken) {
             head.csrfToken = freshToken;
+            // Persist the refreshed token so a subsequent drain doesn't hit csrf_invalid again.
+            write(userId, [head, ...rest]);
             let retry: Response;
             try {
               retry = await sendMutation(head);
@@ -104,6 +106,11 @@ export const offlineQueue = {
           console.warn('offlineQueue: discarding unrecoverable mutation', head.path);
           write(userId, rest);
           continue;
+        }
+
+        if (res.status >= 500) {
+          // Transient server error — stop and retry on next drain/reconnect.
+          break;
         }
 
         // Other 4xx — unrecoverable, discard.

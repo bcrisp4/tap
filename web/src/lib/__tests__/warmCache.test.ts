@@ -7,6 +7,20 @@ function makeContent(count: number, prefix = 'entry'): string {
   ).join('');
 }
 
+// The warmCache driver now does a two-phase fetch:
+//   1. GET /api/v1/entries?limit=50&unread=1  → list of {id} items
+//   2. GET /api/v1/entries/:id                 → detail with content
+//   3. fetch each extracted proxy URL
+//
+// Mocks must return list shape for the list call and detail shape for detail calls.
+
+function makeListResponse(ids: number[]) {
+  return { ok: true, status: 200, json: () => Promise.resolve({ data: ids.map(id => ({ id })) }) };
+}
+function makeDetailResponse(content: string) {
+  return { ok: true, status: 200, json: () => Promise.resolve({ content }) };
+}
+
 beforeEach(() => vi.clearAllMocks());
 
 let warmCache: typeof import('../warmCache').warmCache;
@@ -22,12 +36,11 @@ describe('warmCache — URL extraction', () => {
     const fetched: string[] = [];
     vi.stubGlobal('fetch', vi.fn().mockImplementation((url: string) => {
       fetched.push(url);
-      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({
-        data: [{ id: 1, content: makeContent(2) }],
-      }) });
+      if (url.includes('?limit=')) return Promise.resolve(makeListResponse([1]));
+      if (url.includes('/entries/')) return Promise.resolve(makeDetailResponse(makeContent(2)));
+      return Promise.resolve({ ok: true, status: 200 });
     }));
     await warmCache(1);
-    // First call is the entries fetch; subsequent calls are proxy URLs.
     const proxyFetches = fetched.filter(u => u.includes('/proxy/'));
     expect(proxyFetches).toHaveLength(2);
   });
@@ -37,12 +50,9 @@ describe('warmCache — URL extraction', () => {
     const fetched: string[] = [];
     vi.stubGlobal('fetch', vi.fn().mockImplementation((url: string) => {
       fetched.push(url);
-      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({
-        data: [
-          { id: 1, content: `<img src="${sharedUrl}">` },
-          { id: 2, content: `<img src="${sharedUrl}">` },
-        ],
-      }) });
+      if (url.includes('?limit=')) return Promise.resolve(makeListResponse([1, 2]));
+      if (url.includes('/entries/')) return Promise.resolve(makeDetailResponse(`<img src="${sharedUrl}">`));
+      return Promise.resolve({ ok: true, status: 200 });
     }));
     await warmCache(1);
     const proxyFetches = fetched.filter(u => u.includes('/proxy/'));
@@ -55,9 +65,9 @@ describe('warmCache — per-entry URL cap', () => {
     const fetched: string[] = [];
     vi.stubGlobal('fetch', vi.fn().mockImplementation((url: string) => {
       fetched.push(url);
-      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({
-        data: [{ id: 1, content: makeContent(30) }], // 30 URLs in one entry
-      }) });
+      if (url.includes('?limit=')) return Promise.resolve(makeListResponse([1]));
+      if (url.includes('/entries/')) return Promise.resolve(makeDetailResponse(makeContent(30)));
+      return Promise.resolve({ ok: true, status: 200 });
     }));
     await warmCache(1);
     const proxyFetches = fetched.filter(u => u.includes('/proxy/'));
@@ -68,12 +78,16 @@ describe('warmCache — per-entry URL cap', () => {
 describe('warmCache — total URL cap', () => {
   it('caps total warm list at 200 URLs', async () => {
     // 20 entries × 20 URLs each = 400 possible; should be capped at 200.
+    const ids = Array.from({ length: 20 }, (_, i) => i + 1);
     const fetched: string[] = [];
     vi.stubGlobal('fetch', vi.fn().mockImplementation((url: string) => {
       fetched.push(url);
-      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({
-        data: Array.from({ length: 20 }, (_, i) => ({ id: i, content: makeContent(20, `e${i}`) })),
-      }) });
+      if (url.includes('?limit=')) return Promise.resolve(makeListResponse(ids));
+      if (url.includes('/entries/')) {
+        const id = Number(url.split('/entries/')[1]);
+        return Promise.resolve(makeDetailResponse(makeContent(20, `e${id}`)));
+      }
+      return Promise.resolve({ ok: true, status: 200 });
     }));
     await warmCache(1);
     const proxyFetches = fetched.filter(u => u.includes('/proxy/'));
@@ -82,16 +96,13 @@ describe('warmCache — total URL cap', () => {
 });
 
 describe('warmCache — concurrency', () => {
-  it('runs at most 4 fetches concurrently', async () => {
+  it('runs at most 4 proxy fetches concurrently', async () => {
     let inFlight = 0;
     let maxInFlight = 0;
-    // Give entries that produce exactly 8 proxy URLs.
     vi.stubGlobal('fetch', vi.fn().mockImplementation((url: string) => {
-      if (!url.includes('/proxy/')) {
-        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({
-          data: [{ id: 1, content: makeContent(8) }],
-        }) });
-      }
+      if (url.includes('?limit=')) return Promise.resolve(makeListResponse([1]));
+      if (url.includes('/entries/')) return Promise.resolve(makeDetailResponse(makeContent(8)));
+      // proxy fetches
       inFlight++;
       maxInFlight = Math.max(maxInFlight, inFlight);
       return new Promise(resolve =>
@@ -112,7 +123,7 @@ describe('warmCache — error handling', () => {
     await expect(warmCache(1)).resolves.toBeUndefined();
   });
 
-  it('swallows 401 silently without triggering re-auth', async () => {
+  it('swallows 401 on list silently without triggering re-auth', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 401 }));
     await expect(warmCache(1)).resolves.toBeUndefined();
   });
@@ -124,19 +135,18 @@ describe('warmCache — error handling', () => {
       return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ data: [] }) });
     }));
     await warmCache(1);
-    expect(fetched).toHaveLength(1); // Only the entries fetch.
+    expect(fetched).toHaveLength(1); // Only the list fetch.
   });
 
   it('uses plain fetch (no cache option) so SW CacheFirst strategy is populated', async () => {
-    const fetchMock = vi.fn().mockImplementation((_url: string) => {
-      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({
-        data: [{ id: 1, content: makeContent(1) }],
-      }) });
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('?limit=')) return Promise.resolve(makeListResponse([1]));
+      if (url.includes('/entries/')) return Promise.resolve(makeDetailResponse(makeContent(1)));
+      return Promise.resolve({ ok: true, status: 200 });
     });
     vi.stubGlobal('fetch', fetchMock);
     await warmCache(1);
     const proxyCalls = fetchMock.mock.calls.filter((call: unknown[]) => (call[0] as string).includes('/proxy/'));
-    // Each proxy fetch must have NO second argument, or second arg with no 'cache' key.
     for (const call of proxyCalls) {
       expect((call[1] as RequestInit | undefined)?.cache).toBeUndefined();
     }

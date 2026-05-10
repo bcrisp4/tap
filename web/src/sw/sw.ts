@@ -1,6 +1,6 @@
 /// <reference lib="webworker" />
-import { precacheAndRoute } from 'workbox-precaching';
-import { registerRoute } from 'workbox-routing';
+import { precacheAndRoute, createHandlerBoundToURL } from 'workbox-precaching';
+import { registerRoute, NavigationRoute } from 'workbox-routing';
 import { CacheFirst, StaleWhileRevalidate } from 'workbox-strategies';
 import { ExpirationPlugin } from 'workbox-expiration';
 import type { SWMessage } from './workerTypes';
@@ -8,10 +8,13 @@ import { matchesProxy, matchesEntries, matchesExcluded, apiCacheName } from './s
 
 declare let self: ServiceWorkerGlobalScope;
 
-// precacheAndRoute handles the app shell AND the navigation fallback to
-// index.html for deep-linked routes — do NOT add a separate registerRoute
-// for navigate requests, as that would shadow the precache handler.
 precacheAndRoute(self.__WB_MANIFEST);
+
+// SPA navigation fallback: deep-linked routes (e.g. /reader/42) aren't in
+// the precache manifest, so they'd fail offline without this route. Serve
+// index.html for all same-origin navigation requests; client-side routing
+// then handles the path. Must come after precacheAndRoute.
+registerRoute(new NavigationRoute(createHandlerBoundToURL('index.html')));
 
 let userId: number | null = null;
 
@@ -50,11 +53,17 @@ self.addEventListener('message', (event: ExtendableMessageEvent) => {
     userId = (data as SWMessage & { type: 'set-user' }).userId;
   } else if (data.type === 'logout') {
     const uid = (data as SWMessage & { type: 'logout' }).userId;
-    caches.delete(apiCacheName('tap-proxy', uid));
-    caches.delete(apiCacheName('tap-api', uid));
-    proxyStrategies.delete(uid);
-    apiStrategies.delete(uid);
-    userId = null;
+    // waitUntil ensures the SW isn't terminated before the cache deletions complete.
+    event.waitUntil(
+      Promise.all([
+        caches.delete(apiCacheName('tap-proxy', uid)),
+        caches.delete(apiCacheName('tap-api', uid)),
+      ]).then(() => {
+        proxyStrategies.delete(uid);
+        apiStrategies.delete(uid);
+        userId = null;
+      })
+    );
   }
 });
 
