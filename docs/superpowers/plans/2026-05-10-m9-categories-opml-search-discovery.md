@@ -1161,12 +1161,9 @@ func ImportOPML(ctx context.Context, d *sql.DB, userID int64, data []byte, now i
             VALUES (?, ?, 0, ?, ?, ?)
         `, title, xmlURL, now, userID, nullableInt64(categoryID))
         if err2 != nil {
-            // NOTE: The M1 migration created a global UNIQUE constraint on subscriptions.feed_url.
-            // For multi-user correctness (M7), this constraint must be changed to (user_id, feed_url).
-            // Coordinate with M7: if M7 does not change this constraint, two users cannot subscribe
-            // to the same feed URL. If M7 changes it to (user_id, feed_url), update this string to
-            // "UNIQUE constraint failed: subscriptions.user_id, subscriptions.feed_url".
-            if strings.Contains(err2.Error(), "UNIQUE constraint failed: subscriptions.feed_url") {
+            // M7 migration 0006 changed the constraint from UNIQUE(feed_url) to
+            // UNIQUE(user_id, feed_url) so different users can subscribe to the same feed.
+            if strings.Contains(err2.Error(), "UNIQUE constraint failed: subscriptions.user_id, subscriptions.feed_url") {
                 skipped++
                 return
             }
