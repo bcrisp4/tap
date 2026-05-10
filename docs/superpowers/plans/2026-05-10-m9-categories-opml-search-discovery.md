@@ -110,8 +110,18 @@ Expected: `modernc.org/sqlite v1.50.0` (or later). No `mattn/go-sqlite3`.
 
 ### Task A2: Migration 0008 — categories table
 
+> **BLOCKED UNTIL M7 IS MERGED.** M9 migrations are numbered starting at 0008, which requires M7's `0006_user_data_isolation.sql` and `0007_2fa_passkeys_sessions_meta.sql` to already exist in `internal/db/migrations/`. Before starting this task, verify: `ls internal/db/migrations/` shows exactly 7 files (`0001`–`0007`). If M7 has not merged, do not proceed — the migration test in Step 2 will fail with a schema mismatch.
+
 **Files:**
 - Create: `internal/db/migrations/0008_categories.sql`
+
+- [ ] **Step 0: Confirm M7 has merged**
+
+```bash
+ls /home/ben.guest/Users/ben/src/tap/internal/db/migrations/
+```
+
+Expected: 7 files present — `0001_initial.sql` through `0007_2fa_passkeys_sessions_meta.sql`. If fewer than 7 files exist, stop and wait for M7.
 
 - [ ] **Step 1: Write the migration**
 
@@ -337,32 +347,24 @@ git commit -m "feat(db): migration 0009 — FTS5 virtual table with triggers and
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `internal/db/categories_test.go`:
+Create `internal/db/categories_test.go`.
+
+**Package note:** The existing test files in `internal/db/` use `package db` (white-box, access unexported). Match that. The `newTestDB` helper likely already exists in the package; if not, add it to a shared `internal/db/testhelpers_test.go`. Add `insertTestUser` and `insertTestUserWithName` helpers to the same file.
 
 ```go
-package db_test
+package db
 
 import (
     "context"
     "testing"
     "time"
 
-    "github.com/bcrisp4/tap/internal/db"
     "github.com/stretchr/testify/require"
 )
 
-func openTestDB(t *testing.T) *sql.DB {
-    t.Helper()
-    d, err := db.Open(context.Background(), ":memory:")
-    require.NoError(t, err)
-    t.Cleanup(func() { _ = d.Close() })
-    require.NoError(t, db.Migrate(context.Background(), d))
-    return d
-}
-
 func TestInsertCategory_Roundtrip(t *testing.T) {
     t.Parallel()
-    d := openTestDB(t)
+    d := newTestDB(t)
     // need a user first — insert directly for test setup
     userID := insertTestUser(t, d)
     id, err := db.InsertCategory(context.Background(), d, db.NewCategory{
@@ -379,7 +381,7 @@ func TestInsertCategory_Roundtrip(t *testing.T) {
 
 func TestInsertCategory_DuplicateNameSameUser(t *testing.T) {
     t.Parallel()
-    d := openTestDB(t)
+    d := newTestDB(t)
     userID := insertTestUser(t, d)
     nc := db.NewCategory{UserID: userID, Name: "Tech", CreatedAt: time.Now().Unix()}
     _, err := db.InsertCategory(context.Background(), d, nc)
@@ -390,7 +392,7 @@ func TestInsertCategory_DuplicateNameSameUser(t *testing.T) {
 
 func TestInsertCategory_SameNameDifferentUsers(t *testing.T) {
     t.Parallel()
-    d := openTestDB(t)
+    d := newTestDB(t)
     u1 := insertTestUser(t, d)
     u2 := insertTestUserWithName(t, d, "other")
     now := time.Now().Unix()
@@ -402,7 +404,7 @@ func TestInsertCategory_SameNameDifferentUsers(t *testing.T) {
 
 func TestGetCategory_WrongUserID(t *testing.T) {
     t.Parallel()
-    d := openTestDB(t)
+    d := newTestDB(t)
     u1 := insertTestUser(t, d)
     u2 := insertTestUserWithName(t, d, "other")
     id, err := db.InsertCategory(context.Background(), d, db.NewCategory{UserID: u1, Name: "Tech", CreatedAt: time.Now().Unix()})
@@ -413,7 +415,7 @@ func TestGetCategory_WrongUserID(t *testing.T) {
 
 func TestDeleteCategory_UncategorisesSubscriptions(t *testing.T) {
     t.Parallel()
-    d := openTestDB(t)
+    d := newTestDB(t)
     userID := insertTestUser(t, d)
     catID, _ := db.InsertCategory(context.Background(), d, db.NewCategory{UserID: userID, Name: "Tech", CreatedAt: time.Now().Unix()})
     subID, _ := db.InsertSubscription(context.Background(), d, db.NewSubscription{
@@ -430,13 +432,13 @@ func TestDeleteCategory_UncategorisesSubscriptions(t *testing.T) {
 
 func TestMarkCategoryRead_ScopedToUser(t *testing.T) {
     t.Parallel()
-    d := openTestDB(t)
+    d := newTestDB(t)
     u1 := insertTestUser(t, d)
     u2 := insertTestUserWithName(t, d, "other")
     catID, _ := db.InsertCategory(context.Background(), d, db.NewCategory{UserID: u1, Name: "Tech", CreatedAt: time.Now().Unix()})
     // insert subscriptions + entries for both users; mark-read on u1's category must not touch u2's entries
     // (full setup elided here — implementer expands with insertTestSubscription/insertTestEntry helpers)
-    require.NoError(t, db.MarkCategoryRead(context.Background(), d, catID, u1, time.Now().Unix()))
+    require.NoError(t, db.MarkCategoryRead(context.Background(), d, catID, u1))
     // assert u2's unread entries unchanged
     _ = u2 // silence unused warning until full test is written
 }
@@ -562,7 +564,7 @@ func DeleteCategory(ctx context.Context, d *sql.DB, id, userID int64) error {
     return nil
 }
 
-func MarkCategoryRead(ctx context.Context, d *sql.DB, categoryID, userID, now int64) error {
+func MarkCategoryRead(ctx context.Context, d *sql.DB, categoryID, userID int64) error {
     _, err := d.ExecContext(ctx, `
         UPDATE entries SET read = 1
         WHERE read = 0
@@ -615,7 +617,7 @@ Add to `internal/db/subscriptions_test.go`:
 func TestGetSubscription_ByUserID(t *testing.T) {
     t.Parallel()
     // GetSubscription now takes userID — cross-user returns sql.ErrNoRows
-    d := openTestDB(t)
+    d := newTestDB(t)
     u1 := insertTestUser(t, d)
     u2 := insertTestUserWithName(t, d, "other")
     id, _ := db.InsertSubscription(context.Background(), d, db.NewSubscription{
@@ -627,7 +629,7 @@ func TestGetSubscription_ByUserID(t *testing.T) {
 
 func TestUpdateSubscriptionCategory(t *testing.T) {
     t.Parallel()
-    d := openTestDB(t)
+    d := newTestDB(t)
     userID := insertTestUser(t, d)
     catID, _ := db.InsertCategory(context.Background(), d, db.NewCategory{UserID: userID, Name: "Tech", CreatedAt: time.Now().Unix()})
     subID, _ := db.InsertSubscription(context.Background(), d, db.NewSubscription{
@@ -696,23 +698,22 @@ git commit -m "feat(db): subscriptions gain category_id and per-user query scopi
 
 - [ ] **Step 1: Write failing tests**
 
-Create `internal/db/search_test.go`:
+Create `internal/db/search_test.go` (package `db`, consistent with existing test files):
 
 ```go
-package db_test
+package db
 
 import (
     "context"
     "testing"
     "time"
 
-    "github.com/bcrisp4/tap/internal/db"
     "github.com/stretchr/testify/require"
 )
 
 func TestSearchEntries_InsertThenFind(t *testing.T) {
     t.Parallel()
-    d := openTestDB(t)
+    d := newTestDB(t)
     userID := insertTestUser(t, d)
     subID := insertTestSubscription(t, d, userID, "https://example.com/feed")
     insertTestEntry(t, d, subID, db.NewEntry{
@@ -730,7 +731,7 @@ func TestSearchEntries_InsertThenFind(t *testing.T) {
 func TestSearchEntries_DeleteTrigger(t *testing.T) {
     // This is the M11 contract test — archival deletes must leave FTS consistent.
     t.Parallel()
-    d := openTestDB(t)
+    d := newTestDB(t)
     userID := insertTestUser(t, d)
     subID := insertTestSubscription(t, d, userID, "https://example.com/feed")
     entryID := insertTestEntry(t, d, subID, db.NewEntry{
@@ -755,7 +756,7 @@ func TestSearchEntries_DeleteTrigger(t *testing.T) {
 
 func TestSearchEntries_CrossUserIsolation(t *testing.T) {
     t.Parallel()
-    d := openTestDB(t)
+    d := newTestDB(t)
     u1 := insertTestUser(t, d)
     u2 := insertTestUserWithName(t, d, "other")
     sub1 := insertTestSubscription(t, d, u1, "https://a.com/feed")
@@ -771,7 +772,7 @@ func TestSearchEntries_CrossUserIsolation(t *testing.T) {
 
 func TestSearchEntries_HTMLTagsNotSearchable(t *testing.T) {
     t.Parallel()
-    d := openTestDB(t)
+    d := newTestDB(t)
     userID := insertTestUser(t, d)
     subID := insertTestSubscription(t, d, userID, "https://example.com/feed")
     insertTestEntry(t, d, subID, db.NewEntry{
@@ -790,7 +791,7 @@ func TestSearchEntries_HTMLTagsNotSearchable(t *testing.T) {
 
 func TestSearchEntries_AuthorSearchable(t *testing.T) {
     t.Parallel()
-    d := openTestDB(t)
+    d := newTestDB(t)
     userID := insertTestUser(t, d)
     subID := insertTestSubscription(t, d, userID, "https://example.com/feed")
     insertTestEntry(t, d, subID, db.NewEntry{
@@ -839,11 +840,7 @@ type SearchResult struct {
 // ordered by BM25 rank then entry ID descending, and the next cursor
 // (0 if no more pages).
 func SearchEntries(ctx context.Context, d *sql.DB, userID int64, query string, limit int, cursor int64) ([]SearchResult, int64, error) {
-    cursorClause := "AND e.id < ?"
-    if cursor == 0 {
-        cursorClause = "AND 1=1" // no cursor on first page
-    }
-    q := fmt.Sprintf(`
+    const baseQ = `
         SELECT e.id, e.subscription_id, e.title, e.url, COALESCE(e.author,''),
                e.published_at, e.read, e.saved,
                bm25(entries_fts) AS rank
@@ -852,17 +849,16 @@ func SearchEntries(ctx context.Context, d *sql.DB, userID int64, query string, l
         JOIN   subscriptions s  ON s.id = e.subscription_id
         WHERE  entries_fts MATCH ?
           AND  s.user_id = ?
-          %s
-        ORDER  BY rank, e.id DESC
-        LIMIT  ?
-    `, cursorClause)
+    `
+    const firstPageQ = baseQ + ` ORDER BY rank, e.id DESC LIMIT ?`
+    const pagedQ     = baseQ + ` AND e.id < ? ORDER BY rank, e.id DESC LIMIT ?`
 
     var rows *sql.Rows
     var err error
     if cursor == 0 {
-        rows, err = d.QueryContext(ctx, q, query, userID, 1, limit)
+        rows, err = d.QueryContext(ctx, firstPageQ, query, userID, limit)
     } else {
-        rows, err = d.QueryContext(ctx, q, query, userID, cursor, limit)
+        rows, err = d.QueryContext(ctx, pagedQ, query, userID, cursor, limit)
     }
     if err != nil {
         return nil, 0, fmt.Errorf("search entries: %w", err)
@@ -890,9 +886,6 @@ func SearchEntries(ctx context.Context, d *sql.DB, userID int64, query string, l
     }
     return out, nextCursor, nil
 }
-```
-
-Note: the `AND 1=1` / `AND e.id < ?` conditional is inelegant. A cleaner approach is two separate query strings. Use whichever you prefer — the test coverage is what matters.
 
 - [ ] **Step 4: Run — confirm PASS**
 
@@ -923,23 +916,23 @@ git commit -m "feat(db): FTS5 SearchEntries with trigger contract test"
 
 - [ ] **Step 1: Write failing tests (key cases)**
 
-Create `internal/db/opml_test.go`:
+Create `internal/db/opml_test.go` (package `db`, consistent with existing test files):
 
 ```go
-package db_test
+package db
 
 import (
     "context"
+    "database/sql"
     "testing"
     "time"
 
-    "github.com/bcrisp4/tap/internal/db"
     "github.com/stretchr/testify/require"
 )
 
 func TestExportOPML_ValidXML(t *testing.T) {
     t.Parallel()
-    d := openTestDB(t)
+    d := newTestDB(t)
     userID := insertTestUser(t, d)
     catID, _ := db.InsertCategory(context.Background(), d, db.NewCategory{UserID: userID, Name: "Tech", CreatedAt: time.Now().Unix()})
     subID, _ := db.InsertSubscription(context.Background(), d, db.NewSubscription{
@@ -957,7 +950,7 @@ func TestExportOPML_ValidXML(t *testing.T) {
 
 func TestImportOPML_FlatFeeds(t *testing.T) {
     t.Parallel()
-    d := openTestDB(t)
+    d := newTestDB(t)
     userID := insertTestUser(t, d)
     opml := []byte(`<?xml version="1.0"?>
 <opml version="2.0"><head/><body>
@@ -975,7 +968,7 @@ func TestImportOPML_FlatFeeds(t *testing.T) {
 
 func TestImportOPML_OneLevelNesting(t *testing.T) {
     t.Parallel()
-    d := openTestDB(t)
+    d := newTestDB(t)
     userID := insertTestUser(t, d)
     opml := []byte(`<?xml version="1.0"?>
 <opml version="2.0"><head/><body>
@@ -995,7 +988,7 @@ func TestImportOPML_OneLevelNesting(t *testing.T) {
 
 func TestImportOPML_DuplicateSkipped(t *testing.T) {
     t.Parallel()
-    d := openTestDB(t)
+    d := newTestDB(t)
     userID := insertTestUser(t, d)
     opml := []byte(`<?xml version="1.0"?>
 <opml version="2.0"><head/><body>
@@ -1010,7 +1003,7 @@ func TestImportOPML_DuplicateSkipped(t *testing.T) {
 
 func TestImportOPML_InvalidURLInErrors(t *testing.T) {
     t.Parallel()
-    d := openTestDB(t)
+    d := newTestDB(t)
     userID := insertTestUser(t, d)
     opml := []byte(`<?xml version="1.0"?>
 <opml version="2.0"><head/><body>
@@ -1074,20 +1067,22 @@ func ExportOPML(ctx context.Context, d *sql.DB, userID int64) ([]byte, error) {
         return nil, fmt.Errorf("export opml categories: %w", err)
     }
 
+    // Build category outlines as pointers so children can be appended through
+    // the map. Collect category IDs in insertion order for deterministic output.
     catMap := make(map[int64]*opmlOutline)
-    var doc opmlDoc
-    doc.Version = "2.0"
+    catOrder := make([]int64, 0, len(cats))
     for i := range cats {
-        o := opmlOutline{Text: cats[i].Name}
-        catMap[cats[i].ID] = &o
-        doc.Body.Outlines = append(doc.Body.Outlines, o)
+        o := &opmlOutline{Text: cats[i].Name}
+        catMap[cats[i].ID] = o
+        catOrder = append(catOrder, cats[i].ID)
     }
 
+    var uncategorised []opmlOutline
     for _, s := range subs {
         o := opmlOutline{
-            Text:    s.Title,
-            Type:    "rss",
-            XMLURL:  s.FeedURL,
+            Text:   s.Title,
+            Type:   "rss",
+            XMLURL: s.FeedURL,
         }
         if s.SiteURL.Valid {
             o.HTMLURL = s.SiteURL.String
@@ -1098,8 +1093,16 @@ func ExportOPML(ctx context.Context, d *sql.DB, userID int64) ([]byte, error) {
                 continue
             }
         }
-        doc.Body.Outlines = append(doc.Body.Outlines, o)
+        uncategorised = append(uncategorised, o)
     }
+
+    // Assemble doc from the pointer map (which has children appended).
+    var doc opmlDoc
+    doc.Version = "2.0"
+    for _, id := range catOrder {
+        doc.Body.Outlines = append(doc.Body.Outlines, *catMap[id])
+    }
+    doc.Body.Outlines = append(doc.Body.Outlines, uncategorised...)
 
     out, err := xml.MarshalIndent(doc, "", "  ")
     if err != nil {
@@ -1158,6 +1161,11 @@ func ImportOPML(ctx context.Context, d *sql.DB, userID int64, data []byte, now i
             VALUES (?, ?, 0, ?, ?, ?)
         `, title, xmlURL, now, userID, nullableInt64(categoryID))
         if err2 != nil {
+            // NOTE: The M1 migration created a global UNIQUE constraint on subscriptions.feed_url.
+            // For multi-user correctness (M7), this constraint must be changed to (user_id, feed_url).
+            // Coordinate with M7: if M7 does not change this constraint, two users cannot subscribe
+            // to the same feed URL. If M7 changes it to (user_id, feed_url), update this string to
+            // "UNIQUE constraint failed: subscriptions.user_id, subscriptions.feed_url".
             if strings.Contains(err2.Error(), "UNIQUE constraint failed: subscriptions.feed_url") {
                 skipped++
                 return
@@ -1335,6 +1343,12 @@ import (
 
 var ErrNoFeeds = errors.New("no feed candidates found at URL")
 
+// HTTPDoer is the minimal interface Discover needs from an HTTP client.
+// *http.Client satisfies it; tests can pass a test server's client directly.
+type HTTPDoer interface {
+    Do(*http.Request) (*http.Response, error)
+}
+
 type Result struct {
     Title   string
     FeedURL string
@@ -1346,7 +1360,7 @@ type Result struct {
 // It first tries to parse the response as a feed directly.
 // If that fails, it parses HTML for <link rel="alternate"> elements.
 // Discovery fetches are always unauthenticated.
-func Discover(ctx context.Context, client *http.Client, rawURL string) ([]Result, error) {
+func Discover(ctx context.Context, client HTTPDoer, rawURL string) ([]Result, error) {
     req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
     if err != nil {
         return nil, fmt.Errorf("discover build request: %w", err)
@@ -1730,7 +1744,7 @@ func registerCategoryRoutes(m *http.ServeMux, d *sql.DB) {
             return
         }
         user, _ := userFromContext(r.Context())
-        if err := db.MarkCategoryRead(r.Context(), d, catID, user.ID, time.Now().Unix()); err != nil {
+        if err := db.MarkCategoryRead(r.Context(), d, catID, user.ID); err != nil {
             writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())
             return
         }
@@ -2187,9 +2201,7 @@ type discoverCandidateDTO struct {
     Type    string `json:"type"`
 }
 
-func registerDiscoverRoutes(m *http.ServeMux, _ *sql.DB, client interface {
-    Do(*http.Request) (*http.Response, error)
-}) {
+func registerDiscoverRoutes(m *http.ServeMux, _ *sql.DB, client discover.HTTPDoer) {
     m.HandleFunc("POST /api/v1/discover", func(w http.ResponseWriter, r *http.Request) {
         r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
         var body struct{ URL string `json:"url"` }
@@ -2201,12 +2213,7 @@ func registerDiscoverRoutes(m *http.ServeMux, _ *sql.DB, client interface {
             writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "url is required")
             return
         }
-        hc, ok := client.(*http.Client)
-        if !ok {
-            writeError(w, http.StatusInternalServerError, ErrCodeInternal, "no http client")
-            return
-        }
-        results, err := discover.Discover(r.Context(), hc, body.URL)
+        results, err := discover.Discover(r.Context(), client, body.URL)
         if errors.Is(err, discover.ErrNoFeeds) {
             writeError(w, http.StatusBadRequest, ErrCodeNoFeedsFound, "no feeds found at that URL")
             return
@@ -2234,7 +2241,7 @@ Expected: all discover tests PASS.
 
 - [ ] **Step 13: Wire all new routes into `internal/api/api.go`**
 
-In `NewMux`, add `MuxOpts.HTTPClient *http.Client` and wire the new route groups after the existing ones:
+In `NewMux`, add `MuxOpts.HTTPClient discover.HTTPDoer` (the interface, not `*http.Client` — production passes the shared `*http.Client` which satisfies the interface; tests pass `httptest.Server.Client()` which also satisfies it) and wire the new route groups after the existing ones:
 
 ```go
 catsMux := http.NewServeMux()
