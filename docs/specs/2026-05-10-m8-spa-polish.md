@@ -145,16 +145,11 @@ with `contenteditable`.
 | `v` | View original (new tab) | Reader |
 | `Esc` | Back to list from reader; close open modal | Global |
 | `?` | Open hotkeys modal | Global |
-| `/` | Focus search input (no-op until M9) | Global |
 
 The active view exposes its handler interface via Svelte context so `App.svelte`'s key
 handler can dispatch list-navigation actions (next/prev/open) to whichever list view is
-mounted. The handler is typed; M9's search view will implement the `focusSearch()` side of
-the context contract.
-
-**`/` keybinding is a known stub in M8.** It is registered and suppressed inside form
-controls, but calls `focusSearch()` which is a no-op function until M9 wires it up. This
-is documented here so M9 knows to implement the contract, not add a new binding.
+mounted. The `/` focus-search binding is absent from M8 — it lands in M9 alongside the
+search feature it targets.
 
 #### Hotkeys modal
 
@@ -294,6 +289,7 @@ No new API surfaces or routes. Styling pass only.
 
 | Concern | Lands in |
 |---|---|
+| `/` focus-search keybinding | M9 (lands alongside the search feature it targets) |
 | Infinite scroll (cursor-driven scroll-driven entry loading) | M9 |
 | Search view implementation | M9 |
 | OPML import/export UI | M9 |
@@ -304,14 +300,6 @@ No new API surfaces or routes. Styling pass only.
 | SVG support in media proxy | Post-M9 (deferred items) |
 
 ## Risks and open questions
-
-**M8 ↔ M9 — `/` keybinding stub.** M8 registers the `/` binding but it calls a no-op
-`focusSearch()`. M9 must export a `focusSearch()` function via a named export from
-`web/src/lib/search.svelte.ts` (or equivalent search store) that M8's handler imports and
-calls. The interface is: a zero-argument function that focuses the search input and is a
-no-op when the search input is not mounted. M9 owns the implementation; M8 owns the call
-site.
-If M9 changes the contract, M9 must update `App.svelte`.
 
 **M8 ↔ M10 — `theme_color` in PWA manifest.** M10 ships the PWA manifest. The
 `theme_color` field must agree with one of M8's themes. Since theme is per-device
@@ -376,7 +364,6 @@ tokens are exempt. Everything with state, branches, or side-effects is in scope.
   `contenteditable`.
 - `?` sets hotkeys-modal-open state to `true`.
 - `Esc` closes the hotkeys modal; `Esc` in the reader navigates back to list.
-- `/` calls `focusSearch()` (test with a spy; confirm it is called and does not throw).
 
 **Swipe recogniser (`web/src/lib/swipe.ts`):**
 - Horizontal travel ≥ 40px + angle < 30° fires `swipeleft` or `swiperight`.
