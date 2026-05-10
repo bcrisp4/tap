@@ -108,7 +108,6 @@ func runServer() {
 		webAuthnRPID   = flag.String("webauthn-rp-id", envOr("TAP_WEBAUTHN_RP_ID", ""), "WebAuthn relying party ID (hostname); derived from --addr if empty")
 		webAuthnOrigin = flag.String("webauthn-origin", envOr("TAP_WEBAUTHN_ORIGIN", ""), "WebAuthn origin URL; derived from --addr if empty")
 
-		// M12: observability + hardening flags.
 		logLevel        = flag.String("log-level", envOr("TAP_LOG_LEVEL", "info"), "log level: debug, info, warn, error")
 		metricsEnabled  = flag.Bool("metrics-enabled", envOrBool("TAP_METRICS_ENABLED", false), "enable GET /metrics Prometheus scrape endpoint on the main listener")
 		otlpEndpoint    = flag.String("otlp-endpoint", envOr("TAP_OTLP_ENDPOINT", ""), "OTel collector endpoint (empty = disabled); http://, https://, or grpc:// scheme")

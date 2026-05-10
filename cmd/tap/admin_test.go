@@ -218,7 +218,7 @@ func TestAdminDisable_Success(t *testing.T) {
 		&out, &bytes.Buffer{}, testHashParams)
 
 	var stdout, stderr bytes.Buffer
-	code := runAdmin([]string{"disable", "bob", "--data", dir},
+	code := runAdmin([]string{"disable", "--data", dir, "bob"},
 		strings.NewReader(""), &stdout, &stderr, auth.DefaultParams)
 	require.Equal(t, adminExitOK, code)
 	require.Contains(t, stdout.String(), "disabled user 'bob'")
@@ -227,7 +227,7 @@ func TestAdminDisable_Success(t *testing.T) {
 func TestAdminDisable_NotFound(t *testing.T) {
 	t.Parallel()
 	var stdout, stderr bytes.Buffer
-	code := runAdmin([]string{"disable", "nobody", "--data", t.TempDir()},
+	code := runAdmin([]string{"disable", "--data", t.TempDir(), "nobody"},
 		strings.NewReader(""), &stdout, &stderr, auth.DefaultParams)
 	require.Equal(t, adminExitUserExistsOrGone, code)
 	require.Contains(t, stderr.String(), "not found")
@@ -241,10 +241,10 @@ func TestAdminDisable_AlreadyDisabled(t *testing.T) {
 		strings.NewReader("carl\npassword123\npassword123\n"),
 		&out, &bytes.Buffer{}, testHashParams)
 	// Disable once.
-	runAdmin([]string{"disable", "carl", "--data", dir},
+	runAdmin([]string{"disable", "--data", dir, "carl"},
 		strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{}, auth.DefaultParams)
 	// Disable again.
-	code := runAdmin([]string{"disable", "carl", "--data", dir},
+	code := runAdmin([]string{"disable", "--data", dir, "carl"},
 		strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{}, auth.DefaultParams)
 	require.Equal(t, adminExitPasswordMismatch, code) // exit 3 = already disabled
 }

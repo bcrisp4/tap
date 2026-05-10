@@ -310,35 +310,17 @@ func runAdminList(args []string, stdout, stderr io.Writer) int {
 
 // runAdminDisable implements `tap admin disable <username>`.
 func runAdminDisable(args []string, stdout, stderr io.Writer) int {
-	// Accept username as either the first positional arg (before flags) or the
-	// last positional arg (after flags). Separate non-flag args from flag args.
-	var positional []string
-	var flagArgs []string
-	for i := 0; i < len(args); i++ {
-		if strings.HasPrefix(args[i], "-") {
-			flagArgs = append(flagArgs, args[i])
-			// If this flag takes a value and next arg doesn't start with '-', consume it.
-			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") &&
-				!strings.Contains(args[i], "=") {
-				i++
-				flagArgs = append(flagArgs, args[i])
-			}
-		} else {
-			positional = append(positional, args[i])
-		}
-	}
-
 	fs := flag.NewFlagSet("admin disable", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dataDir := fs.String("data", envOr("TAP_DATA_DIR", "./data"), "data directory containing tap.db")
-	if err := fs.Parse(flagArgs); err != nil {
+	if err := fs.Parse(args); err != nil {
 		return adminExitGeneric
 	}
-	if len(positional) != 1 {
-		fmt.Fprintln(stderr, "usage: tap admin disable <username>")
+	if fs.NArg() != 1 {
+		fmt.Fprintln(stderr, "usage: tap admin disable [--data <dir>] <username>")
 		return adminExitGeneric
 	}
-	username := positional[0]
+	username := fs.Arg(0)
 
 	ctx := context.Background()
 	d, err := openAdminDB(ctx, *dataDir)
