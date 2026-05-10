@@ -112,7 +112,7 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			var mbe *http.MaxBytesError
 			if errors.As(err, &mbe) {
-				writeError(w, http.StatusRequestEntityTooLarge, ErrCodeBadRequest, "request body too large")
+				writeError(w, http.StatusRequestEntityTooLarge, ErrCodeRequestTooLarge, "request body too large")
 				return
 			}
 			writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "invalid JSON body")
@@ -195,7 +195,7 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 		if err := json.NewDecoder(r.Body).Decode(&rawMap); err != nil {
 			var mbe *http.MaxBytesError
 			if errors.As(err, &mbe) {
-				writeError(w, http.StatusRequestEntityTooLarge, ErrCodeBadRequest, "request body too large")
+				writeError(w, http.StatusRequestEntityTooLarge, ErrCodeRequestTooLarge, "request body too large")
 				return
 			}
 			writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "invalid JSON body")
