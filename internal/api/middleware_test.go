@@ -108,6 +108,77 @@ func TestRequireSessionRejectsBadCookie(t *testing.T) {
 	require.Equal(t, http.StatusUnauthorized, rr.Code)
 }
 
+// TestRequireSessionThrottlesIdleRefresh exercises the within-threshold
+// guard on RefreshSessionIdle. A session whose last_seen_at is fresher than
+// idleRefreshThreshold should NOT be touched on every authenticated request
+// (active SPA polls would otherwise flood SQLite with no-op writes); a
+// session whose last_seen_at is stale should be refreshed.
+func TestRequireSessionThrottlesIdleRefresh(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	ctx := context.Background()
+	uid, err := db.InsertUser(ctx, d, db.NewUser{
+		Username: "ben", PasswordHash: "x", Role: "admin", CreatedAt: 0,
+	})
+	require.NoError(t, err)
+
+	// Session A: last_seen_at within threshold → middleware must skip refresh.
+	rawA := []byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	cookieA := base64.RawURLEncoding.EncodeToString(rawA)
+	hashA := sha256.Sum256(rawA)
+	tokenHashA := hex.EncodeToString(hashA[:])
+	freshLastSeen := time.Now().Unix() - 30 // well within the 60s threshold
+	idA, err := db.InsertSession(ctx, d, db.NewSession{
+		UserID: uid, TokenHash: tokenHashA, CSRFToken: "csrf-a",
+		CreatedAt: freshLastSeen, LastSeenAt: freshLastSeen,
+		IdleExpiresAt: time.Now().Add(time.Hour).Unix(), AbsoluteExpiresAt: time.Now().Add(24 * time.Hour).Unix(),
+	})
+	require.NoError(t, err)
+
+	// Session B: last_seen_at past threshold → middleware must refresh.
+	rawB := []byte("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+	cookieB := base64.RawURLEncoding.EncodeToString(rawB)
+	hashB := sha256.Sum256(rawB)
+	tokenHashB := hex.EncodeToString(hashB[:])
+	staleLastSeen := time.Now().Unix() - 3600 // 1h ago, well past 60s threshold
+	idB, err := db.InsertSession(ctx, d, db.NewSession{
+		UserID: uid, TokenHash: tokenHashB, CSRFToken: "csrf-b",
+		CreatedAt: staleLastSeen, LastSeenAt: staleLastSeen,
+		IdleExpiresAt: time.Now().Add(time.Hour).Unix(), AbsoluteExpiresAt: time.Now().Add(24 * time.Hour).Unix(),
+	})
+	require.NoError(t, err)
+
+	h := requireSession(d, time.Hour)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	// Hit session A: within threshold → last_seen_at preserved.
+	reqA := httptest.NewRequest(http.MethodGet, "/", nil)
+	reqA.AddCookie(&http.Cookie{Name: "tap_session", Value: cookieA})
+	rrA := httptest.NewRecorder()
+	h.ServeHTTP(rrA, reqA)
+	require.Equal(t, http.StatusNoContent, rrA.Code)
+
+	gotA, err := db.GetSessionByTokenHash(ctx, d, tokenHashA)
+	require.NoError(t, err)
+	require.Equal(t, idA, gotA.ID)
+	require.Equal(t, freshLastSeen, gotA.LastSeenAt,
+		"within-threshold refresh must NOT update last_seen_at")
+
+	// Hit session B: past threshold → last_seen_at advances to now.
+	reqB := httptest.NewRequest(http.MethodGet, "/", nil)
+	reqB.AddCookie(&http.Cookie{Name: "tap_session", Value: cookieB})
+	rrB := httptest.NewRecorder()
+	h.ServeHTTP(rrB, reqB)
+	require.Equal(t, http.StatusNoContent, rrB.Code)
+
+	gotB, err := db.GetSessionByTokenHash(ctx, d, tokenHashB)
+	require.NoError(t, err)
+	require.Equal(t, idB, gotB.ID)
+	require.Greater(t, gotB.LastSeenAt, staleLastSeen,
+		"past-threshold refresh must update last_seen_at")
+}
+
 func TestRequireSessionRejectsExpiredAndDeletes(t *testing.T) {
 	t.Parallel()
 	d := newTestDB(t)

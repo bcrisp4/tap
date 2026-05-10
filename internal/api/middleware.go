@@ -45,6 +45,11 @@ func chain(mws ...func(http.Handler) http.Handler) func(http.Handler) http.Handl
 	}
 }
 
+// idleRefreshThreshold skips the last_seen_at write when the session was
+// touched recently. An active SPA polling every few seconds would otherwise
+// produce hundreds of UPDATEs/hour with effectively no state change.
+const idleRefreshThreshold = 60 * time.Second
+
 // requireSession reads the tap_session cookie, looks up the row by
 // sha256(cookie), validates idle + absolute expiries, refreshes idle on
 // success, and injects the user + session into the request context.
@@ -80,7 +85,12 @@ func requireSession(d *sql.DB, idleTTL time.Duration) func(http.Handler) http.Ha
 			}
 			// Best-effort idle refresh. A failure here doesn't break the
 			// request — worst case the session expires sooner than expected.
-			_ = db.RefreshSessionIdle(r.Context(), d, s.ID, now, now+int64(idleTTL.Seconds()))
+			// Skipped when last_seen_at is fresher than idleRefreshThreshold
+			// to avoid flooding SQLite with no-op writes on a busy
+			// authenticated SPA.
+			if now-s.LastSeenAt >= int64(idleRefreshThreshold.Seconds()) {
+				_ = db.RefreshSessionIdle(r.Context(), d, s.ID, now, now+int64(idleTTL.Seconds()))
+			}
 
 			ctx := context.WithValue(r.Context(), ctxKeyUser, u)
 			ctx = context.WithValue(ctx, ctxKeySession, s)
