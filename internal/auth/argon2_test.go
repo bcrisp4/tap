@@ -21,3 +21,29 @@ func TestHashVerifyRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok, "Verify should accept the same password")
 }
+
+func TestVerifyRejectsWrongPassword(t *testing.T) {
+	t.Parallel()
+	encoded, err := Hash("hunter2", testParams)
+	require.NoError(t, err)
+
+	ok, err := Verify(encoded, "Hunter2")
+	require.NoError(t, err)
+	require.False(t, ok)
+}
+
+func TestVerifyRejectsMalformedEncoding(t *testing.T) {
+	t.Parallel()
+	cases := []string{
+		"",
+		"plaintext",
+		"$argon2id$v=19$m=8192,t=1,p=1$abc",       // missing the hash component
+		"$argon2id$v=99$m=8192,t=1,p=1$YWFh$YmJi", // wrong version
+		"$argon2i$v=19$m=8192,t=1,p=1$YWFh$YmJi",  // wrong family
+	}
+	for _, e := range cases {
+		ok, err := Verify(e, "anything")
+		require.False(t, ok, "encoded=%q", e)
+		require.Error(t, err, "encoded=%q", e)
+	}
+}
