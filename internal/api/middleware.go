@@ -23,13 +23,11 @@ const (
 	ctxKeySession
 )
 
-// userFromContext returns the user injected by requireSession, if any.
 func userFromContext(ctx context.Context) (db.User, bool) {
 	u, ok := ctx.Value(ctxKeyUser).(db.User)
 	return u, ok
 }
 
-// sessionFromContext returns the session injected by requireSession, if any.
 func sessionFromContext(ctx context.Context) (db.Session, bool) {
 	s, ok := ctx.Value(ctxKeySession).(db.Session)
 	return s, ok
