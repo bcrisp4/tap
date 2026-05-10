@@ -1300,54 +1300,7 @@ git commit -m "M7: db layer for pending two-step login tokens"
 - Modify: `internal/db/entries.go`, `internal/db/entries_test.go`
 - Modify: `internal/db/users.go`, `internal/db/users_test.go`
 
-- [ ] **Step 1: Update `db.Session` and `db.NewSession` structs in `internal/db/sessions.go`**
-
-Add `UserAgent`, `Address`, `WebAuthnChallenge` fields to both structs. Update `InsertSession` to include the new columns. Add:
-
-```go
-// ListSessionsByUserID returns all non-anonymous sessions for the user.
-func ListSessionsByUserID(ctx context.Context, d *sql.DB, userID int64) ([]Session, error) {
-    rows, err := d.QueryContext(ctx,
-        `SELECT id, user_id, token_hash, csrf_token, created_at, last_seen_at,
-                idle_expires_at, absolute_expires_at, user_agent, address
-         FROM sessions WHERE user_id = ? ORDER BY created_at DESC`, userID)
-    // ... scan rows, return []Session, rows.Err()
-}
-
-func SetWebAuthnChallenge(ctx context.Context, d *sql.DB, sessionID int64, challenge []byte) error {
-    _, err := d.ExecContext(ctx,
-        `UPDATE sessions SET webauthn_challenge = ? WHERE id = ?`, challenge, sessionID)
-    return err
-}
-
-func ClearWebAuthnChallenge(ctx context.Context, d *sql.DB, sessionID int64) error {
-    _, err := d.ExecContext(ctx,
-        `UPDATE sessions SET webauthn_challenge = NULL WHERE id = ?`, sessionID)
-    return err
-}
-```
-
-- [ ] **Step 2: Add per-user filter to subscriptions queries**
-
-In `internal/db/subscriptions.go`, add `userID int64` parameter to `ListSubscriptions`, `GetSubscription`, `InsertSubscription`, `UpdateSubscription*`, and `DeleteSubscription`. Add `WHERE user_id = ?` (or `AND user_id = ?`) to each. Add `UserID int64` to `NewSubscription`.
-
-- [ ] **Step 3: Same treatment for entries**
-
-In `internal/db/entries.go`, add `userID int64` to `ListEntries`, `GetEntry`, `UpdateEntry`. Add `WHERE user_id = ?` clauses.
-
-- [ ] **Step 4: Add new user db functions**
-
-In `internal/db/users.go`, add:
-
-```go
-func ListUsers(ctx context.Context, d *sql.DB) ([]User, error)
-func DeleteUser(ctx context.Context, d *sql.DB, id int64) error
-func EnableUser(ctx context.Context, d *sql.DB, id int64) error
-func GetUserTOTPStatus(ctx context.Context, d *sql.DB, userID int64) (hasTOTP, confirmed bool, err error)
-func GetUserPasskeyCount(ctx context.Context, d *sql.DB, userID int64) (int, error)
-```
-
-- [ ] **Step 5: Write tests for per-user isolation**
+- [ ] **Step 1: Write failing per-user isolation tests (RED)**
 
 Add to `internal/db/subscriptions_test.go`:
 
@@ -1374,13 +1327,65 @@ func TestSubscriptions_UserIsolation(t *testing.T) {
 }
 ```
 
-- [ ] **Step 6: Run tests**
+Add equivalent `TestEntries_UserIsolation` to `internal/db/entries_test.go`. Add `TestSessions_ListByUserID` to `internal/db/sessions_test.go`.
+
+Run: `go test ./internal/db/... -run 'TestSubscriptions_UserIsolation|TestEntries_UserIsolation|TestSessions_ListByUserID' -v`
+Expected: FAIL (compile error — `userID` parameter not yet accepted).
+
+- [ ] **Step 2: Add per-user filter to subscriptions queries (GREEN)**
+
+In `internal/db/subscriptions.go`, add `userID int64` parameter to `ListSubscriptions`, `GetSubscription`, `InsertSubscription`, `UpdateSubscription*`, and `DeleteSubscription`. Add `WHERE user_id = ?` (or `AND user_id = ?`) to each. Add `UserID int64` to `NewSubscription`.
+
+- [ ] **Step 3: Same treatment for entries (GREEN)**
+
+In `internal/db/entries.go`, add `userID int64` to `ListEntries`, `GetEntry`, `UpdateEntry`. Add `WHERE user_id = ?` clauses.
+
+- [ ] **Step 4: Update `db.Session` and `db.NewSession` structs in `internal/db/sessions.go`**
+
+Add `UserAgent`, `Address`, `WebAuthnChallenge` fields to both structs. Update `InsertSession` to include the new columns. Add:
+
+```go
+// ListSessionsByUserID returns all non-anonymous sessions for the user.
+func ListSessionsByUserID(ctx context.Context, d *sql.DB, userID int64) ([]Session, error) {
+    rows, err := d.QueryContext(ctx,
+        `SELECT id, user_id, token_hash, csrf_token, created_at, last_seen_at,
+                idle_expires_at, absolute_expires_at, user_agent, address
+         FROM sessions WHERE user_id = ? ORDER BY created_at DESC`, userID)
+    // ... scan rows, return []Session, rows.Err()
+}
+
+func SetWebAuthnChallenge(ctx context.Context, d *sql.DB, sessionID int64, challenge []byte) error {
+    _, err := d.ExecContext(ctx,
+        `UPDATE sessions SET webauthn_challenge = ? WHERE id = ?`, challenge, sessionID)
+    return err
+}
+
+func ClearWebAuthnChallenge(ctx context.Context, d *sql.DB, sessionID int64) error {
+    _, err := d.ExecContext(ctx,
+        `UPDATE sessions SET webauthn_challenge = NULL WHERE id = ?`, sessionID)
+    return err
+}
+```
+
+- [ ] **Step 5: Add new user db functions**
+
+In `internal/db/users.go`, add:
+
+```go
+func ListUsers(ctx context.Context, d *sql.DB) ([]User, error)
+func DeleteUser(ctx context.Context, d *sql.DB, id int64) error
+func EnableUser(ctx context.Context, d *sql.DB, id int64) error
+func GetUserTOTPStatus(ctx context.Context, d *sql.DB, userID int64) (hasTOTP, confirmed bool, err error)
+func GetUserPasskeyCount(ctx context.Context, d *sql.DB, userID int64) (int, error)
+```
+
+- [ ] **Step 6: Run tests (confirm GREEN)**
 
 ```bash
 go test ./internal/db/... -race
 ```
 
-Expected: all pass.
+Expected: all pass including isolation tests.
 
 - [ ] **Step 7: Commit**
 
@@ -1844,20 +1849,29 @@ git commit -m "M7: admin user-management endpoints"
 - Modify: `internal/api/entries.go`, `internal/api/entries_test.go`
 - Modify: `internal/api/api.go`
 
-- [ ] **Step 1: Update subscription + entry handlers**
+- [ ] **Step 1: Write failing cross-user isolation tests (RED)**
 
-In each handler that calls a db function, extract `u, _ := userFromContext(r.Context())` and pass `u.ID` as the `userID` parameter. Failure to do so will cause cross-user data leaks — verify no db call omits the user ID.
-
-- [ ] **Step 2: Write isolation regression tests**
-
-Add to each test file:
+Add to `internal/api/subscriptions_test.go`:
 
 ```go
 func TestSubscriptions_CrossUserIsolation(t *testing.T) {
-    // userA creates a subscription; userB GET /api/v1/subscriptions → empty list
-    // userB DELETE /api/v1/subscriptions/{userA's ID} → 404
+    // Setup: two users, userA creates a subscription
+    // userB GET /api/v1/subscriptions → 200 with empty list
+    // userB DELETE /api/v1/subscriptions/{userA_sub_id} → 404
 }
 ```
+
+Add equivalent `TestEntries_CrossUserIsolation` to `internal/api/entries_test.go`.
+
+Run: `go test ./internal/api/... -run 'CrossUserIsolation' -v`
+Expected: FAIL (handlers don't yet pass userID to db calls, so userB sees userA's data).
+
+- [ ] **Step 2: Update subscription + entry handlers (GREEN)**
+
+In each handler that calls a db function, extract `u, _ := userFromContext(r.Context())` and pass `u.ID` as the `userID` parameter. Failure to do so will cause cross-user data leaks — verify no db call omits the user ID.
+
+Run: `go test ./internal/api/... -run 'CrossUserIsolation' -v`
+Expected: PASS.
 
 - [ ] **Step 3: Update `MuxOpts` and `NewMux` in `internal/api/api.go`**
 
@@ -2019,7 +2033,30 @@ git commit -m "M7: tap admin disable-totp; WebAuthn config flags"
 - Modify: `web/src/lib/__tests__/auth.test.ts`
 - Modify: `web/src/lib/__tests__/api.test.ts`
 
-- [ ] **Step 1: Update `web/src/lib/types.ts`**
+- [ ] **Step 1: Write failing tests for new auth store methods (RED)**
+
+Add to `web/src/lib/__tests__/auth.test.ts`:
+
+```typescript
+test('bootstrap populates has_totp and passkey_count from /sessions/current', async () => {
+  // mock GET /api/v1/sessions/current to return user with has_totp: true, passkey_count: 2
+  await auth.bootstrap();
+  expect(get(auth).user?.has_totp).toBe(true);
+  expect(get(auth).user?.passkey_count).toBe(2);
+});
+
+test('beginPasskeyLogin calls POST /passkey-sessions/begin', async () => {
+  // mock the endpoint; assert it was called
+  const result = await auth.beginPasskeyLogin();
+  expect(result).toHaveProperty('sessionId');
+  expect(result).toHaveProperty('options');
+});
+```
+
+Run: `pnpm --dir web test -- src/lib/__tests__/auth.test.ts`
+Expected: FAIL (methods/fields not yet defined).
+
+- [ ] **Step 2: Update `web/src/lib/types.ts`**
 
 Add:
 
@@ -2068,7 +2105,7 @@ export type User = {
 };
 ```
 
-- [ ] **Step 2: Update `web/src/lib/auth.ts`**
+- [ ] **Step 3: Update `web/src/lib/auth.ts` (GREEN)**
 
 ```typescript
 type State = {
@@ -2080,11 +2117,11 @@ type State = {
 
 Add `beginPasskeyLogin` and `finishPasskeyLogin` methods. `bootstrap()` now populates `has_totp` and `passkey_count` from the extended `/sessions/current` response.
 
-- [ ] **Step 3: Update `web/src/lib/api.ts`**
+- [ ] **Step 4: Update `web/src/lib/api.ts`**
 
 Add all the new API call functions as described in the spec's SPA section. Each function follows the existing pattern: `request()` with the right method, path, and body.
 
-- [ ] **Step 4: Update tests**
+- [ ] **Step 5: Run tests (confirm GREEN)**
 
 ```bash
 pnpm --dir web test -- src/lib/__tests__/auth.test.ts src/lib/__tests__/api.test.ts
@@ -2386,7 +2423,11 @@ make test
 
 Expected: all pass.
 
-- [ ] **Step 2: Confirm no outstanding uncommitted changes**
+- [ ] **Step 2: Run `/simplify`**
+
+Invoke the `simplify` skill to review all changed code for reuse, quality, and efficiency. Fix any issues found before declaring done.
+
+- [ ] **Step 3: Confirm no outstanding uncommitted changes**
 
 ```bash
 git status
