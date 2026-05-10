@@ -55,15 +55,15 @@ func registerOPMLRoutes(m *http.ServeMux, d *sql.DB) {
 			return
 		}
 
-		errStrings := make([]string, 0, len(errs))
-		errStrings = append(errStrings, errs...)
-
+		if errs == nil {
+			errs = []string{}
+		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"imported": imported,
 			"skipped":  skipped,
-			"errors":   errStrings,
+			"errors":   errs,
 		})
 	})
 }

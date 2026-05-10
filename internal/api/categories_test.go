@@ -16,7 +16,7 @@ import (
 
 func newCatTestSetup(t *testing.T) (*http.ServeMux, *db.User) {
 	t.Helper()
-	d := newTestAPIDB(t)
+	d := newTestDB(t)
 	userID := insertAPITestUser(t, d, "catuser")
 	user := db.User{ID: userID, Username: "catuser", Role: "admin"}
 	mux := NewTestMux(d, TestMuxOpts{TestUser: user})
@@ -76,7 +76,7 @@ func TestCategoriesAPI_DuplicateName(t *testing.T) {
 
 func TestCategoriesAPI_CrossUser(t *testing.T) {
 	t.Parallel()
-	d := newTestAPIDB(t)
+	d := newTestDB(t)
 	u1 := insertAPITestUser(t, d, "u1")
 	u2 := insertAPITestUser(t, d, "u2")
 
@@ -97,7 +97,7 @@ func TestCategoriesAPI_CrossUser(t *testing.T) {
 
 func TestCategoriesAPI_Unauthenticated(t *testing.T) {
 	t.Parallel()
-	d := newTestAPIDB(t)
+	d := newTestDB(t)
 	mux := NewTestMux(d, TestMuxOpts{}) // zero user = unauthenticated
 
 	w := httptest.NewRecorder()
@@ -107,7 +107,7 @@ func TestCategoriesAPI_Unauthenticated(t *testing.T) {
 
 func TestCategoriesAPI_MarkRead(t *testing.T) {
 	t.Parallel()
-	d := newTestAPIDB(t)
+	d := newTestDB(t)
 	userID := insertAPITestUser(t, d, "markread")
 	user := db.User{ID: userID, Username: "markread", Role: "admin"}
 	mux := NewTestMux(d, TestMuxOpts{TestUser: user})

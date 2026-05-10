@@ -26,8 +26,8 @@
     if (editingCatId !== null && editInputEl) editInputEl.focus();
   });
 
-  // Feeds by category.
-  const catFeeds = $derived(() => {
+  // Feeds by category — memoized as a derived value, not a function.
+  const catFeeds = $derived.by(() => {
     const map = new Map<number | null, typeof $subscriptions>();
     for (const s of $subscriptions) {
       const k = s.category_id ?? null;
@@ -137,7 +137,7 @@
       {/if}
     </div>
 
-    {#each catFeeds().get(cat.id) ?? [] as sub (sub.id)}
+    {#each catFeeds.get(cat.id) ?? [] as sub (sub.id)}
       <div class="feedrow feedrow--nested">
         <FeedAvatar feedURL={sub.feed_url} />
         <span class="feedname" title={sub.title}>{sub.title}</span>
@@ -145,11 +145,11 @@
     {/each}
   {/each}
 
-  {#if (catFeeds().get(null) ?? []).length > 0}
+  {#if (catFeeds.get(null) ?? []).length > 0}
     {#if $categories.length > 0}
       <div class="group-title uncat-header">UNCATEGORISED</div>
     {/if}
-    {#each catFeeds().get(null) ?? [] as sub (sub.id)}
+    {#each catFeeds.get(null) ?? [] as sub (sub.id)}
       <div class="feedrow">
         <FeedAvatar feedURL={sub.feed_url} />
         <span class="feedname" title={sub.title}>{sub.title}</span>

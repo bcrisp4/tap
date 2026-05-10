@@ -24,7 +24,7 @@ func TestDiscoverAPI_Candidates(t *testing.T) {
 	}))
 	defer feedSrv.Close()
 
-	sqlD := newTestAPIDB(t)
+	sqlD := newTestDB(t)
 	userID := insertAPITestUser(t, sqlD, "disc1")
 	client := httpx.NewClient(httpx.Opts{SSRF: httpx.SSRFPolicy{Disabled: true}})
 	mux := NewTestMux(sqlD, TestMuxOpts{
@@ -52,7 +52,7 @@ func TestDiscoverAPI_NoFeeds(t *testing.T) {
 	}))
 	defer emptySrv.Close()
 
-	sqlD := newTestAPIDB(t)
+	sqlD := newTestDB(t)
 	userID := insertAPITestUser(t, sqlD, "disc2")
 	client := httpx.NewClient(httpx.Opts{SSRF: httpx.SSRFPolicy{Disabled: true}})
 	mux := NewTestMux(sqlD, TestMuxOpts{
@@ -71,7 +71,7 @@ func TestDiscoverAPI_NoFeeds(t *testing.T) {
 
 func TestDiscoverAPI_MalformedURL(t *testing.T) {
 	t.Parallel()
-	sqlD := newTestAPIDB(t)
+	sqlD := newTestDB(t)
 	userID := insertAPITestUser(t, sqlD, "disc3")
 	client := httpx.NewClient(httpx.Opts{SSRF: httpx.SSRFPolicy{Disabled: true}})
 	mux := NewTestMux(sqlD, TestMuxOpts{
@@ -86,7 +86,7 @@ func TestDiscoverAPI_MalformedURL(t *testing.T) {
 
 func TestDiscoverAPI_Unauthenticated(t *testing.T) {
 	t.Parallel()
-	sqlD := newTestAPIDB(t)
+	sqlD := newTestDB(t)
 	client := httpx.NewClient(httpx.Opts{SSRF: httpx.SSRFPolicy{Disabled: true}})
 	mux := NewTestMux(sqlD, TestMuxOpts{MuxOpts: MuxOpts{DiscoverClient: client}}) // zero user
 

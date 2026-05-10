@@ -14,7 +14,7 @@ import (
 
 func TestOPMLAPI_Export(t *testing.T) {
 	t.Parallel()
-	d := newTestAPIDB(t)
+	d := newTestDB(t)
 	userID := insertAPITestUser(t, d, "opmlexp")
 	mux := NewTestMux(d, TestMuxOpts{TestUser: db.User{ID: userID, Username: "opmlexp", Role: "admin"}})
 
@@ -27,7 +27,7 @@ func TestOPMLAPI_Export(t *testing.T) {
 
 func TestOPMLAPI_ImportTooLarge(t *testing.T) {
 	t.Parallel()
-	d := newTestAPIDB(t)
+	d := newTestDB(t)
 	userID := insertAPITestUser(t, d, "opmlbig")
 	mux := NewTestMux(d, TestMuxOpts{TestUser: db.User{ID: userID, Username: "opmlbig", Role: "admin"}})
 
@@ -40,7 +40,7 @@ func TestOPMLAPI_ImportTooLarge(t *testing.T) {
 
 func TestOPMLAPI_ValidImport(t *testing.T) {
 	t.Parallel()
-	d := newTestAPIDB(t)
+	d := newTestDB(t)
 	userID := insertAPITestUser(t, d, "opmlimport")
 	mux := NewTestMux(d, TestMuxOpts{TestUser: db.User{ID: userID, Username: "opmlimport", Role: "admin"}})
 
@@ -57,7 +57,7 @@ func TestOPMLAPI_ValidImport(t *testing.T) {
 
 func TestOPMLAPI_Unauthenticated(t *testing.T) {
 	t.Parallel()
-	d := newTestAPIDB(t)
+	d := newTestDB(t)
 	mux := NewTestMux(d, TestMuxOpts{})
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/v1/opml", nil))

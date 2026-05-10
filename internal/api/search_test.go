@@ -15,7 +15,7 @@ import (
 
 func TestSearchAPI_QueryTooShort(t *testing.T) {
 	t.Parallel()
-	d := newTestAPIDB(t)
+	d := newTestDB(t)
 	userID := insertAPITestUser(t, d, "search_short")
 	mux := NewTestMux(d, TestMuxOpts{TestUser: db.User{ID: userID, Username: "search_short", Role: "admin"}})
 
@@ -29,7 +29,7 @@ func TestSearchAPI_QueryTooShort(t *testing.T) {
 
 func TestSearchAPI_ValidQuery(t *testing.T) {
 	t.Parallel()
-	d := newTestAPIDB(t)
+	d := newTestDB(t)
 	userID := insertAPITestUser(t, d, "search_valid")
 	mux := NewTestMux(d, TestMuxOpts{TestUser: db.User{ID: userID, Username: "search_valid", Role: "admin"}})
 
@@ -56,7 +56,7 @@ func TestSearchAPI_ValidQuery(t *testing.T) {
 
 func TestSearchAPI_CrossUserIsolation(t *testing.T) {
 	t.Parallel()
-	d := newTestAPIDB(t)
+	d := newTestDB(t)
 	u1 := insertAPITestUser(t, d, "su1")
 	u2 := insertAPITestUser(t, d, "su2")
 
@@ -81,7 +81,7 @@ func TestSearchAPI_CrossUserIsolation(t *testing.T) {
 
 func TestSearchAPI_Unauthenticated(t *testing.T) {
 	t.Parallel()
-	d := newTestAPIDB(t)
+	d := newTestDB(t)
 	mux := NewTestMux(d, TestMuxOpts{})
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/v1/search?q=hello", nil))

@@ -10,11 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func newTestAPIDB(t *testing.T) *sql.DB {
-	t.Helper()
-	return newTestDB(t) // reuse the helper from middleware_test.go
-}
-
 func insertAPITestUser(t *testing.T, d *sql.DB, username string) int64 {
 	t.Helper()
 	id, err := db.InsertUser(context.Background(), d, db.NewUser{
