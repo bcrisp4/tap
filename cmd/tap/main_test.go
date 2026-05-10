@@ -507,3 +507,78 @@ func postSubE2E(t *testing.T, mux http.Handler, body string) int64 {
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&got))
 	return got.ID
 }
+
+func TestEndToEnd_ExtractFailure_FallsBackToSummary(t *testing.T) {
+	t.Parallel()
+
+	var origin *httptest.Server
+	originHandler := func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/feed":
+			w.Header().Set("Content-Type", "application/atom+xml")
+			fmt.Fprintf(w, `<?xml version="1.0"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+<title>e2e-fail</title><id>urn:e2e-fail</id>
+<entry><title>One</title><id>urn:e2e-fail:1</id>
+<link href="%s/article/1"/>
+<updated>2026-05-01T00:00:00Z</updated>
+<content type="html">&lt;p&gt;feed-summary&lt;/p&gt;</content>
+</entry></feed>`, origin.URL)
+		default:
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}
+	origin = httptest.NewServer(http.HandlerFunc(originHandler))
+	t.Cleanup(origin.Close)
+
+	d, err := db.Open(context.Background(), ":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = d.Close() })
+	require.NoError(t, db.Migrate(context.Background(), d))
+
+	noSSRFClient, err := buildTestClient(t)
+	require.NoError(t, err)
+
+	mux := api.NewMux(d, api.MuxOpts{})
+	postSubE2E(t, mux, fmt.Sprintf(`{"feed_url":"%s/feed","extract":true}`, origin.URL))
+
+	sched := poll.NewScheduler(context.Background(), d, noSSRFClient, poll.SchedulerOpts{
+		Workers:   1,
+		Processor: processor.New(sanitise.DefaultPolicy(), nil),
+	})
+	defer sched.Stop()
+	sched.Tick(context.Background())
+	require.NoError(t, sched.Wait(10*time.Second))
+
+	// Subscription error_count must NOT bump — extract failure is per-entry.
+	rrSub := httptest.NewRecorder()
+	mux.ServeHTTP(rrSub, httptest.NewRequest(http.MethodGet, "/api/v1/subscriptions", nil))
+	require.Equal(t, http.StatusOK, rrSub.Code)
+	var subResp struct {
+		Data []map[string]any `json:"data"`
+	}
+	require.NoError(t, json.NewDecoder(rrSub.Body).Decode(&subResp))
+	require.Len(t, subResp.Data, 1)
+	require.Equal(t, float64(0), subResp.Data[0]["error_count"], "extract failure must not bump subscription error_count")
+
+	// Entry must exist with extract_failed=true and the feed-provided summary.
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/v1/entries", nil))
+	var listResp struct {
+		Data []map[string]any `json:"data"`
+	}
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&listResp))
+	require.Len(t, listResp.Data, 1)
+	require.Equal(t, true, listResp.Data[0]["extract_failed"])
+
+	entryID := int64(listResp.Data[0]["id"].(float64))
+	rr2 := httptest.NewRecorder()
+	mux.ServeHTTP(rr2, httptest.NewRequest(http.MethodGet,
+		"/api/v1/entries/"+strconv.FormatInt(entryID, 10), nil))
+	var detail struct {
+		Content string `json:"content"`
+	}
+	require.NoError(t, json.NewDecoder(rr2.Body).Decode(&detail))
+	require.Contains(t, detail.Content, "feed-summary",
+		"failed extraction must fall back to the feed-provided summary")
+}
