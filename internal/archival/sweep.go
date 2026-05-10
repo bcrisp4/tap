@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 
 	"github.com/bcrisp4/tap/internal/db"
 )
@@ -77,14 +79,16 @@ func buildDeleteByIDs(ids []int64) string {
 	if len(ids) == 0 {
 		return "DELETE FROM entries WHERE 1=0"
 	}
-	q := "DELETE FROM entries WHERE id IN ("
+	var b strings.Builder
+	b.WriteString("DELETE FROM entries WHERE id IN (")
 	for i, id := range ids {
 		if i > 0 {
-			q += ","
+			b.WriteByte(',')
 		}
-		q += fmt.Sprintf("%d", id)
+		b.WriteString(strconv.FormatInt(id, 10))
 	}
-	return q + ")"
+	b.WriteByte(')')
+	return b.String()
 }
 
 // cacheFileMeta mirrors the JSON sidecar written by internal/proxy.Cache.

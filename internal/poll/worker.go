@@ -173,7 +173,6 @@ func (w *Worker) Run(ctx context.Context, sub db.DueSubscription) {
 		_ = g.Wait()
 	}
 
-	// Build candidate entries from parse results.
 	candidates := make([]db.NewEntry, 0, len(pendings))
 	for _, p := range pendings {
 		pubAt := now.Unix()
@@ -191,8 +190,7 @@ func (w *Worker) Run(ctx context.Context, sub db.DueSubscription) {
 		})
 	}
 
-	// Consult tombstones — drop any entry that has been previously archived.
-	// Read-only point lookups; runs outside the commit transaction.
+	// Read-only tombstone lookups run outside the commit transaction (concept §6.15).
 	newEntries := make([]db.NewEntry, 0, len(candidates))
 	for _, e := range candidates {
 		tombstoned, terr := db.IsTombstoned(ctx, w.db, sub.ID, e.Hash)
