@@ -28,9 +28,21 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
   const res = await fetch(BASE + path, { ...init, headers });
 
+  // 401 has two flavours:
+  //   - error.code === 'invalid_session': session genuinely expired or
+  //     was revoked → wipe in-memory auth state so the SPA falls back to
+  //     the login screen.
+  //   - error.code === 'invalid_credentials': the user entered the wrong
+  //     CURRENT password during PATCH /me/password. The session is fine;
+  //     forcing a re-login here would be terrible UX.
+  // Anything else is treated as session-loss to fail safe.
   if (res.status === 401) {
-    auth.clearOn401();
-    throw new Error(ERR_UNAUTHORIZED);
+    let detail: ApiError | null = null;
+    try { detail = await res.json(); } catch { /* swallow */ }
+    if (detail?.error?.code !== 'invalid_credentials') {
+      auth.clearOn401();
+    }
+    throw new Error(detail?.error?.message ?? ERR_UNAUTHORIZED);
   }
   if (!res.ok) {
     let detail: ApiError | null = null;

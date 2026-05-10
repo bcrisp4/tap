@@ -215,7 +215,47 @@ describe('api client (M6 auth integration)', () => {
     expect(headers['X-CSRF-Token']).toBeUndefined();
   });
 
-  it('clears auth state when any request returns 401', async () => {
+  it('clears auth state when a request returns 401 invalid_session', async () => {
+    mockFetch.mockResolvedValueOnce(new Response(
+      JSON.stringify({ user: { id: 1, username: 'ben', role: 'admin' }, csrf_token: 'tok' }),
+      { status: 200 },
+    ));
+    const { api, auth } = await loadApi();
+    await auth.login('ben', 'pw');
+
+    mockFetch.mockResolvedValueOnce(new Response(
+      JSON.stringify({ error: { code: 'invalid_session', message: 'session expired' } }),
+      { status: 401 },
+    ));
+    await expect(api.listSubscriptions()).rejects.toThrow();
+
+    const { get } = await import('svelte/store');
+    expect(get(auth).user).toBeNull();
+  });
+
+  it('does NOT clear auth state when 401 carries invalid_credentials (wrong current password)', async () => {
+    // PATCH /me/password returns 401 invalid_credentials when the user
+    // typed the wrong CURRENT password — the session is fine, just the
+    // input was wrong. Forcing a logout here would be terrible UX.
+    mockFetch.mockResolvedValueOnce(new Response(
+      JSON.stringify({ user: { id: 1, username: 'ben', role: 'admin' }, csrf_token: 'tok' }),
+      { status: 200 },
+    ));
+    const { api, auth } = await loadApi();
+    await auth.login('ben', 'pw');
+
+    mockFetch.mockResolvedValueOnce(new Response(
+      JSON.stringify({ error: { code: 'invalid_credentials', message: 'current password incorrect' } }),
+      { status: 401 },
+    ));
+    await expect(api.changePassword('wrong', 'new-good-password')).rejects.toThrow('current password incorrect');
+
+    const { get } = await import('svelte/store');
+    expect(get(auth).user).not.toBeNull();
+    expect(get(auth).user?.username).toBe('ben');
+  });
+
+  it('clears auth state on 401 with no parseable error body (fail safe)', async () => {
     mockFetch.mockResolvedValueOnce(new Response(
       JSON.stringify({ user: { id: 1, username: 'ben', role: 'admin' }, csrf_token: 'tok' }),
       { status: 200 },
