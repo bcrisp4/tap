@@ -150,7 +150,7 @@ func fsPass(cacheDir string, ageCapUnix int64, onEvict func(int)) (evicted int, 
 		return 0, fmt.Errorf("walk cache dir: %w", walkErr)
 	}
 
-	_ = filepath.WalkDir(cacheDir, func(path string, d os.DirEntry, werr error) error {
+	orphanWalkErr := filepath.WalkDir(cacheDir, func(path string, d os.DirEntry, werr error) error {
 		if werr != nil || d.IsDir() {
 			return nil
 		}
@@ -163,21 +163,30 @@ func fsPass(cacheDir string, ageCapUnix int64, onEvict func(int)) (evicted int, 
 		}
 		return nil
 	})
+	if orphanWalkErr != nil && !errors.Is(orphanWalkErr, os.ErrNotExist) {
+		slog.Warn("archival: walk cache dir for orphans", "err", orphanWalkErr)
+	}
 
 	for _, c := range candidates {
-		if rerr := os.Remove(c.binPath); rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
-			slog.Warn("archival: remove bin", "path", c.binPath, "err", rerr)
+		binErr := os.Remove(c.binPath)
+		if binErr != nil && !errors.Is(binErr, os.ErrNotExist) {
+			slog.Warn("archival: remove bin", "path", c.binPath, "err", binErr)
 		}
-		if rerr := os.Remove(c.metaPath); rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
-			slog.Warn("archival: remove meta", "path", c.metaPath, "err", rerr)
+		metaErr := os.Remove(c.metaPath)
+		if metaErr != nil && !errors.Is(metaErr, os.ErrNotExist) {
+			slog.Warn("archival: remove meta", "path", c.metaPath, "err", metaErr)
 		}
-		evicted++
+		if (binErr == nil || errors.Is(binErr, os.ErrNotExist)) &&
+			(metaErr == nil || errors.Is(metaErr, os.ErrNotExist)) {
+			evicted++
+		}
 	}
 	for _, path := range orphanBins {
 		if rerr := os.Remove(path); rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
 			slog.Warn("archival: remove orphan bin", "path", path, "err", rerr)
+		} else {
+			evicted++
 		}
-		evicted++
 	}
 
 	if onEvict != nil && evicted > 0 {

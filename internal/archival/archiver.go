@@ -8,6 +8,7 @@ import (
 	"time"
 )
 
+
 // ArchiverOpts configures the archival sweep.
 type ArchiverOpts struct {
 	Horizon     time.Duration    // entries older than Now()-Horizon are deleted; default 90d
@@ -93,7 +94,12 @@ func (a *Archiver) sweep() {
 
 	slog.Info("archival.sweep.start")
 
-	deleted, tombstoned, err := dbPass(a.ctx, a.db, horizonUnix, now.Unix())
+	// Use a detached context for the sweep passes so that Stop() cancelling
+	// a.ctx prevents new sweeps but does not abort a sweep already in progress.
+	// The WaitGroup ensures Stop() still blocks until the sweep completes.
+	sweepCtx := context.WithoutCancel(a.ctx)
+
+	deleted, tombstoned, err := dbPass(sweepCtx, a.db, horizonUnix, now.Unix())
 	if err != nil {
 		slog.Warn("archival: db pass error", "err", err)
 	}

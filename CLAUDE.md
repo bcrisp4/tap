@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Tap is a self-hosted RSS / Atom / JSON Feed reader. It ships as **one
 static Go binary** with an embedded SQLite database, an embedded Svelte
 SPA, and no external services. See `docs/concept.md` for the full design
-and `docs/roadmap.md` for the milestone plan; **M11 merged** (archival +
+and `docs/roadmap.md` for the milestone plan; **M11 in progress** (archival +
 tombstones — spec at `docs/specs/2026-05-10-m11-archival-tombstones.md`);
 **M7 merged** (2FA + passkeys
 + per-user data isolation; **M6 merged** — auth
