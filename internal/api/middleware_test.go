@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -78,7 +77,6 @@ func TestRequireSessionPassesValidCookie(t *testing.T) {
 	require.Equal(t, uid, sawUser.ID)
 	require.Equal(t, sid, sawSession.ID)
 	require.Equal(t, "csrf-1", sawSession.CSRFToken)
-	_ = strings.TrimSpace
 }
 
 func TestRequireSessionRejectsMissingCookie(t *testing.T) {
