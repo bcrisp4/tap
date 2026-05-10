@@ -12,17 +12,13 @@
       dialog.close();
     }
   });
-
-  function onDialogClose() {
-    onClose();
-  }
 </script>
 
 <dialog
   bind:this={dialog}
   class="tap-modal"
   aria-labelledby="hotkeys-title"
-  onclose={onDialogClose}
+  onclose={onClose}
 >
   <div class="tap-modal-head">
     <span id="hotkeys-title" class="modal-title">Keyboard shortcuts</span>
