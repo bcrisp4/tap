@@ -305,6 +305,8 @@ Response when no feeds found: `400 no_feeds_found` with an empty `candidates` ar
 - `/search` — search view; reads `?q=` on mount.
 - `/categories/:id` — category entry list view.
 
+**M8 Search tab wiring.** M8's mobile bottom tab bar includes a Search tab that renders an empty-state placeholder until M9 ships. M9 is responsible for wiring that tab to navigate to `/search` — replacing the placeholder with the real `Search.svelte` view. No changes to M8's tab bar component are needed; M9 just ensures the `/search` route exists and the tab's navigation target resolves correctly.
+
 #### Sidebar (`web/src/views/Unread.svelte` + sidebar component)
 
 The FEEDS group becomes a category-grouped layout:
@@ -399,7 +401,7 @@ No new flags. The OPML 10 MiB cap is a hard-coded per-route constant in `interna
 ## Cross-spec touch-points
 
 - **M7** — hard dependency. M9 requires M7's `user_id INTEGER NOT NULL` on `subscriptions` and `entries`. All M9 db-layer functions that touch subscriptions take a `userID int64` parameter following the M7 pattern.
-- **M8** — the `/` focus-search keybinding is absent from M8's keyboard shortcut surface. It lands in M9. M8's "Out of scope" table documents this explicitly.
+- **M8** — the `/` focus-search keybinding is absent from M8's keyboard shortcut surface. It lands in M9. M8's "Out of scope" table documents this explicitly. M8's mobile bottom tab bar includes a Search tab with an empty-state placeholder; M9 wires it up by landing the `/search` route.
 - **M10** — OPML import triggers subscription inserts with `next_poll_at = 0`. The service worker must not cache `POST /api/v1/opml` responses. Search (`GET /api/v1/search?q=`) should not be pre-warmed by the warm-cache driver.
 - **M11** — the `entries_fts_delete` trigger keeps the FTS index consistent when M11's archival sweep deletes from `entries`. M11 must not add any explicit FTS sync call. M11 must include a regression test: archival delete → entry no longer returned by FTS search.
 - **M12** — no new observability surface added in M9 beyond what the existing request logging covers. FTS query latency will be visible in M12's request histogram.
