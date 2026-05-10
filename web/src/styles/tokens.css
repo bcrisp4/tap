@@ -14,3 +14,52 @@
   --sans:  "Inter Tight", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   --mono:  "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
 }
+
+/* ── Dark theme ── */
+html.theme-dark {
+  --bg: #0d0d0e;
+  --bg-soft: #161617;
+  --surface: #1a1a1c;
+  --ink: #ededea;
+  --ink-2: #a8a8a4;
+  --ink-3: #6e6e6a;
+  --ink-4: #3a3a38;
+  --rule: #232325;
+  --accent: #5a7fdc;
+  --accent-soft: rgba(90, 127, 220, 0.14);
+}
+
+/* ── Sepia theme ── */
+html.theme-sepia {
+  --bg: #f4ecd8;
+  --bg-soft: #ece3c9;
+  --surface: #faf3df;
+  --ink: #3b2e1a;
+  --ink-2: #6b5a3e;
+  --ink-3: #9e8d6b;
+  --ink-4: #c8b88f;
+  --rule: #d9cca8;
+  --accent: #002FA7;
+  --accent-soft: rgba(0, 47, 167, 0.10);
+}
+
+/* ── Font toggle: sans mode replaces the serif stack ── */
+html.font-sans {
+  --serif: var(--sans);
+}
+
+/* ── Density ── */
+html.density-compact .entry { padding-top: 10px; padding-bottom: 10px; }
+html.density-compact .entry .summary { display: none; }
+html.density-compact .entry .junction { top: 17px; }
+html.density-compact .entry .saved-mark { top: 13px; }
+html.density-comfortable .entry { padding-top: 16px; padding-bottom: 16px; }
+
+/* ── Reduced motion ── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    transition-duration: 0ms !important;
+    animation-duration: 0ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
