@@ -3,9 +3,11 @@ package poll
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -527,4 +529,120 @@ func TestWorker_Extract_FalseSkipsExtraction(t *testing.T) {
 	entries, _, _, _ := db.ListEntries(context.Background(), d, db.ListEntriesParams{Limit: 10})
 	full, _ := db.GetEntry(context.Background(), d, entries[0].ID)
 	require.Contains(t, full.Content, "teaser")
+}
+
+func TestWorker_Extract_OneFailureFallsBackToSummary(t *testing.T) {
+	t.Parallel()
+	const atom = `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Mix</title><id>urn:mix</id>
+  <entry><title>Ok</title><id>urn:mix:1</id>
+    <link href="https://mix.example/1"/>
+    <updated>2026-05-01T00:00:00Z</updated>
+    <content type="html">&lt;p&gt;summary-1&lt;/p&gt;</content></entry>
+  <entry><title>Bad</title><id>urn:mix:2</id>
+    <link href="https://mix.example/2"/>
+    <updated>2026-05-01T00:00:00Z</updated>
+    <content type="html">&lt;p&gt;summary-2&lt;/p&gt;</content></entry>
+</feed>`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(atom))
+	}))
+	defer srv.Close()
+
+	d := newDB(t)
+	subID, _ := db.InsertSubscription(context.Background(), d, db.NewSubscription{
+		Title: "x", FeedURL: srv.URL, NextPoll: 0, Created: 0,
+	})
+
+	fakeExtract := func(ctx context.Context, c *http.Client, url, sel string, cap int64) (string, error) {
+		if strings.HasSuffix(url, "/2") {
+			return "", errors.New("simulated extract failure")
+		}
+		return "<p>extracted-1</p>", nil
+	}
+
+	w := NewWorker(d, http.DefaultClient, WorkerOpts{
+		Processor: processor.New(sanitise.DefaultPolicy(), nil),
+		Extract:   fakeExtract,
+	})
+	w.Run(context.Background(), db.DueSubscription{
+		ID: subID, FeedURL: srv.URL, Extract: true,
+	})
+
+	// Subscription error_count must NOT bump — extract failure is per-entry.
+	got, err := db.GetSubscription(context.Background(), d, subID)
+	require.NoError(t, err)
+	require.Equal(t, 0, got.ErrorCount, "extract failure must not bump subscription error_count")
+	require.False(t, got.LastError.Valid, "extract failure must not write last_error")
+
+	// Both entries inserted; per-entry extract_failed reflects the outcome.
+	rows, err := d.QueryContext(context.Background(),
+		`SELECT title, content, extract_failed FROM entries WHERE subscription_id = ? ORDER BY title`, subID)
+	require.NoError(t, err)
+	defer rows.Close()
+	type row struct {
+		title, content string
+		failed         int
+	}
+	var got2 []row
+	for rows.Next() {
+		var r row
+		require.NoError(t, rows.Scan(&r.title, &r.content, &r.failed))
+		got2 = append(got2, r)
+	}
+	require.Len(t, got2, 2)
+	require.Equal(t, "Bad", got2[0].title)
+	require.Equal(t, 1, got2[0].failed)
+	require.Contains(t, got2[0].content, "summary-2")
+	require.Equal(t, "Ok", got2[1].title)
+	require.Equal(t, 0, got2[1].failed)
+	require.Contains(t, got2[1].content, "extracted-1")
+}
+
+func TestWorker_Extract_AllFailuresPollStillSucceeds(t *testing.T) {
+	t.Parallel()
+	const atom = `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>AllBad</title><id>urn:allbad</id>
+  <entry><title>One</title><id>urn:allbad:1</id>
+    <link href="https://allbad.example/1"/>
+    <updated>2026-05-01T00:00:00Z</updated>
+    <content type="html">&lt;p&gt;s1&lt;/p&gt;</content></entry>
+  <entry><title>Two</title><id>urn:allbad:2</id>
+    <link href="https://allbad.example/2"/>
+    <updated>2026-05-01T00:00:00Z</updated>
+    <content type="html">&lt;p&gt;s2&lt;/p&gt;</content></entry>
+</feed>`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(atom))
+	}))
+	defer srv.Close()
+
+	d := newDB(t)
+	subID, _ := db.InsertSubscription(context.Background(), d, db.NewSubscription{
+		Title: "x", FeedURL: srv.URL, NextPoll: 0, Created: 0,
+	})
+
+	failExtract := func(ctx context.Context, c *http.Client, url, sel string, cap int64) (string, error) {
+		return "", errors.New("always fail")
+	}
+
+	w := NewWorker(d, http.DefaultClient, WorkerOpts{
+		Processor: processor.New(sanitise.DefaultPolicy(), nil),
+		Extract:   failExtract,
+	})
+	w.Run(context.Background(), db.DueSubscription{
+		ID: subID, FeedURL: srv.URL, Extract: true,
+	})
+
+	got, err := db.GetSubscription(context.Background(), d, subID)
+	require.NoError(t, err)
+	require.Equal(t, 0, got.ErrorCount)
+
+	var failed int
+	require.NoError(t, d.QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM entries WHERE subscription_id = ? AND extract_failed = 1`,
+		subID).Scan(&failed))
+	require.Equal(t, 2, failed)
 }
