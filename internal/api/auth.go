@@ -3,6 +3,7 @@ package api
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"strings"
@@ -141,6 +142,11 @@ func loginHandler(dep authDeps) http.Handler {
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		var body loginRequest
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			var mbe *http.MaxBytesError
+			if errors.As(err, &mbe) {
+				writeError(w, http.StatusRequestEntityTooLarge, ErrCodeBadRequest, "request body too large")
+				return
+			}
 			writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "invalid JSON body")
 			return
 		}
@@ -254,6 +260,11 @@ func passwordChangeHandler(dep authDeps, hashParams auth.Params) http.Handler {
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		var body passwordChangeRequest
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			var mbe *http.MaxBytesError
+			if errors.As(err, &mbe) {
+				writeError(w, http.StatusRequestEntityTooLarge, ErrCodeBadRequest, "request body too large")
+				return
+			}
 			writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "invalid JSON body")
 			return
 		}

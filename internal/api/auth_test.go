@@ -137,14 +137,17 @@ func TestLoginRejectsOversizedBody(t *testing.T) {
 	d := newTestDB(t)
 	deps := authDeps{d: d, sessionIdleTTL: time.Hour, sessionAbsoluteTTL: 24 * time.Hour}
 
-	body := bytes.NewReader(bytes.Repeat([]byte("a"), 2<<20)) // 2 MiB > 1 MiB cap
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/sessions", body)
+	// Body is valid JSON for the first ~1 MiB, then keeps going to 2 MiB.
+	// A non-JSON 2 MiB blob would trip the decoder's syntax check before
+	// MaxBytesReader gets a chance to error, masking the 413 path.
+	body := `{"username":"` + strings.Repeat("a", 2<<20) + `","password":"x"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/sessions", strings.NewReader(body))
 	rr := httptest.NewRecorder()
 	loginHandler(deps).ServeHTTP(rr, req)
-	require.GreaterOrEqual(t, rr.Code, 400)
-	// The exact code depends on http.MaxBytesReader's interaction with the
-	// JSON decoder — assert it's not a successful login.
-	require.NotEqual(t, http.StatusOK, rr.Code)
+	// MaxBytesReader -> *http.MaxBytesError -> 413, not a generic 400.
+	// Distinguishing the two is what tells the SPA "you sent too much"
+	// vs "your JSON is broken".
+	require.Equal(t, http.StatusRequestEntityTooLarge, rr.Code, rr.Body.String())
 }
 
 // withFakeAuth injects a session + user into context for handler-level tests
@@ -294,6 +297,29 @@ func TestPasswordChangeWrongCurrent(t *testing.T) {
 	h.ServeHTTP(rr, req)
 	require.Equal(t, http.StatusUnauthorized, rr.Code)
 	require.Contains(t, rr.Body.String(), `"code":"invalid_credentials"`)
+}
+
+func TestPasswordChangeRejectsOversizedBody(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	uid := seedUser(t, d, "ben", "old-password-12", "admin")
+	full, _ := db.GetUserByID(context.Background(), d, uid)
+
+	deps := authDeps{d: d}
+	h := withFakeAuth(t,
+		db.User{ID: uid, Username: "ben", Role: "admin", PasswordHash: full.PasswordHash},
+		db.Session{ID: 1, UserID: uid, CSRFToken: "c"},
+		passwordChangeHandler(deps, testHashParams))
+
+	// Valid JSON for the first ~1 MiB, then keeps going to 2 MiB. A
+	// non-JSON blob would trip the decoder's syntax check before
+	// MaxBytesReader can error, masking the 413 path.
+	body := `{"current_password":"` + strings.Repeat("a", 2<<20) + `","new_password":"x"}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/me/password", strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	// MaxBytesReader -> *http.MaxBytesError -> 413, not a generic 400.
+	require.Equal(t, http.StatusRequestEntityTooLarge, rr.Code, rr.Body.String())
 }
 
 func TestPasswordChangeTooShortNew(t *testing.T) {
