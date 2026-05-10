@@ -1627,6 +1627,10 @@ rm -rf /tmp/tap-m11-final
 
 Expected: `OK`, clean exit.
 
+- [ ] **Step 5: Run `/simplify`**
+
+Per global CLAUDE.md — once all tasks are complete, invoke `/simplify` to review changed code for reuse, quality, and efficiency and fix any issues found.
+
 ---
 
 ## Spec coverage
