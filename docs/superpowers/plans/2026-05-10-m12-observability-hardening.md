@@ -890,16 +890,23 @@ func TestInit_NoopBeforeInit(t *testing.T) {
 }
 
 func TestInit_Shutdown(t *testing.T) {
-	err := metrics.Init(metrics.Opts{})
+	// Use an isolated registry so this test does not share global state.
+	reg := prometheus.NewRegistry()
+	err := metrics.InitWithRegistry(reg, metrics.Opts{})
 	require.NoError(t, err)
 	err = metrics.Shutdown(context.Background())
 	assert.NoError(t, err)
 }
 
 func TestInit_DoubleInit(t *testing.T) {
-	_ = metrics.Init(metrics.Opts{})
-	defer metrics.Shutdown(context.Background())
-	err := metrics.Init(metrics.Opts{})
+	// Use an isolated registry; call Shutdown in Cleanup, not defer, so it
+	// always runs even if the test panics — prevents state leak into other tests.
+	reg := prometheus.NewRegistry()
+	err := metrics.InitWithRegistry(reg, metrics.Opts{})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = metrics.Shutdown(context.Background()) })
+
+	err = metrics.InitWithRegistry(prometheus.NewRegistry(), metrics.Opts{})
 	assert.Error(t, err, "second Init should return error")
 }
 ```
@@ -966,7 +973,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/bridge/prometheus" as prombridge
+	prombridge "go.opentelemetry.io/otel/bridge/prometheus"
 	"go.opentelemetry.io/otel/sdk/metric"
 )
 
@@ -1414,12 +1421,9 @@ func Middleware(h http.Handler) http.Handler {
 			attribute.String("request_id", requestID),
 		)
 
-		// Inject request_id into slog so every log line during this request
-		// carries it automatically.
-		ctx = slog.With("request_id", requestID)
-		// Note: slog does not support context-injection natively; we store the
-		// request_id in context for handlers that call slog.InfoContext(ctx,...).
-		// The tracing span carries it as an attribute for OTel correlation.
+		// Store request_id in context. Handlers that want it in log lines call
+		// tracing.RequestIDFromContext(ctx) and pass it as a slog attribute.
+		// The tracing span also carries it as an attribute for OTel correlation.
 		ctx = context.WithValue(ctx, requestIDKey{}, requestID)
 
 		rr := &responseRecorder{ResponseWriter: w, status: http.StatusOK}
@@ -1620,7 +1624,7 @@ if opts.Limiter != nil {
 }
 ```
 
-After credential check fails:
+After credential check fails. Note: the HTTP response always collapses to `401 invalid_credentials` (no enumeration), but the structured log carries the specific `reason` for operator diagnosis: `"bad_credentials"` when `auth.Verify` fails, `"disabled"` when `u.DisabledAt.Valid`. Track a local `failReason` variable through the handler and use it here:
 
 ```go
 if opts.Limiter != nil {
@@ -1631,7 +1635,7 @@ slog.WarnContext(r.Context(), "auth.login.failure",
     "event", "auth.login.failure",
     "username", body.Username,
     "source", sourceIP(r, opts.TrustedProxy),
-    "reason", "bad_credentials")
+    "reason", failReason) // "bad_credentials" or "disabled"
 writeError(w, http.StatusUnauthorized, ErrCodeInvalidCredentials, "invalid credentials")
 ```
 
@@ -2205,7 +2209,35 @@ apiMux := api.NewMux(d, api.MuxOpts{
 })
 ```
 
-Note: `sched.ActiveCount()` must be added to `internal/poll/scheduler.go` if not present — add it as a simple atomic counter.
+- [ ] **Step 5b: Add `ActiveCount()` to `internal/poll/Scheduler` (TDD)**
+
+`sched.ActiveCount()` does not exist in the current codebase. Add it now.
+
+Write a failing test in `internal/poll/scheduler_test.go`:
+
+```go
+func TestScheduler_ActiveCount(t *testing.T) {
+	// ActiveCount should be 0 before any polls are dispatched.
+	sched := newTestScheduler(t)
+	assert.Equal(t, int64(0), sched.ActiveCount())
+}
+```
+
+Run: `go test ./internal/poll/... -run TestScheduler_ActiveCount` — expect FAIL (undefined method).
+
+Add to `internal/poll/scheduler.go`:
+
+```go
+// ActiveCount returns the number of feeds currently being polled.
+// In-memory only — resets to 0 on process restart.
+func (s *Scheduler) ActiveCount() int64 {
+	return int64(len(s.inflight.IDs()))
+}
+```
+
+`s.inflight.IDs()` already exists (see `internal/poll/inflight.go:38`). This is accurate at the time of call; it can transiently undercount if a feed is dispatched between the IDs() call and the return, but that is acceptable for the status panel (approximate counter, per spec).
+
+Run: `go test ./internal/poll/... -run TestScheduler_ActiveCount` — expect PASS.
 
 - [ ] **Step 6: Extend shutdown sequence**
 
@@ -2255,8 +2287,76 @@ git commit -m "M12: wire metrics, tracing, ring buffer, rate limiter, and new fl
 **Skills:** `superpowers:test-driven-development`, `golang-cli`, `golang-testing`
 
 **Files:**
+- Modify: `internal/db/users.go`
+- Modify: `internal/db/users_test.go`
 - Modify: `cmd/tap/admin.go`
 - Modify: `cmd/tap/admin_test.go`
+
+- [ ] **Step 0: Add `db.ListUsers` (not yet in codebase — required by `tap admin list`)**
+
+`db.ListUsers` does not exist in the current `internal/db/users.go`. It is defined in M7's spec but M7 may not be merged yet. Add it now with TDD.
+
+Write a failing test in `internal/db/users_test.go`:
+
+```go
+func TestListUsers(t *testing.T) {
+	d := newTestDB(t) // use the existing test DB helper
+	ctx := context.Background()
+
+	// Empty table.
+	users, err := db.ListUsers(ctx, d)
+	require.NoError(t, err)
+	assert.Empty(t, users)
+
+	// Insert two users and verify both returned in ID order.
+	_, _ = db.InsertUser(ctx, d, db.NewUser{
+		Username: "alice", PasswordHash: "x", Role: "admin", CreatedAt: 1,
+	})
+	_, _ = db.InsertUser(ctx, d, db.NewUser{
+		Username: "bob", PasswordHash: "x", Role: "user", CreatedAt: 2,
+	})
+	users, err = db.ListUsers(ctx, d)
+	require.NoError(t, err)
+	require.Len(t, users, 2)
+	assert.Equal(t, "alice", users[0].Username)
+	assert.Equal(t, "bob", users[1].Username)
+}
+```
+
+Run: `go test ./internal/db/... -run TestListUsers` — expect FAIL (undefined).
+
+Implement in `internal/db/users.go`:
+
+```go
+// ListUsers returns all users ordered by id ascending.
+func ListUsers(ctx context.Context, d *sql.DB) ([]User, error) {
+	rows, err := d.QueryContext(ctx,
+		`SELECT id, username, password_hash, role, created_at, disabled_at FROM users ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("list users: %w", err)
+	}
+	defer rows.Close()
+	var out []User
+	for rows.Next() {
+		var u User
+		if err := rows.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role,
+			&u.CreatedAt, &u.DisabledAt); err != nil {
+			return nil, fmt.Errorf("list users scan: %w", err)
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+```
+
+Run: `go test ./internal/db/... -run TestListUsers` — expect PASS.
+
+Commit:
+
+```bash
+git add internal/db/users.go internal/db/users_test.go
+git commit -m "M12: add db.ListUsers for tap admin list"
+```
 
 - [ ] **Step 1: Write failing tests**
 
@@ -2415,7 +2515,7 @@ func runAdminDisable(args []string, stdout, stderr io.Writer) int {
 		return adminExitPasswordMismatch // exit 3 per spec
 	}
 
-	if err := db.DisableUser(ctx, d, u.ID); err != nil {
+	if err := db.DisableUser(ctx, d, u.ID, time.Now().Unix()); err != nil {
 		fmt.Fprintf(stderr, "disable user: %v\n", err)
 		return adminExitGeneric
 	}
@@ -2569,7 +2669,7 @@ In `internal/poll/worker.go`, in the poll execution function:
 
 ```go
 // Before poll:
-slog.InfoContext(ctx, "polling feed", "event", "poll.start", "feed_id", sub.ID, "feed_url", sub.FeedURL)
+slog.DebugContext(ctx, "polling feed", "event", "poll.start", "feed_id", sub.ID, "feed_url", sub.FeedURL)
 start := time.Now()
 
 // After successful poll:
@@ -3176,4 +3276,6 @@ Invoke the `simplify` skill to review all changed code for reuse, quality, and e
 
 **M7 routes in route audit (Task 17):** The route audit table in the spec covers all M7 and M9 routes. If M7/M9 are not yet merged, audit only the routes that exist in the current codebase and note the pending rows.
 
-**`sched.ActiveCount()`:** Task 11 assumes `poll.Scheduler` exposes `ActiveCount() int64`. If this method does not exist after M11 merges, add it as a simple `sync/atomic.Int64` counter incremented on dispatch and decremented on completion.
+**`sched.ActiveCount()`:** Task 11 Step 5b adds this method to `internal/poll/Scheduler` as part of M12 — using `len(s.inflight.IDs())` which already exists. This is no longer a deferred concern.
+
+**`db.ListUsers`:** Task 12 Step 0 adds this function to `internal/db/users.go` as part of M12. This is no longer a deferred concern.
