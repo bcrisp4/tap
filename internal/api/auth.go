@@ -178,3 +178,36 @@ func loginHandler(dep authDeps) http.Handler {
 		writeJSON(w, http.StatusOK, loginResponse{User: toUserDTO(u), CSRFToken: csrfToken})
 	})
 }
+
+// getSessionCurrentHandler returns GET /api/v1/sessions/current.
+// Authenticated; CSRF not required (GET). The SPA calls this on boot to
+// recover its in-memory CSRF token after a reload.
+func getSessionCurrentHandler(_ authDeps) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		u, ok1 := userFromContext(r.Context())
+		s, ok2 := sessionFromContext(r.Context())
+		if !ok1 || !ok2 {
+			writeError(w, http.StatusUnauthorized, ErrCodeInvalidSession, "no session")
+			return
+		}
+		writeJSON(w, http.StatusOK, loginResponse{User: toUserDTO(u), CSRFToken: s.CSRFToken})
+	})
+}
+
+// logoutHandler returns DELETE /api/v1/sessions/current. Authenticated;
+// CSRF required (the middleware chain enforces that, not this handler).
+func logoutHandler(dep authDeps) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s, ok := sessionFromContext(r.Context())
+		if !ok {
+			writeError(w, http.StatusUnauthorized, ErrCodeInvalidSession, "no session")
+			return
+		}
+		if err := db.DeleteSession(r.Context(), dep.d, s.ID); err != nil {
+			writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())
+			return
+		}
+		clearSessionCookie(w, dep.cookieSecure)
+		w.WriteHeader(http.StatusNoContent)
+	})
+}

@@ -120,3 +120,70 @@ func TestLoginRejectsOversizedBody(t *testing.T) {
 	// JSON decoder — assert it's not a successful login.
 	require.NotEqual(t, http.StatusOK, rr.Code)
 }
+
+// withFakeAuth injects a session + user into context for handler-level tests
+// that don't go through the full requireSession middleware.
+func withFakeAuth(t *testing.T, u db.User, s db.Session, h http.Handler) http.Handler {
+	t.Helper()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), ctxKeyUser, u)
+		ctx = context.WithValue(ctx, ctxKeySession, s)
+		h.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func TestGetSessionCurrent(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	u := db.User{ID: 7, Username: "ben", Role: "admin"}
+	s := db.Session{ID: 99, UserID: 7, CSRFToken: "csrf-xyz"}
+
+	h := withFakeAuth(t, u, s, getSessionCurrentHandler(authDeps{d: d}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/sessions/current", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var resp loginResponse
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+	require.Equal(t, "ben", resp.User.Username)
+	require.Equal(t, "csrf-xyz", resp.CSRFToken)
+}
+
+func TestLogoutDeletesSessionAndClearsCookie(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	uid := seedUser(t, d, "ben", "password1", "admin")
+
+	sid, err := db.InsertSession(context.Background(), d, db.NewSession{
+		UserID: uid, TokenHash: "h", CSRFToken: "c",
+		CreatedAt: 0, LastSeenAt: 0, IdleExpiresAt: 1, AbsoluteExpiresAt: 1,
+	})
+	require.NoError(t, err)
+
+	deps := authDeps{d: d, cookieSecure: false}
+	h := withFakeAuth(t,
+		db.User{ID: uid, Username: "ben", Role: "admin"},
+		db.Session{ID: sid, UserID: uid, CSRFToken: "c"},
+		logoutHandler(deps))
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/sessions/current", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusNoContent, rr.Code)
+
+	// Session row should be gone.
+	_, err = db.GetSessionByTokenHash(context.Background(), d, "h")
+	require.Error(t, err)
+
+	// Set-Cookie clears tap_session.
+	var cleared bool
+	for _, c := range rr.Result().Cookies() {
+		if c.Name == "tap_session" {
+			cleared = true
+			require.Equal(t, 0, c.MaxAge)
+		}
+	}
+	require.True(t, cleared, "tap_session should be cleared")
+}
