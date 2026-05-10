@@ -19,7 +19,7 @@ type ArchiverOpts struct {
 	sweepHook   func()           // test seam: called at sweep entry before passes run
 }
 
-// Archiver is the third concurrent concern in Tap: daily sweep of old entries
+// Archiver is the fourth concurrent concern in Tap: daily sweep of old entries
 // and old cache files.
 type Archiver struct {
 	db   *sql.DB

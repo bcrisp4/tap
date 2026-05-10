@@ -56,11 +56,12 @@ The embed directive lives in `web/embed.go` (package `web`) rather than under `i
 
 ## Architecture
 
-Single-process server with three concerns living alongside each other (M11 added the archival ticker as a fourth):
+Single-process server with four concerns living alongside each other:
 
 1. **HTTP server** (`internal/server`) — owns lifecycle and the embedded SPA fallback. The SPA handler serves `web/dist` and falls back to `index.html` for unknown paths so client-side routing works for deep links. There is no dev-mode branch in the Go server: in dev, you visit Vite on :5173 and Vite proxies `/api` + `/healthz` to Go on :8080 (config in `web/vite.config.ts`).
 2. **Polling pipeline** (`internal/poll`) — `Scheduler` ticks every 60s, picks due subscriptions via `db.ListDuePolls`, and dispatches to a fixed worker pool. Each `Worker.Run` does fetch → parse → commit in one transaction. `Scheduler.Poke()` is wired into `POST /api/v1/subscriptions` so a freshly added feed polls within seconds, not up to `TickInterval`.
 3. **REST API** (`internal/api`) — `NewMux(db, poke)` wires `/api/v1/subscriptions` and `/api/v1/entries` plus `/healthz`. `cmd/tap/main.go` mounts the same mux under both `/api/` and `/healthz`.
+4. **Archival ticker** (`internal/archival`) — `Archiver` ticks daily (configurable), deletes read-and-unsaved entries older than `--archive-horizon`, writes tombstones atomically, and evicts proxy cache files older than `--cache-age-cap`. Starts after migrations, stops before the scheduler on shutdown.
 
 **Database is the queue.** There is no separate queue table or in-memory queue. `subscriptions.next_poll_at` (unix seconds) is the schedule; new subscriptions insert with `next_poll_at = 0` so the next tick picks them up. The `(subscription_id, hash)` UNIQUE constraint dedupes re-fetched entries silently.
 
@@ -122,7 +123,7 @@ unlinks proxy cache files older than `--cache-age-cap` (default 14d). Both
 bounds are configurable via flags or environment variables. The tombstone
 table (`tombstones`) is small and grows slowly; tombstones are permanent by
 design — the dedup guarantee requires durability. The archival sweep is the
-third concurrent concern alongside the HTTP server and polling pipeline; it
+fourth concurrent concern alongside the HTTP server, polling pipeline, and REST API; it
 starts after migrations and stops cleanly on shutdown.
 
 **Upgrade note (migration 0010):** adds the `tombstones` table. Existing
