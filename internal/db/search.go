@@ -23,7 +23,7 @@ type SearchResult struct {
 // No cursor pagination — the spec caps M9 search at 50 results.
 func SearchEntries(ctx context.Context, d *sql.DB, userID int64, query string, limit int) ([]SearchResult, error) {
 	rows, err := d.QueryContext(ctx, `
-		SELECT e.id, e.subscription_id, e.title, e.url, e.author,
+		SELECT e.id, e.subscription_id, e.title, e.url, COALESCE(e.author, ''),
 		       e.published_at, e.read, e.saved,
 		       bm25(entries_fts) AS rank
 		FROM   entries_fts

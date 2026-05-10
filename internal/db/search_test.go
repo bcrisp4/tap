@@ -177,3 +177,25 @@ func TestSearchEntries_LimitRespected(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, results, 3)
 }
+
+func TestSearchEntries_NullAuthor(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	userID := insertTestUser(t, d, "search7")
+	subID, err := InsertSubscription(context.Background(), d, NewSubscription{
+		UserID: userID, Title: "Feed", FeedURL: "https://s7.com/feed", Created: time.Now().Unix(),
+	})
+	require.NoError(t, err)
+
+	// Insert an entry with NULL author — this is valid per the schema (no NOT NULL constraint).
+	_, err = d.ExecContext(context.Background(),
+		`INSERT INTO entries (subscription_id, hash, title, author, url, content, published_at, fetched_at, read, saved, user_id)
+		 VALUES (?, 'h7', 'NullAuthorTitle', NULL, 'https://s7.com/1', '<p>content</p>', ?, ?, 0, 0, ?)`,
+		subID, time.Now().Unix(), time.Now().Unix(), userID)
+	require.NoError(t, err)
+
+	results, err := SearchEntries(context.Background(), d, userID, "NullAuthorTitle", 50)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.Equal(t, "", results[0].Author, "NULL author must scan as empty string")
+}
