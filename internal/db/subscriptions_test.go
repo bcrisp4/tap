@@ -206,3 +206,70 @@ func TestUpdateAfterNotModified_WritesVelocity(t *testing.T) {
 	require.Equal(t, int64(1000), lastPoll, "last_poll_at")
 	require.Equal(t, int64(2000), nextPoll, "next_poll_at")
 }
+
+func TestInsertAndGetSubscriptionWithCreds(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	ctx := context.Background()
+
+	id, err := InsertSubscription(ctx, d, NewSubscription{
+		Title: "x", FeedURL: "https://x.example/feed", NextPoll: 0, Created: 0,
+		Cookie: "session=abc", BasicAuthUser: "ben", BasicAuthPass: "secret",
+	})
+	require.NoError(t, err)
+
+	s, err := GetSubscription(ctx, d, id)
+	require.NoError(t, err)
+	require.Equal(t, "session=abc", s.Cookie)
+	require.Equal(t, "ben", s.BasicAuthUser)
+	require.Equal(t, "secret", s.BasicAuthPass)
+}
+
+func TestListDuePollsCarriesCreds(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	ctx := context.Background()
+
+	_, err := InsertSubscription(ctx, d, NewSubscription{
+		Title: "x", FeedURL: "https://x.example/feed", NextPoll: 0, Created: 0,
+		Cookie: "c", BasicAuthUser: "u", BasicAuthPass: "p",
+	})
+	require.NoError(t, err)
+
+	due, err := ListDuePolls(ctx, d, 0, 10)
+	require.NoError(t, err)
+	require.Len(t, due, 1)
+	require.Equal(t, "c", due[0].Cookie)
+	require.Equal(t, "u", due[0].BasicAuthUser)
+	require.Equal(t, "p", due[0].BasicAuthPass)
+}
+
+func TestUpdateSubscriptionCredentials(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	ctx := context.Background()
+
+	id, err := InsertSubscription(ctx, d, NewSubscription{
+		Title: "x", FeedURL: "https://x.example/feed", NextPoll: 0, Created: 0,
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, UpdateSubscriptionCredentials(ctx, d, id, "ckie", "u", "p"))
+	s, err := GetSubscription(ctx, d, id)
+	require.NoError(t, err)
+	require.Equal(t, "ckie", s.Cookie)
+	require.Equal(t, "u", s.BasicAuthUser)
+	require.Equal(t, "p", s.BasicAuthPass)
+
+	// Empty strings clear.
+	require.NoError(t, UpdateSubscriptionCredentials(ctx, d, id, "", "", ""))
+	s, err = GetSubscription(ctx, d, id)
+	require.NoError(t, err)
+	require.Empty(t, s.Cookie)
+	require.Empty(t, s.BasicAuthUser)
+	require.Empty(t, s.BasicAuthPass)
+
+	// Missing id → sql.ErrNoRows.
+	err = UpdateSubscriptionCredentials(ctx, d, id+999, "x", "y", "z")
+	require.ErrorIs(t, err, sql.ErrNoRows)
+}
