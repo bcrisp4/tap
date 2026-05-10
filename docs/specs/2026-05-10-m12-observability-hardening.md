@@ -84,7 +84,7 @@ Every instrument is defined in `instruments.go` with a Go variable, a metric nam
 |---|---|---|---|---|
 | `tap_proxy_cache_hits_total` | Counter | `{requests}` | — | Number of media proxy requests served from the local filesystem cache without fetching the origin. |
 | `tap_proxy_cache_misses_total` | Counter | `{requests}` | — | Number of media proxy requests that required fetching the origin (cache cold or expired). |
-| `tap_proxy_cache_evictions_total` | Counter | `{files}` | `reason={size_cap,age_sweep}` | Number of cached media files evicted. `size_cap` = inline eviction triggered by the configured byte cap; `age_sweep` = daily archival sweep. |
+| `tap_proxy_cache_evictions_total` | Counter | `{files}` | `reason={size_cap,age_sweep}` | Number of cached media files evicted. `size_cap` = inline eviction triggered by the configured byte cap; `age_sweep` = daily archival sweep. **M11 note:** M11's `fsPass` must increment this counter with `reason="age_sweep"` for each file pair unlinked during the daily sweep. M11 uses the global instruments (same package) rather than threading a counter through `ArchiverOpts`. |
 | `tap_proxy_cache_bytes` | Gauge | `By` | — | Current total size of the media proxy filesystem cache in bytes. Updated after each eviction pass and each new cache write. |
 
 **Auth metrics:**
@@ -358,7 +358,7 @@ Every structured log event carries an `event` key. The table below lists all def
 | `auth.session.create` | debug | `user_id`, `session_id` | New session minted. |
 | `auth.session.expire` | debug | `user_id`, `session_id`, `reason` | `reason`: `idle`, `absolute`. Emitted when `requireSession` deletes an expired row. |
 | `archival.sweep.start` | info | — | Daily archival sweep begins. |
-| `archival.sweep.complete` | info | `entries_deleted`, `cache_files_evicted`, `duration_ms` | — |
+| `archival.sweep.complete` | info | `entries_deleted`, `tombstones_written`, `cache_files_evicted`, `duration_ms` | `tombstones_written` matches `entries_deleted` (one tombstone per deleted entry). M11 must emit these exact attribute keys. |
 | `proxy.cache.hit` | debug | `token_prefix` | `token_prefix` = first 8 chars of the proxy token (not the full token). |
 | `proxy.cache.miss` | debug | `token_prefix`, `origin_host` | `origin_host` only, not the full URL. |
 | `proxy.cache.evict` | info | `files_evicted`, `bytes_freed` | Inline LRU eviction pass triggered by size cap. |
@@ -501,7 +501,7 @@ No password hashes, no session tokens. Exits 0 on success (including empty user 
 
 Sets `disabled_at` on the named user row (same column as M6's `DisableUser`). Calls `DeleteSessionsByUserID` to force-logout any active sessions. Stdout: `disabled user 'username'`. Exits 0 on success, 2 if user not found, exit 3 if the user is already disabled.
 
-**`tap admin disable-2fa`** is deferred to M7 — it belongs alongside the 2FA implementation, not as a stub.
+**`tap admin disable-totp`** is in M7's spec — it belongs alongside the 2FA implementation. It is not stubbed here.
 
 ---
 
@@ -542,26 +542,54 @@ This section constitutes the M12 security audit. It is a structured checklist in
 
 #### Route authn/authz table
 
-Every route in `internal/api/api.go` must appear in this table. Any gap found during implementation is a bug fix in M12.
+Every route in `internal/api/api.go` must appear in this table, covering all routes from M1 through M12. Any gap found during implementation is a bug fix in M12.
 
 | Route | Method | Session required | CSRF required | Admin only | Notes |
 |---|---|---|---|---|---|
 | `/healthz` | GET | No | No | No | Unauthenticated by design. |
-| `/metrics` | GET | No | No | No | Network boundary is the control (loopback-default). |
+| `/metrics` | GET | No | No | No | Enabled only with `--metrics-enabled`. Network boundary is the control (loopback-default). |
 | `/api/v1/sessions` | POST | No | No | No | Login — public by definition. Rate-limited by `ratelimit.Limiter`. |
-| `/api/v1/sessions/current` | GET | Yes | No | No | Session probe. |
-| `/api/v1/sessions/current` | DELETE | Yes | Yes | No | Logout. |
+| `/api/v1/sessions/current` | GET | Yes | No | No | Session probe. Returns current user + CSRF token. |
+| `/api/v1/sessions/current` | DELETE | Yes | Yes | No | Logout — deletes current session. |
 | `/api/v1/me/password` | PATCH | Yes | Yes | No | Password change. |
-| `/api/v1/status` | GET | Yes | No | Yes | Admin-only. |
-| `/api/v1/subscriptions` | GET | Yes | No | No | List feeds. |
+| `/api/v1/me/totp` | POST | Yes | Yes | No | M7. Begin TOTP enrolment (returns secret_uri). |
+| `/api/v1/me/totp/confirm` | POST | Yes | Yes | No | M7. Confirm TOTP enrolment with 6-digit code; returns recovery codes. |
+| `/api/v1/me/totp` | DELETE | Yes | Yes | No | M7. Disable TOTP (requires current code or recovery code). |
+| `/api/v1/me/totp/recovery-codes` | POST | Yes | Yes | No | M7. Regenerate recovery codes (requires current TOTP code). |
+| `/api/v1/me/passkeys/registration/begin` | POST | Yes | Yes | No | M7. Begin WebAuthn passkey registration ceremony. |
+| `/api/v1/me/passkeys/registration/finish` | POST | Yes | Yes | No | M7. Finish WebAuthn passkey registration; stores credential. |
+| `/api/v1/me/passkeys` | GET | Yes | No | No | M7. List caller's registered passkeys (id, label, created_at only — no public key). |
+| `/api/v1/me/passkeys/{id}` | DELETE | Yes | Yes | No | M7. Remove a passkey. 404 if not found or belongs to another user. |
+| `/api/v1/passkey-sessions/begin` | POST | No | No | No | M7. Begin passkey login ceremony — creates anonymous challenge session. |
+| `/api/v1/passkey-sessions/finish` | POST | No | No | No | M7. Finish passkey login — upgrades anonymous session to a user session. |
+| `/api/v1/sessions` | GET | Yes | No | No | M7. List all active sessions for the current user. |
+| `/api/v1/sessions/{id}` | DELETE | Yes | Yes | No | M7. Revoke a specific session. 403 if it is the current session. |
+| `/api/v1/sessions` | DELETE | Yes | Yes | No | M7. Revoke all sessions except the current one ("log out everywhere"). |
+| `/api/v1/admin/users` | GET | Yes | No | Yes | M7. List all users. |
+| `/api/v1/admin/users` | POST | Yes | Yes | Yes | M7. Create a user. |
+| `/api/v1/admin/users/{id}` | PATCH | Yes | Yes | Yes | M7. Update role or disabled status. |
+| `/api/v1/admin/users/{id}/password-reset` | POST | Yes | Yes | Yes | M7. Issue a one-time temporary password; force-logout that user. |
+| `/api/v1/admin/users/{id}/disable-totp` | POST | Yes | Yes | Yes | M7. Remove another user's TOTP secret + recovery codes. |
+| `/api/v1/admin/users/{id}` | DELETE | Yes | Yes | Yes | M7. Delete a user (cascades subscriptions, entries, sessions). |
+| `/api/v1/status` | GET | Yes | No | Yes | M12. System-status panel data. Admin-only. |
+| `/api/v1/subscriptions` | GET | Yes | No | No | List caller's feeds. |
 | `/api/v1/subscriptions` | POST | Yes | Yes | No | Create feed. |
-| `/api/v1/subscriptions/{id}` | GET | Yes | No | No | Get feed. |
+| `/api/v1/subscriptions/{id}` | GET | Yes | No | No | M9. Get a single subscription. 404 if not found or belongs to another user. |
 | `/api/v1/subscriptions/{id}` | PATCH | Yes | Yes | No | Update feed. |
 | `/api/v1/subscriptions/{id}` | DELETE | Yes | Yes | No | Delete feed. |
-| `/api/v1/entries` | GET | Yes | No | No | List entries. |
-| `/api/v1/entries/{id}` | GET | Yes | No | No | Get entry. |
+| `/api/v1/entries` | GET | Yes | No | No | List caller's entries. Accepts `?category=<id>` (M9). |
+| `/api/v1/entries/{id}` | GET | Yes | No | No | Get entry (full body). |
 | `/api/v1/entries/{id}` | PATCH | Yes | Yes | No | Mark read/saved. |
-| `/api/v1/proxy/{token}` | GET | Yes | No | No | Media proxy — GET, no CSRF. |
+| `/api/v1/categories` | GET | Yes | No | No | M9. List caller's categories with unread counts. |
+| `/api/v1/categories` | POST | Yes | Yes | No | M9. Create a category. |
+| `/api/v1/categories/{id}` | PATCH | Yes | Yes | No | M9. Rename a category. |
+| `/api/v1/categories/{id}` | DELETE | Yes | Yes | No | M9. Delete a category (feeds become uncategorised). |
+| `/api/v1/categories/{id}/mark-read` | POST | Yes | Yes | No | M9. Bulk mark all entries in category as read. |
+| `/api/v1/search` | GET | Yes | No | No | M9. FTS5 search across caller's entries. |
+| `/api/v1/opml` | GET | Yes | No | No | M9. Export OPML 2.0. |
+| `/api/v1/opml` | POST | Yes | Yes | No | M9. Import OPML. Body cap: 10 MiB (per-route override). |
+| `/api/v1/discover` | POST | Yes | Yes | No | M9. Discover feed candidates from a URL. |
+| `/api/v1/proxy/{token}` | GET | Yes | No | No | Media proxy — GET, no CSRF. Signed token gates access. |
 
 #### Outbound HTTP SSRF posture
 
@@ -587,8 +615,25 @@ Every write handler must apply `http.MaxBytesReader(w, r.Body, maxBytes)` before
 | `POST /api/v1/subscriptions` | 1 MiB | **Deferred item — fixed in M12** |
 | `PATCH /api/v1/subscriptions/{id}` | 1 MiB | **Deferred item — fixed in M12** |
 | `PATCH /api/v1/entries/{id}` | 1 MiB | **Deferred item — fixed in M12** |
+| `POST /api/v1/me/totp` | 1 MiB | M7 — verify present |
+| `POST /api/v1/me/totp/confirm` | 1 MiB | M7 — verify present |
+| `DELETE /api/v1/me/totp` | 1 MiB | M7 — verify present |
+| `POST /api/v1/me/totp/recovery-codes` | 1 MiB | M7 — verify present |
+| `POST /api/v1/me/passkeys/registration/begin` | 1 MiB | M7 — verify present |
+| `POST /api/v1/me/passkeys/registration/finish` | 1 MiB | M7 — verify present |
+| `POST /api/v1/passkey-sessions/begin` | 1 MiB | M7 — verify present |
+| `POST /api/v1/passkey-sessions/finish` | 1 MiB | M7 — verify present |
+| `POST /api/v1/admin/users` | 1 MiB | M7 — verify present |
+| `PATCH /api/v1/admin/users/{id}` | 1 MiB | M7 — verify present |
+| `POST /api/v1/admin/users/{id}/password-reset` | 1 MiB | M7 — verify present |
+| `POST /api/v1/admin/users/{id}/disable-totp` | 1 MiB | M7 — verify present |
+| `POST /api/v1/categories` | 1 MiB | M9 — verify present |
+| `PATCH /api/v1/categories/{id}` | 1 MiB | M9 — verify present |
+| `POST /api/v1/categories/{id}/mark-read` | (no body) | M9 — no body cap needed |
+| `POST /api/v1/opml` | **10 MiB** | M9 — per-route override (OPML files can be large) |
+| `POST /api/v1/discover` | 1 MiB | M9 — verify present |
 
-All five handlers return `413 Request Entity Too Large` (via `errors.As(*http.MaxBytesError)`) when the body exceeds the cap. This closes the deferred-items entry from the roadmap.
+All write handlers with a body cap return `413 Request Entity Too Large` (via `errors.As(*http.MaxBytesError)`) when the body exceeds the cap. The M9 OPML import handler uses a 10 MiB cap — the roadmap deferred-items entry explicitly called out that the default 1 MiB cap is too small for typical OPML files. The M12 audit verifies the 10 MiB cap is applied on that route and not the default. The "deferred item — fixed in M12" rows close the roadmap deferred-items entry for the three M6-era handlers.
 
 #### Tooling
 
@@ -647,7 +692,7 @@ All pure-Go, no CGO. All compatible with `CGO_ENABLED=0`.
 
 | Concern | Notes |
 |---|---|
-| `tap admin disable-2fa` | Deferred to M7 — belongs alongside the 2FA implementation. |
+| `tap admin disable-totp` | In M7's spec — landed alongside the 2FA implementation. Not added here. |
 | Per-user metrics labels (`user_id` on any instrument) | Decided against: high cardinality, low operator value. Not revisited without a concrete use case. |
 | Persistent lockout state (survives restart) | In-memory only per concept §3. |
 | Metrics endpoint on a separate port | Same port as main API; network boundary is the control. |
@@ -777,6 +822,6 @@ M12 follows the TDD discipline of M1–M11. Pure scaffolding (flag declarations,
 
 - That per-user metrics labels (`user_id`) are useful — decided against; see Out of scope.
 - That OTLP lockout state survives restart — in-memory by design.
-- That `tap admin disable-2fa` works — M7 owns 2FA, M7 owns that subcommand.
+- That `tap admin disable-totp` works — M7 owns 2FA and that subcommand.
 - That the metrics endpoint requires authentication — network boundary is the control (loopback-default). Operators exposing Tap externally are responsible for their own reverse-proxy auth on `/metrics` if needed.
 - That Tap integrates with any specific observability backend — Tap emits; the backend is the operator's choice.
