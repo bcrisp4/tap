@@ -71,3 +71,52 @@ func TestLoginHappyPath(t *testing.T) {
 	require.NotEmpty(t, sessionCookie.Value)
 	require.True(t, strings.HasPrefix(sessionCookie.Path, "/"))
 }
+
+func TestLoginFailureModes(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	seedUser(t, d, "ben", "correct horse battery staple", "admin")
+
+	disabledID := seedUser(t, d, "alice", "valid-password", "user")
+	require.NoError(t, db.DisableUser(context.Background(), d, disabledID, time.Now().Unix()))
+
+	deps := authDeps{d: d, sessionIdleTTL: time.Hour, sessionAbsoluteTTL: 24 * time.Hour}
+
+	cases := []struct {
+		name    string
+		body    string
+		wantSt  int
+		wantSub string // substring of response body
+	}{
+		{"unknown user", `{"username":"nobody","password":"x"}`, http.StatusUnauthorized, `"code":"invalid_credentials"`},
+		{"wrong password", `{"username":"ben","password":"x"}`, http.StatusUnauthorized, `"code":"invalid_credentials"`},
+		{"disabled user", `{"username":"alice","password":"valid-password"}`, http.StatusUnauthorized, `"code":"invalid_credentials"`},
+		{"empty username", `{"username":"","password":"x"}`, http.StatusUnauthorized, `"code":"invalid_credentials"`},
+		{"empty password", `{"username":"ben","password":""}`, http.StatusUnauthorized, `"code":"invalid_credentials"`},
+		{"malformed json", `{not json`, http.StatusBadRequest, `"code":"bad_request"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/sessions", strings.NewReader(tc.body))
+			rr := httptest.NewRecorder()
+			loginHandler(deps).ServeHTTP(rr, req)
+			require.Equal(t, tc.wantSt, rr.Code, rr.Body.String())
+			require.Contains(t, rr.Body.String(), tc.wantSub)
+		})
+	}
+}
+
+func TestLoginRejectsOversizedBody(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	deps := authDeps{d: d, sessionIdleTTL: time.Hour, sessionAbsoluteTTL: 24 * time.Hour}
+
+	body := bytes.NewReader(bytes.Repeat([]byte("a"), 2<<20)) // 2 MiB > 1 MiB cap
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/sessions", body)
+	rr := httptest.NewRecorder()
+	loginHandler(deps).ServeHTTP(rr, req)
+	require.GreaterOrEqual(t, rr.Code, 400)
+	// The exact code depends on http.MaxBytesReader's interaction with the
+	// JSON decoder — assert it's not a successful login.
+	require.NotEqual(t, http.StatusOK, rr.Code)
+}
