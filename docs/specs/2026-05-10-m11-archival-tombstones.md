@@ -53,7 +53,7 @@ Both passes are logged at `INFO` level on completion (entries deleted, tombstone
 
 ### Schema migration
 
-`internal/db/migrations/0006_tombstones.sql`:
+`internal/db/migrations/0010_tombstones.sql`:
 
 ```sql
 CREATE TABLE tombstones (
@@ -277,7 +277,7 @@ FS pass correctness (real temp directory):
 
 | Concern | Lands in |
 |---|---|
-| Per-user archival horizon preferences | M7 — M7 adds `user_id` to subscriptions/entries. Per-user horizon can be added as a `users.archive_horizon` column in M7; the sweep query extends to `MIN(global, user_horizon)` at that point. |
+| Per-user archival horizon preferences | Future — M7's spec does not include this. Requires a `users.archive_horizon` column (or a separate prefs table) and sweep query changes to `MIN(global, user_horizon)`. Can be sequenced as a small addition to any future milestone once per-user preferences are otherwise being touched. |
 | Tombstone garbage collection / TTL | Won't ship — tombstones are cheap and permanent by design. If operators observe unexpected tombstone growth, a `--tombstone-ttl` flag can be added cheaply. |
 | Archival of entries for deleted subscriptions | Handled by `subscriptions` CASCADE DELETE on `entries` (existing M1 schema invariant); M11 adds the same cascade to `tombstones`. |
 | "Re-archive" or manual sweep trigger via API | Won't ship — the sweep is background-only. Operators can restart the server to trigger a sweep at next tick. |
