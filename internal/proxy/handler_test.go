@@ -177,3 +177,42 @@ func TestNewHandler_PanicsOnNilCache(t *testing.T) {
 		proxy.NewHandler(proxy.NewSigner(testKey), nil, http.DefaultClient, 1<<20)
 	})
 }
+
+// TestHandler_NeverSendsCredentialsToOrigin pins the M3 proxy's anonymous
+// origin-fetch posture: even if the SPA's incoming request carries Cookie
+// or Authorization (which it always will for an authenticated reader), the
+// proxy must not forward those headers to the origin. Mirrors Miniflux's
+// posture and is the M6 spec's stated cross-ecosystem trade-off — the
+// regression test locks it in so a future refactor can't accidentally
+// introduce credential forwarding.
+func TestHandler_NeverSendsCredentialsToOrigin(t *testing.T) {
+	t.Parallel()
+	gotCookie := ""
+	gotAuth := ""
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotCookie = r.Header.Get("Cookie")
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(pngFixture)
+	}))
+	defer origin.Close()
+
+	signer, h := newHandler(t)
+
+	tok := signer.Sign(origin.URL + "/img.png")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/proxy/"+tok, nil)
+	req.SetPathValue("token", tok)
+	// Simulate an authenticated SPA reader request — the SPA always carries
+	// the session cookie + a CSRF token, and a hostile path could synthesise
+	// an Authorization header. Neither must reach the origin.
+	req.Header.Set("Cookie", "tap_session=somecookie; csrf=value")
+	req.Header.Set("Authorization", "Bearer should-not-leak")
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+
+	require.Empty(t, gotCookie, "proxy must not forward Cookie to origin")
+	require.Empty(t, gotAuth, "proxy must not forward Authorization to origin")
+}
