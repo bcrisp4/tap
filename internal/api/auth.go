@@ -1,10 +1,8 @@
 package api
 
 import (
-	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"net"
 	"net/http"
 	"strings"
@@ -119,8 +117,64 @@ func clearSessionCookie(w http.ResponseWriter, secure bool) {
 	})
 }
 
-// _ keeps imports tidy.
-var _ = json.Marshal
-var _ = errors.New
-var _ = context.Background
-var _ = auth.Hash
+// loginHandler returns POST /api/v1/sessions. Public, CSRF not required.
+func loginHandler(dep authDeps) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		var body loginRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "invalid JSON body")
+			return
+		}
+		username := strings.TrimSpace(body.Username)
+		if username == "" || body.Password == "" {
+			writeError(w, http.StatusUnauthorized, ErrCodeInvalidCredentials, "username or password incorrect")
+			return
+		}
+
+		u, err := db.GetUserByUsername(r.Context(), dep.d, username)
+		if err != nil {
+			// Includes sql.ErrNoRows (unknown user). Same response either way
+			// to avoid disclosing username existence.
+			writeError(w, http.StatusUnauthorized, ErrCodeInvalidCredentials, "username or password incorrect")
+			return
+		}
+		if u.DisabledAt.Valid {
+			writeError(w, http.StatusUnauthorized, ErrCodeInvalidCredentials, "username or password incorrect")
+			return
+		}
+		ok, err := auth.Verify(u.PasswordHash, body.Password)
+		if err != nil || !ok {
+			writeError(w, http.StatusUnauthorized, ErrCodeInvalidCredentials, "username or password incorrect")
+			return
+		}
+
+		cookieValue, tokenHash, err := auth.MintSessionToken()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())
+			return
+		}
+		csrfToken, err := auth.MintCSRFToken()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())
+			return
+		}
+		now := time.Now()
+		_, err = db.InsertSession(r.Context(), dep.d, db.NewSession{
+			UserID:            u.ID,
+			TokenHash:         tokenHash,
+			CSRFToken:         csrfToken,
+			CreatedAt:         now.Unix(),
+			LastSeenAt:        now.Unix(),
+			IdleExpiresAt:     now.Add(dep.sessionIdleTTL).Unix(),
+			AbsoluteExpiresAt: now.Add(dep.sessionAbsoluteTTL).Unix(),
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())
+			return
+		}
+
+		setSessionCookie(w, cookieValue, dep.sessionAbsoluteTTL, dep.cookieSecure)
+		writeJSON(w, http.StatusOK, loginResponse{User: toUserDTO(u), CSRFToken: csrfToken})
+	})
+}
