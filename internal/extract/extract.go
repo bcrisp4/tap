@@ -32,6 +32,18 @@ import (
 // per-host limiter, and timeout apply uniformly with feed and proxy
 // fetches.
 func Extract(ctx context.Context, client *http.Client, articleURL, selector string, bodyCap int64) (string, error) {
+	// Compile the selector first so a malformed one fails before any HTTP
+	// round-trip. The PATCH endpoint also validates at write time, but Extract
+	// is a public function so the fast-fail belongs here too.
+	var sel cascadia.Selector
+	if selector != "" {
+		var serr error
+		sel, serr = cascadia.Compile(selector)
+		if serr != nil {
+			return "", fmt.Errorf("compile selector: %w", serr)
+		}
+	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, articleURL, nil)
 	if err != nil {
 		return "", fmt.Errorf("new request: %w", err)
@@ -58,16 +70,7 @@ func Extract(ctx context.Context, client *http.Client, articleURL, selector stri
 		return "", err
 	}
 
-	pageURL, perr := url.Parse(articleURL)
-	if perr != nil {
-		return "", fmt.Errorf("parse article URL: %w", perr)
-	}
-
 	if selector != "" {
-		sel, serr := cascadia.Compile(selector)
-		if serr != nil {
-			return "", fmt.Errorf("compile selector: %w", serr)
-		}
 		doc, perr := html.Parse(bytes.NewReader(body))
 		if perr != nil {
 			return "", fmt.Errorf("parse html: %w", perr)
@@ -87,6 +90,10 @@ func Extract(ctx context.Context, client *http.Client, articleURL, selector stri
 		return out, nil
 	}
 
+	pageURL, perr := url.Parse(articleURL)
+	if perr != nil {
+		return "", fmt.Errorf("parse article URL: %w", perr)
+	}
 	article, err := readability.FromReader(bytes.NewReader(body), pageURL)
 	if err != nil {
 		return "", fmt.Errorf("readability: %w", err)
@@ -105,19 +112,17 @@ func Extract(ctx context.Context, client *http.Client, articleURL, selector stri
 	return out, nil
 }
 
-// readCapped reads up to cap+1 bytes; returns an error if the body
-// exceeds cap. We read one extra byte so we can distinguish "exactly
-// at the cap" from "the body was truncated."
-func readCapped(r io.Reader, cap int64) ([]byte, error) {
-	if cap <= 0 {
-		cap = 5 << 20 // 5 MiB sane default if a caller passes 0
-	}
-	body, err := io.ReadAll(io.LimitReader(r, cap+1))
+// readCapped reads up to limit+1 bytes; returns an error if the body
+// exceeds limit. The extra byte distinguishes "exactly at the limit"
+// from "truncated." Callers must pass limit > 0; the public Extract
+// path honours that via NewWorker's default.
+func readCapped(r io.Reader, limit int64) ([]byte, error) {
+	body, err := io.ReadAll(io.LimitReader(r, limit+1))
 	if err != nil {
 		return nil, fmt.Errorf("read body: %w", err)
 	}
-	if int64(len(body)) > cap {
-		return nil, fmt.Errorf("body exceeds %d-byte cap", cap)
+	if int64(len(body)) > limit {
+		return nil, fmt.Errorf("body exceeds %d-byte cap", limit)
 	}
 	return body, nil
 }

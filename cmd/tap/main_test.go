@@ -437,7 +437,7 @@ three real paragraphs to score the article subtree as the winner.</p>
 	mux := api.NewMux(d, api.MuxOpts{})
 
 	// Subscribe with extract=true.
-	subID := postSubE2E(t, mux, fmt.Sprintf(`{"feed_url":"%s/feed","extract":true}`, origin.URL))
+	subID := postSubscription(t, mux, fmt.Sprintf(`{"feed_url":"%s/feed","extract":true}`, origin.URL))
 
 	// Drive the scheduler with the no-SSRF client.
 	sched := poll.NewScheduler(context.Background(), d, noSSRFClient, poll.SchedulerOpts{
@@ -493,8 +493,9 @@ func buildTestClient(t *testing.T) (*http.Client, error) {
 	}), nil
 }
 
-// postSubE2E creates a subscription via POST and returns its id.
-func postSubE2E(t *testing.T, mux http.Handler, body string) int64 {
+// postSubscription creates a subscription via POST and returns its id.
+// Local to cmd/tap (mirrors the helper of the same name in internal/api tests).
+func postSubscription(t *testing.T, mux http.Handler, body string) int64 {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/subscriptions", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -540,7 +541,7 @@ func TestEndToEnd_ExtractFailure_FallsBackToSummary(t *testing.T) {
 	require.NoError(t, err)
 
 	mux := api.NewMux(d, api.MuxOpts{})
-	postSubE2E(t, mux, fmt.Sprintf(`{"feed_url":"%s/feed","extract":true}`, origin.URL))
+	postSubscription(t, mux, fmt.Sprintf(`{"feed_url":"%s/feed","extract":true}`, origin.URL))
 
 	sched := poll.NewScheduler(context.Background(), d, noSSRFClient, poll.SchedulerOpts{
 		Workers:   1,

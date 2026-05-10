@@ -135,7 +135,10 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 			return
 		}
 
-		// Read existing row for merge-patch semantics.
+		// Pre-read the row so omitted PATCH fields keep their current values:
+		// UpdateSubscriptionExtraction writes both columns unconditionally,
+		// so without this step a PATCH of {"extract":true} alone would zero
+		// out an existing extract_selector.
 		s, err := db.GetSubscription(r.Context(), d, id)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
@@ -172,12 +175,11 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 			return
 		}
 
-		updated, err := db.GetSubscription(r.Context(), d, id)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())
-			return
-		}
-		writeJSON(w, http.StatusOK, toDTO(updated))
+		// No second SELECT — we just wrote the only two columns this endpoint
+		// can change, and no other column auto-mutates on update.
+		s.Extract = extract
+		s.ExtractSelector = selector
+		writeJSON(w, http.StatusOK, toDTO(s))
 	})
 
 	m.HandleFunc("DELETE /api/v1/subscriptions/{id}", func(w http.ResponseWriter, r *http.Request) {
