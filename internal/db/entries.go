@@ -11,12 +11,13 @@ import (
 )
 
 type NewEntry struct {
-	Hash        string
-	Title       string
-	Author      string
-	URL         string
-	Content     string
-	PublishedAt int64
+	Hash          string
+	Title         string
+	Author        string
+	URL           string
+	Content       string
+	PublishedAt   int64
+	ExtractFailed bool
 }
 
 // PollResult is the success result of a feed fetch+parse worth committing.
@@ -192,10 +193,10 @@ func UpdateAfterPoll(ctx context.Context, d *sql.DB, subID int64, r PollResult) 
 
 	for _, e := range r.NewEntries {
 		res, ierr := tx.ExecContext(ctx, `
-			INSERT INTO entries (subscription_id, hash, title, author, url, content, published_at, fetched_at)
-			VALUES (?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?)
+			INSERT INTO entries (subscription_id, hash, title, author, url, content, published_at, fetched_at, extract_failed)
+			VALUES (?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?)
 			ON CONFLICT (subscription_id, hash) DO NOTHING
-		`, subID, e.Hash, e.Title, e.Author, e.URL, e.Content, e.PublishedAt, r.NowUnix)
+		`, subID, e.Hash, e.Title, e.Author, e.URL, e.Content, e.PublishedAt, r.NowUnix, boolToInt(e.ExtractFailed))
 		if ierr != nil {
 			err = fmt.Errorf("insert entry: %w", ierr)
 			return 0, err
