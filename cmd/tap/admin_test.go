@@ -184,3 +184,87 @@ func TestAdminPasswdMismatch(t *testing.T) {
 	require.Equal(t, adminExitPasswordMismatch, exit)
 	require.Contains(t, stderr.String(), "passwords do not match")
 }
+
+func TestAdminList_Empty(t *testing.T) {
+	t.Parallel()
+	var stdout, stderr bytes.Buffer
+	code := runAdmin([]string{"list", "--data", t.TempDir()},
+		strings.NewReader(""), &stdout, &stderr, auth.DefaultParams)
+	require.Equal(t, adminExitOK, code)
+	require.Contains(t, stdout.String(), "ID")
+}
+
+func TestAdminList_WithUsers(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	var out, errBuf bytes.Buffer
+	runAdmin([]string{"create", "--data", dir},
+		strings.NewReader("alice\npassword123\npassword123\n"),
+		&out, &errBuf, testHashParams)
+
+	var stdout bytes.Buffer
+	code := runAdmin([]string{"list", "--data", dir},
+		strings.NewReader(""), &stdout, &bytes.Buffer{}, auth.DefaultParams)
+	require.Equal(t, adminExitOK, code)
+	require.Contains(t, stdout.String(), "alice")
+}
+
+func TestAdminDisable_Success(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	var out bytes.Buffer
+	runAdmin([]string{"create", "--data", dir},
+		strings.NewReader("bob\npassword123\npassword123\n"),
+		&out, &bytes.Buffer{}, testHashParams)
+
+	var stdout, stderr bytes.Buffer
+	code := runAdmin([]string{"disable", "bob", "--data", dir},
+		strings.NewReader(""), &stdout, &stderr, auth.DefaultParams)
+	require.Equal(t, adminExitOK, code)
+	require.Contains(t, stdout.String(), "disabled user 'bob'")
+}
+
+func TestAdminDisable_NotFound(t *testing.T) {
+	t.Parallel()
+	var stdout, stderr bytes.Buffer
+	code := runAdmin([]string{"disable", "nobody", "--data", t.TempDir()},
+		strings.NewReader(""), &stdout, &stderr, auth.DefaultParams)
+	require.Equal(t, adminExitUserExistsOrGone, code)
+	require.Contains(t, stderr.String(), "not found")
+}
+
+func TestAdminDisable_AlreadyDisabled(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	var out bytes.Buffer
+	runAdmin([]string{"create", "--data", dir},
+		strings.NewReader("carl\npassword123\npassword123\n"),
+		&out, &bytes.Buffer{}, testHashParams)
+	// Disable once.
+	runAdmin([]string{"disable", "carl", "--data", dir},
+		strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{}, auth.DefaultParams)
+	// Disable again.
+	code := runAdmin([]string{"disable", "carl", "--data", dir},
+		strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{}, auth.DefaultParams)
+	require.Equal(t, adminExitPasswordMismatch, code) // exit 3 = already disabled
+}
+
+func TestHealthcheck_NoServer(t *testing.T) {
+	t.Parallel()
+	// Point at a port that nothing is listening on.
+	code := runHealthcheck([]string{"--addr", "127.0.0.1:19999", "--timeout", "1s"})
+	require.Equal(t, 1, code)
+}
+
+func TestAdminListUsers_DBFunctions(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d, err := db.Open(ctx, ":memory:")
+	require.NoError(t, err)
+	defer d.Close()
+	require.NoError(t, db.Migrate(ctx, d))
+
+	users, err := db.ListUsers(ctx, d)
+	require.NoError(t, err)
+	require.Empty(t, users)
+}
