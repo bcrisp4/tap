@@ -1,46 +1,67 @@
 # M11 — Archival + Tombstones Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add a daily archival sweep that deletes read-and-unsaved entries older than a configurable horizon (recording tombstones), prunes old media cache files, and prevents re-published archived entries from reappearing as unread.
+**Goal:** Add a daily archival sweep that deletes read-and-unsaved entries older than a configurable horizon (recording tombstones in the same transaction), prunes old proxy cache files, and prevents re-published archived entries from reappearing as unread. Spec: `docs/specs/2026-05-10-m11-archival-tombstones.md`.
 
-**Architecture:** A new `internal/archival` package owns an `Archiver` struct with `Start()`/`Stop()` lifecycle matching `Scheduler`. The DB pass runs in 1000-row chunk transactions; the FS pass walks the proxy cache dir and unlinks files whose `.meta` sidecar `fetched_at` is too old. The poll worker gains a tombstone consult (read-only, before the commit transaction) so re-published entries are silently dropped. FTS stays in sync automatically via M9's per-row DELETE triggers — no explicit sync needed.
+**Architecture:** A new `internal/archival` package owns an `Archiver` struct with `Start()`/`Stop()` lifecycle mirroring `Scheduler` (the third concurrent concern alongside HTTP and polling). The DB pass loops in 1000-row chunk transactions — `InsertTombstones` + `DELETE FROM entries` per chunk, idempotent via `ON CONFLICT DO NOTHING`. The FS pass walks the proxy cache directory and unlinks `.bin` + `.meta` pairs whose `fetched_at` sidecar field is older than the age cap; `ENOENT` is graceful on both sides. The poll worker gains a pre-commit tombstone consult (read-only, outside the commit transaction) so re-published entries are silently dropped. FTS stays in sync automatically via M9's per-row DELETE triggers — no explicit sync needed in M11.
 
-**Tech Stack:** Go 1.25, `database/sql`, `modernc.org/sqlite`, `log/slog`, `sync.WaitGroup`, `context.WithCancel`, standard `os`/`filepath` for FS operations, `github.com/stretchr/testify/require` for tests.
+**Tech Stack:** Go 1.25, `database/sql`, `modernc.org/sqlite`, `log/slog`, `sync.WaitGroup`, `context.WithCancel`, standard `os`/`filepath`/`encoding/json`, `github.com/stretchr/testify/require`.
 
 **Cross-milestone dependencies:**
-- **Requires M9 migrations to be applied** before M11's FTS regression test is meaningful (FTS triggers must exist). M11 migration is `0010_tombstones.sql` — runs after M9's `0008_*` and `0009_*`.
-- **M7 user_id:** Tombstone table uses `subscription_id` FK; the FK chain `tombstone → subscription → user` provides per-user scoping transitively once M7 lands. No schema change needed in M11.
-- **M3 cache layout:** FS pass reads `.meta` sidecars written by M3's `internal/proxy` package (field `fetched_at`). The `sidecar` struct must match M3's JSON shape exactly.
+- **M9 migrations must be applied before the FTS regression test is meaningful.** M11 migration `0010_tombstones.sql` runs after M9's `0008_*` and `0009_*`. The FTS test is guarded: it skips FTS assertions if `entries_fts` does not exist.
+- **M7 user_id:** No schema change needed in M11. Tombstones use `subscription_id` FK; the chain `tombstone → subscription → user` provides per-user scoping transitively once M7 lands.
+- **M3 cache layout:** The FS pass reads `.meta` sidecars written by M3's `internal/proxy` package. The `cacheFileMeta` struct in `sweep.go` must match M3's JSON shape exactly (`content_type`, `etag`, `byte_count`, `fetched_at`).
 
 ---
 
-## File Map
+## Skills and tools to apply
 
-| Action | Path | Responsibility |
+Always-on for every code-touching task:
+
+- **`superpowers:test-driven-development`** — red/green/refactor on every behaviour-bearing change. Mandated by `docs/roadmap.md` §"Working cadence". Pure scaffolding (the migration SQL, README edit, flag declarations) is exempt; everything with branches, error handling, or state is in scope.
+- **`superpowers:verification-before-completion`** — before marking a task done, actually run the test command listed in each task's verification step and confirm the output matches expected.
+
+Reach for as needed:
+
+- **`golang-database`** — chunk-transaction pattern (`BeginTx` / `InsertTombstones` / `DELETE WHERE id IN (...)` / `Commit`); `ON CONFLICT DO NOTHING` idempotency; `rows.Close()` discipline; `errors.Is(err, sql.ErrNoRows)` in `IsTombstoned`. SQLite note: `journal_mode(WAL)` (set in `db.Open`) means readers are not blocked during the sweep's write transactions.
+- **`golang-concurrency`** — `Archiver.Start()`/`Stop()` uses `context.WithCancel` + `sync.WaitGroup` matching `Scheduler`'s pattern. `stopOnce sync.Once` prevents double-stop races. The ticker goroutine selects on `ctx.Done()` so `Stop()` unblocks it cleanly. `sweepHook func()` test seam for blocking mid-sweep in tests.
+- **`golang-context`** — pass `ctx` through `dbPass` and all `db.*` calls. The `Archiver` derives its own `context.WithCancel(context.Background())` (not the server's context) so sweep lifecycle is independent of HTTP lifecycle; `Stop()` cancels it explicitly.
+- **`golang-error-handling`** — FS pass errors are logged at `WARN` but do not abort the sweep (best-effort). DB pass errors propagate. Error strings lowercase, no trailing punctuation, `fmt.Errorf("...: %w", err)` wrapping.
+- **`golang-testing`** + **`golang-stretchr-testify`** — match existing repo style (`require.NoError`, `require.Equal`, `require.Len`). `openTestDB(t)` helper local to `internal/archival` opens `:memory:` + `db.Migrate`. FS tests use `t.TempDir()`. Worker tombstone tests reuse the existing `newDB(t)` in `internal/poll/worker_test.go`.
+- **`golang-naming`** — `dbPass`, `fsPass`, `chunkSize`, `cacheFileMeta` are unexported. `Archiver`, `ArchiverOpts`, `NewArchiver`, `ExportedDBPass`, `ExportedFSPass` are exported. `sweepHook` is an unexported field on `ArchiverOpts` for tests only.
+- **`golang-modernize`** — Go 1.25: use `for i := range N` (range-over-int) in test loops; `errors.Is(err, os.ErrNotExist)` preferred over `os.IsNotExist(err)`.
+
+MCP tools:
+
+- **`context7` (`mcp__plugin_context7_context7__query-docs`)** — reach for this if `filepath.WalkDir` callback semantics or `os.Remove`/`os.ErrNotExist` behaviour needs verification. Also useful for confirming `slog.Info("key", "attr", val)` attribute API.
+
+---
+
+## File structure
+
+| Path | Action | Responsibility |
 |---|---|---|
-| Create | `internal/db/migrations/0010_tombstones.sql` | Schema for `tombstones` table |
-| Create | `internal/db/tombstones.go` | `InsertTombstones`, `IsTombstoned` |
-| Create | `internal/db/tombstones_test.go` | DB-layer tombstone tests |
-| Modify | `internal/db/entries.go` | Add `ListArchivable` + `ArchivableEntry` |
-| Modify | `internal/db/entries_test.go` | Tests for `ListArchivable` |
-| Modify | `internal/poll/worker.go` | Tombstone consult before insert |
-| Modify | `internal/poll/worker_test.go` | Tombstone consult tests |
-| Create | `internal/archival/archiver.go` | `Archiver` struct, lifecycle, ticker |
-| Create | `internal/archival/archiver_test.go` | Lifecycle + clock-injection tests |
-| Create | `internal/archival/sweep.go` | `dbPass`, `fsPass` implementations |
-| Create | `internal/archival/sweep_test.go` | Sweep correctness + FTS regression |
-| Modify | `cmd/tap/main.go` | Wire `Archiver` into `runServer` |
+| `internal/db/migrations/0010_tombstones.sql` | **create** | `tombstones` table with `(subscription_id, entry_hash)` PK + `ON DELETE CASCADE` |
+| `internal/db/tombstones.go` | **create** | `NewTombstone`, `InsertTombstones(ctx, tx, rows)`, `IsTombstoned(ctx, d, subID, hash)` |
+| `internal/db/tombstones_test.go` | **create** | Insert+query roundtrip; `ON CONFLICT DO NOTHING`; cascade delete with subscription |
+| `internal/db/entries.go` | modify | Add `ArchivableEntry` type + `ListArchivable(ctx, d, horizonUnix, limit)` |
+| `internal/db/entries_test.go` | modify | `TestListArchivable` — eligible/ineligible criteria; limit enforcement |
+| `internal/poll/worker.go` | modify | Tombstone consult loop before building `newEntries`; `db.IsTombstoned` per candidate |
+| `internal/poll/worker_test.go` | modify | Tombstone hit → not inserted; miss → inserted; mixed (3 entries, 1 tombstoned) |
+| `internal/archival/sweep.go` | **create** | `dbPass`, `fsPass`, `cacheFileMeta`, `buildDeleteByIDs`, `ExportedDBPass`, `ExportedFSPass` |
+| `internal/archival/sweep_test.go` | **create** | DB pass + FS pass correctness; FTS regression test |
+| `internal/archival/archiver.go` | **create** | `ArchiverOpts`, `Archiver`, `NewArchiver`, `Start`, `Stop`, `loop`, `sweep` |
+| `internal/archival/archiver_test.go` | **create** | Start+Stop clean exit; Stop waits for in-progress sweep; sweep fires |
+| `cmd/tap/main.go` | modify | Three new flags; wire `archival.NewArchiver`; `archiver.Stop()` before `sched.Stop()` |
+| `cmd/tap/main_test.go` | modify | End-to-end: poll → mark read → sweep → gone → re-poll → still gone; FS eviction |
 
 ---
 
-## Task 1: Schema migration — tombstones table
-
-**Skills to invoke:** `superpowers:test-driven-development`
+## Task 1: Schema migration — `0010_tombstones.sql`
 
 **Files:**
 - Create: `internal/db/migrations/0010_tombstones.sql`
-- Modify: `internal/db/migrate_test.go` (extend migration smoke test)
 
 - [ ] **Step 1: Write the migration SQL**
 
@@ -58,11 +79,11 @@ CREATE INDEX idx_tombstones_subscription ON tombstones(subscription_id);
 
 - [ ] **Step 2: Verify migration applies cleanly**
 
-Run:
 ```bash
 go test ./internal/db/... -run TestMigrate -race -v
 ```
-Expected: PASS. The existing `TestMigrate` test in `internal/db/migrate_test.go` calls `db.Open(":memory:")` + `db.Migrate()` and verifies all migrations apply without error. The new migration is picked up automatically (lexical ordering). If `TestMigrate` doesn't exist, check `migrate_test.go` — it uses `newTestDB(t)` which calls `Migrate`.
+
+Expected: PASS. The existing `TestMigrate` test calls `db.Open(":memory:")` + `db.Migrate()` — the new migration is picked up in lexical order automatically.
 
 - [ ] **Step 3: Commit**
 
@@ -74,8 +95,6 @@ git commit -m "M11: add 0010_tombstones migration"
 ---
 
 ## Task 2: DB layer — `tombstones.go`
-
-**Skills to invoke:** `superpowers:test-driven-development`, `golang-database`
 
 **Files:**
 - Create: `internal/db/tombstones.go`
@@ -101,7 +120,6 @@ func TestTombstones_InsertAndQuery(t *testing.T) {
 	d := newTestDB(t)
 	ctx := context.Background()
 
-	// Insert a subscription to satisfy the FK
 	subID, err := InsertSubscription(ctx, d, NewSubscription{
 		Title: "feed", FeedURL: "https://example.com/feed",
 		NextPoll: 0, Created: time.Now().Unix(),
@@ -110,20 +128,16 @@ func TestTombstones_InsertAndQuery(t *testing.T) {
 
 	tx, err := d.BeginTx(ctx, nil)
 	require.NoError(t, err)
-
-	err = InsertTombstones(ctx, tx, []NewTombstone{
+	require.NoError(t, InsertTombstones(ctx, tx, []NewTombstone{
 		{SubscriptionID: subID, EntryHash: "abc123", DeletedAt: 1000},
 		{SubscriptionID: subID, EntryHash: "def456", DeletedAt: 1001},
-	})
-	require.NoError(t, err)
+	}))
 	require.NoError(t, tx.Commit())
 
-	// IsTombstoned: hit
 	found, err := IsTombstoned(ctx, d, subID, "abc123")
 	require.NoError(t, err)
 	require.True(t, found)
 
-	// IsTombstoned: miss
 	found, err = IsTombstoned(ctx, d, subID, "nothere")
 	require.NoError(t, err)
 	require.False(t, found)
@@ -135,7 +149,7 @@ func TestTombstones_OnConflictDoNothing(t *testing.T) {
 	ctx := context.Background()
 
 	subID, err := InsertSubscription(ctx, d, NewSubscription{
-		Title: "feed", FeedURL: "https://example.com/feed2",
+		Title: "feed", FeedURL: "https://conflict.example/feed",
 		NextPoll: 0, Created: time.Now().Unix(),
 	})
 	require.NoError(t, err)
@@ -148,16 +162,14 @@ func TestTombstones_OnConflictDoNothing(t *testing.T) {
 		}))
 		require.NoError(t, tx.Commit())
 	}
-
 	insert(100)
-	insert(200) // second insert — must not error
+	insert(200) // second insert on same key — must not error
 
-	// deleted_at from first insert is preserved
 	var got int64
 	require.NoError(t, d.QueryRowContext(ctx,
 		"SELECT deleted_at FROM tombstones WHERE subscription_id=? AND entry_hash=?",
 		subID, "same").Scan(&got))
-	require.Equal(t, int64(100), got)
+	require.Equal(t, int64(100), got, "first deleted_at must be preserved")
 }
 
 func TestTombstones_CascadeDeleteWithSubscription(t *testing.T) {
@@ -166,7 +178,7 @@ func TestTombstones_CascadeDeleteWithSubscription(t *testing.T) {
 	ctx := context.Background()
 
 	subID, err := InsertSubscription(ctx, d, NewSubscription{
-		Title: "feed", FeedURL: "https://example.com/feed3",
+		Title: "feed", FeedURL: "https://cascade.example/feed",
 		NextPoll: 0, Created: time.Now().Unix(),
 	})
 	require.NoError(t, err)
@@ -178,13 +190,12 @@ func TestTombstones_CascadeDeleteWithSubscription(t *testing.T) {
 	}))
 	require.NoError(t, tx.Commit())
 
-	// Delete the subscription — tombstones must cascade
 	_, err = d.ExecContext(ctx, "DELETE FROM subscriptions WHERE id = ?", subID)
 	require.NoError(t, err)
 
 	found, err := IsTombstoned(ctx, d, subID, "xyz")
 	require.NoError(t, err)
-	require.False(t, found)
+	require.False(t, found, "tombstones must cascade-delete with subscription")
 }
 ```
 
@@ -193,6 +204,7 @@ func TestTombstones_CascadeDeleteWithSubscription(t *testing.T) {
 ```bash
 go test ./internal/db/... -run TestTombstones -race -v
 ```
+
 Expected: FAIL — `InsertTombstones`, `IsTombstoned`, `NewTombstone` undefined.
 
 - [ ] **Step 3: Implement `internal/db/tombstones.go`**
@@ -222,7 +234,8 @@ func InsertTombstones(ctx context.Context, tx *sql.Tx, rows []NewTombstone) erro
 			VALUES (?, ?, ?)
 			ON CONFLICT (subscription_id, entry_hash) DO NOTHING
 		`, r.SubscriptionID, r.EntryHash, r.DeletedAt); err != nil {
-			return fmt.Errorf("insert tombstone (sub=%d hash=%s): %w", r.SubscriptionID, r.EntryHash, err)
+			return fmt.Errorf("insert tombstone (sub=%d hash=%s): %w",
+				r.SubscriptionID, r.EntryHash, err)
 		}
 	}
 	return nil
@@ -240,7 +253,8 @@ func IsTombstoned(ctx context.Context, d *sql.DB, subscriptionID int64, entryHas
 		return false, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("check tombstone (sub=%d hash=%s): %w", subscriptionID, entryHash, err)
+		return false, fmt.Errorf("check tombstone (sub=%d hash=%s): %w",
+			subscriptionID, entryHash, err)
 	}
 	return true, nil
 }
@@ -251,9 +265,18 @@ func IsTombstoned(ctx context.Context, d *sql.DB, subscriptionID int64, entryHas
 ```bash
 go test ./internal/db/... -run TestTombstones -race -v
 ```
-Expected: PASS — all three tests green.
 
-- [ ] **Step 5: Commit**
+Expected: PASS.
+
+- [ ] **Step 5: Run full `internal/db` suite**
+
+```bash
+go test ./internal/db/... -race
+```
+
+Expected: PASS.
+
+- [ ] **Step 6: Commit**
 
 ```bash
 git add internal/db/tombstones.go internal/db/tombstones_test.go
@@ -264,51 +287,40 @@ git commit -m "M11: add db.InsertTombstones and db.IsTombstoned"
 
 ## Task 3: DB layer — `ListArchivable`
 
-**Skills to invoke:** `superpowers:test-driven-development`, `golang-database`
-
 **Files:**
-- Modify: `internal/db/entries.go` (add `ArchivableEntry` type + `ListArchivable` func)
-- Modify: `internal/db/entries_test.go` (add tests)
+- Modify: `internal/db/entries.go`
+- Modify: `internal/db/entries_test.go`
 
 - [ ] **Step 1: Write failing tests**
 
 Add to `internal/db/entries_test.go`:
 
 ```go
-func TestListArchivable(t *testing.T) {
+func TestListArchivable_EligibleCriteria(t *testing.T) {
 	t.Parallel()
 	d := newTestDB(t)
 	ctx := context.Background()
 
-	// Insert a subscription
 	subID, err := InsertSubscription(ctx, d, NewSubscription{
-		Title: "feed", FeedURL: "https://a.example/feed",
-		NextPoll: 0, Created: 0,
+		Title: "feed", FeedURL: "https://archivable.example/feed", NextPoll: 0, Created: 0,
 	})
 	require.NoError(t, err)
 
-	now := int64(10000)
-	horizon := int64(1000) // entries older than unix ts 1000 are eligible
-
-	// Helper: insert an entry with given published_at, read, saved
-	insert := func(hash string, publishedAt int64, read, saved bool) {
+	insertE := func(hash string, publishedAt int64, read, saved bool) {
 		t.Helper()
 		_, err := d.ExecContext(ctx, `
 			INSERT INTO entries (subscription_id, hash, title, author, url, content,
 			                     published_at, fetched_at, read, saved, extract_failed)
-			VALUES (?, ?, 'T', NULL, 'https://x', 'c', ?, ?, ?, ?, 0)
-		`, subID, hash, publishedAt, now, boolToInt(read), boolToInt(saved))
+			VALUES (?, ?, 'T', NULL, 'https://x', 'c', ?, 0, ?, ?, 0)
+		`, subID, hash, publishedAt, boolToInt(read), boolToInt(saved))
 		require.NoError(t, err)
 	}
 
-	// Eligible: read=1, saved=0, old
-	insert("old-read-unsaved", 500, true, false)
-	// Not eligible: saved
-	insert("old-read-saved", 500, true, true)
-	// Not eligible: unread
-	insert("old-unread", 500, false, false)
-	// Not eligible: too recent
-	insert("new-read-unsaved", 2000, true, false)
+	horizon := int64(1000)
+	insertE("old-read-unsaved", 500, true, false)  // eligible
+	insertE("old-read-saved", 500, true, true)     // saved — retain
+	insertE("old-unread", 500, false, false)       // unread — retain
+	insertE("new-read-unsaved", 2000, true, false) // too new — retain
 
 	rows, err := ListArchivable(ctx, d, horizon, 100)
 	require.NoError(t, err)
@@ -323,7 +335,7 @@ func TestListArchivable_RespectsLimit(t *testing.T) {
 	ctx := context.Background()
 
 	subID, err := InsertSubscription(ctx, d, NewSubscription{
-		Title: "f", FeedURL: "https://b.example/feed", NextPoll: 0, Created: 0,
+		Title: "f", FeedURL: "https://limit.example/feed", NextPoll: 0, Created: 0,
 	})
 	require.NoError(t, err)
 
@@ -331,8 +343,8 @@ func TestListArchivable_RespectsLimit(t *testing.T) {
 		_, err := d.ExecContext(ctx, `
 			INSERT INTO entries (subscription_id, hash, title, author, url, content,
 			                     published_at, fetched_at, read, saved, extract_failed)
-			VALUES (?, ?, 'T', NULL, 'https://x', 'c', 100, 200, 1, 0, 0)
-		`, subID, fmt.Sprintf("hash%d", i))
+			VALUES (?, ?, 'T', NULL, 'https://x', 'c', 100, 0, 1, 0, 0)
+		`, subID, fmt.Sprintf("h%d", i))
 		require.NoError(t, err)
 	}
 
@@ -347,11 +359,12 @@ func TestListArchivable_RespectsLimit(t *testing.T) {
 ```bash
 go test ./internal/db/... -run TestListArchivable -race -v
 ```
+
 Expected: FAIL — `ListArchivable`, `ArchivableEntry` undefined.
 
-- [ ] **Step 3: Implement in `internal/db/entries.go`**
+- [ ] **Step 3: Add to `internal/db/entries.go`**
 
-Add after the existing functions:
+Append after the existing functions:
 
 ```go
 // ArchivableEntry is the minimal row shape returned by ListArchivable.
@@ -362,8 +375,7 @@ type ArchivableEntry struct {
 }
 
 // ListArchivable returns up to limit entries eligible for archival:
-// read=1, saved=0, published_at < horizonUnix. Results are ordered by
-// published_at ASC so the oldest entries are evicted first.
+// read=1, saved=0, published_at < horizonUnix. Ordered oldest-first.
 func ListArchivable(ctx context.Context, d *sql.DB, horizonUnix int64, limit int) ([]ArchivableEntry, error) {
 	rows, err := d.QueryContext(ctx, `
 		SELECT id, subscription_id, hash
@@ -394,13 +406,15 @@ func ListArchivable(ctx context.Context, d *sql.DB, horizonUnix int64, limit int
 ```bash
 go test ./internal/db/... -run TestListArchivable -race -v
 ```
+
 Expected: PASS.
 
-- [ ] **Step 5: Run full db package tests to check for regressions**
+- [ ] **Step 5: Run full `internal/db` suite**
 
 ```bash
 go test ./internal/db/... -race
 ```
+
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
@@ -413,8 +427,6 @@ git commit -m "M11: add db.ListArchivable"
 ---
 
 ## Task 4: Poll worker — tombstone consult before insert
-
-**Skills to invoke:** `superpowers:test-driven-development`, `golang-database`
 
 **Files:**
 - Modify: `internal/poll/worker.go`
@@ -430,49 +442,39 @@ func TestWorker_TombstonedEntryNotInserted(t *testing.T) {
 	d := newDB(t)
 	ctx := context.Background()
 
-	// Set up a fixture feed origin
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/atom+xml")
-		fmt.Fprint(w, sampleAtom) // sampleAtom has one entry with id urn:sample:1
+		fmt.Fprint(w, sampleAtom) // one entry, id urn:sample:1
 	}))
 	t.Cleanup(origin.Close)
 
-	// Insert the subscription
 	subID, err := db.InsertSubscription(ctx, d, db.NewSubscription{
 		Title: "s", FeedURL: origin.URL + "/feed", NextPoll: 0, Created: 0,
 	})
 	require.NoError(t, err)
-
 	sub := db.DueSubscription{ID: subID, FeedURL: origin.URL + "/feed"}
 
-	// Compute the hash that will be assigned to the one entry in sampleAtom.
-	// feed.EntryHash uses the subscription ID and item — we need to do a real
-	// poll first to discover it, then tombstone it and verify re-poll skips it.
-
-	// First poll — entry should land
-	w := poll.NewWorker(d, http.DefaultClient, poll.WorkerOpts{
+	w := NewWorker(d, http.DefaultClient, WorkerOpts{
 		Processor: processor.New(sanitise.DefaultPolicy(), nil),
 	})
-	w.Run(ctx, sub)
 
+	// First poll — entry lands
+	w.Run(ctx, sub)
 	entries, _, _, err := db.ListEntries(ctx, d, db.ListEntriesParams{Limit: 10})
 	require.NoError(t, err)
-	require.Len(t, entries, 1, "first poll must insert the entry")
-	entryHash := entries[0].Hash
+	require.Len(t, entries, 1)
 
-	// Manually tombstone the entry
+	// Tombstone then delete the entry
 	tx, err := d.BeginTx(ctx, nil)
 	require.NoError(t, err)
 	require.NoError(t, db.InsertTombstones(ctx, tx, []db.NewTombstone{
-		{SubscriptionID: subID, EntryHash: entryHash, DeletedAt: 9999},
+		{SubscriptionID: subID, EntryHash: entries[0].Hash, DeletedAt: 9999},
 	}))
 	require.NoError(t, tx.Commit())
-
-	// Delete it from entries so the next poll would re-insert it (without tombstone check)
-	_, err = d.ExecContext(ctx, "DELETE FROM entries WHERE hash = ? AND subscription_id = ?", entryHash, subID)
+	_, err = d.ExecContext(ctx, "DELETE FROM entries WHERE subscription_id = ?", subID)
 	require.NoError(t, err)
 
-	// Second poll — entry must NOT reappear
+	// Second poll — must not reinsert
 	w.Run(ctx, sub)
 	entries, _, _, err = db.ListEntries(ctx, d, db.ListEntriesParams{Limit: 10})
 	require.NoError(t, err)
@@ -495,11 +497,10 @@ func TestWorker_TombstoneMiss_EntryInserted(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	sub := db.DueSubscription{ID: subID, FeedURL: origin.URL + "/feed"}
-	w := poll.NewWorker(d, http.DefaultClient, poll.WorkerOpts{
+	w := NewWorker(d, http.DefaultClient, WorkerOpts{
 		Processor: processor.New(sanitise.DefaultPolicy(), nil),
 	})
-	w.Run(ctx, sub)
+	w.Run(ctx, db.DueSubscription{ID: subID, FeedURL: origin.URL + "/feed"})
 
 	entries, _, _, err := db.ListEntries(ctx, d, db.ListEntriesParams{Limit: 10})
 	require.NoError(t, err)
@@ -507,12 +508,11 @@ func TestWorker_TombstoneMiss_EntryInserted(t *testing.T) {
 }
 
 func TestWorker_MixedTombstones(t *testing.T) {
-	// Feed has 3 entries: 1 tombstoned, 2 not. After poll: 2 inserted, 1 skipped.
 	t.Parallel()
 	d := newDB(t)
 	ctx := context.Background()
 
-	const threeEntryAtom = `<?xml version="1.0" encoding="UTF-8"?>
+	const threeAtom = `<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
   <title>Three</title><id>urn:three</id><updated>2026-05-01T00:00:00Z</updated>
   <entry><title>A</title><id>urn:three:1</id><link href="https://x/1"/>
@@ -525,7 +525,7 @@ func TestWorker_MixedTombstones(t *testing.T) {
 
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/atom+xml")
-		fmt.Fprint(w, threeEntryAtom)
+		fmt.Fprint(w, threeAtom)
 	}))
 	t.Cleanup(origin.Close)
 
@@ -534,20 +534,15 @@ func TestWorker_MixedTombstones(t *testing.T) {
 	})
 	require.NoError(t, err)
 	sub := db.DueSubscription{ID: subID, FeedURL: origin.URL + "/feed"}
-
-	// First poll to discover hashes
-	w := poll.NewWorker(d, http.DefaultClient, poll.WorkerOpts{
+	w := NewWorker(d, http.DefaultClient, WorkerOpts{
 		Processor: processor.New(sanitise.DefaultPolicy(), nil),
 	})
-	w.Run(ctx, sub)
 
+	w.Run(ctx, sub)
 	entries, _, _, err := db.ListEntries(ctx, d, db.ListEntriesParams{Limit: 10})
 	require.NoError(t, err)
 	require.Len(t, entries, 3)
 
-	// Tombstone entry B, delete all entries to force re-insert attempt
-	hashB := entries[1].Hash // ordered newest-first; middle entry
-	// find the one with URL https://x/2
 	var tombstoneHash string
 	for _, e := range entries {
 		if e.URL == "https://x/2" {
@@ -556,7 +551,6 @@ func TestWorker_MixedTombstones(t *testing.T) {
 	}
 	require.NotEmpty(t, tombstoneHash)
 
-	_ = hashB // suppress lint
 	tx, err := d.BeginTx(ctx, nil)
 	require.NoError(t, err)
 	require.NoError(t, db.InsertTombstones(ctx, tx, []db.NewTombstone{
@@ -566,13 +560,12 @@ func TestWorker_MixedTombstones(t *testing.T) {
 	_, err = d.ExecContext(ctx, "DELETE FROM entries WHERE subscription_id = ?", subID)
 	require.NoError(t, err)
 
-	// Second poll — 2 entries inserted, 1 skipped
 	w.Run(ctx, sub)
 	entries, _, _, err = db.ListEntries(ctx, d, db.ListEntriesParams{Limit: 10})
 	require.NoError(t, err)
 	require.Len(t, entries, 2)
 	for _, e := range entries {
-		require.NotEqual(t, tombstoneHash, e.Hash, "tombstoned entry must not appear")
+		require.NotEqual(t, tombstoneHash, e.Hash)
 	}
 }
 ```
@@ -580,13 +573,14 @@ func TestWorker_MixedTombstones(t *testing.T) {
 - [ ] **Step 2: Run tests, confirm they fail**
 
 ```bash
-go test ./internal/poll/... -run "TestWorker_Tombstone" -race -v
+go test ./internal/poll/... -run "TestWorker_Tombstone|TestWorker_Mixed" -race -v
 ```
-Expected: FAIL — worker doesn't consult tombstones yet, so the tombstoned entry re-appears.
+
+Expected: FAIL — tombstoned entries still reappear.
 
 - [ ] **Step 3: Add tombstone consult to `internal/poll/worker.go`**
 
-In `Worker.Run`, after building `newEntries` and before calling `db.UpdateAfterPoll`, add the tombstone filter. Find the block starting `newEntries := make([]db.NewEntry...)` and replace it:
+In `Worker.Run`, find `newEntries := make([]db.NewEntry, 0, len(pendings))` and replace the entire loop that builds it with:
 
 ```go
 	// Build candidate entries from parse results.
@@ -608,7 +602,7 @@ In `Worker.Run`, after building `newEntries` and before calling `db.UpdateAfterP
 	}
 
 	// Consult tombstones — drop any entry that has been previously archived.
-	// This read happens outside the commit transaction (read-only point lookup).
+	// Read-only point lookups; runs outside the commit transaction.
 	newEntries := make([]db.NewEntry, 0, len(candidates))
 	for _, e := range candidates {
 		tombstoned, terr := db.IsTombstoned(ctx, w.db, sub.ID, e.Hash)
@@ -619,27 +613,27 @@ In `Worker.Run`, after building `newEntries` and before calling `db.UpdateAfterP
 			continue
 		}
 		if tombstoned {
-			continue // silently drop
+			continue
 		}
 		newEntries = append(newEntries, e)
 	}
 ```
 
-Also add `"github.com/bcrisp4/tap/internal/db"` to the import if not already present (it is).
-
 - [ ] **Step 4: Run tests, confirm they pass**
 
 ```bash
-go test ./internal/poll/... -run "TestWorker_Tombstone" -race -v
+go test ./internal/poll/... -run "TestWorker_Tombstone|TestWorker_Mixed" -race -v
 ```
+
 Expected: PASS.
 
-- [ ] **Step 5: Run full poll package tests**
+- [ ] **Step 5: Run full `internal/poll` suite**
 
 ```bash
 go test ./internal/poll/... -race
 ```
-Expected: PASS — no regressions.
+
+Expected: PASS.
 
 - [ ] **Step 6: Commit**
 
@@ -650,15 +644,13 @@ git commit -m "M11: poll worker consults tombstones before insert"
 
 ---
 
-## Task 5: `internal/archival/sweep.go` — DB pass
-
-**Skills to invoke:** `superpowers:test-driven-development`, `golang-database`, `golang-context`
+## Task 5: `internal/archival/sweep.go` — DB pass + FS pass
 
 **Files:**
 - Create: `internal/archival/sweep.go`
-- Create: `internal/archival/sweep_test.go` (partial — DB pass tests)
+- Create: `internal/archival/sweep_test.go`
 
-- [ ] **Step 1: Write failing tests for `dbPass`**
+- [ ] **Step 1: Write failing tests**
 
 Create `internal/archival/sweep_test.go`:
 
@@ -668,7 +660,11 @@ package archival
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -676,7 +672,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// openTestDB creates an in-memory SQLite DB with all migrations applied.
 func openTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	d, err := db.Open(context.Background(), ":memory:")
@@ -686,7 +681,6 @@ func openTestDB(t *testing.T) *sql.DB {
 	return d
 }
 
-// insertSub inserts a test subscription and returns its ID.
 func insertSub(t *testing.T, d *sql.DB) int64 {
 	t.Helper()
 	id, err := db.InsertSubscription(context.Background(), d, db.NewSubscription{
@@ -697,23 +691,36 @@ func insertSub(t *testing.T, d *sql.DB) int64 {
 	return id
 }
 
-// insertEntry inserts an entry and returns its ID.
 func insertEntry(t *testing.T, d *sql.DB, subID int64, hash string, publishedAt int64, read, saved bool) {
 	t.Helper()
+	ri, si := 0, 0
+	if read {
+		ri = 1
+	}
+	if saved {
+		si = 1
+	}
 	_, err := d.ExecContext(context.Background(), `
 		INSERT INTO entries (subscription_id, hash, title, author, url, content,
 		                     published_at, fetched_at, read, saved, extract_failed)
-		VALUES (?, ?, 'T', NULL, 'https://x', 'content of `+"`"+hash+"`"+`', ?, 0, ?, ?, 0)
-	`, subID, hash, publishedAt, boolInt(read), boolInt(saved))
+		VALUES (?, ?, 'T', NULL, 'https://x', 'content', ?, 0, ?, ?, 0)
+	`, subID, hash, publishedAt, ri, si)
 	require.NoError(t, err)
 }
 
-func boolInt(b bool) int {
-	if b {
-		return 1
-	}
-	return 0
+func writeCacheFile(t *testing.T, dir, hash string, fetchedAt int64) {
+	t.Helper()
+	bucket := filepath.Join(dir, hash[:2])
+	require.NoError(t, os.MkdirAll(bucket, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(bucket, hash+".bin"), []byte("imgdata"), 0o644))
+	meta, err := json.Marshal(map[string]any{
+		"content_type": "image/jpeg", "byte_count": 7, "fetched_at": fetchedAt,
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(bucket, hash+".meta"), meta, 0o644))
 }
+
+// DB pass tests
 
 func TestDBPass_DeletesEligibleEntries(t *testing.T) {
 	t.Parallel()
@@ -721,25 +728,24 @@ func TestDBPass_DeletesEligibleEntries(t *testing.T) {
 	ctx := context.Background()
 	subID := insertSub(t, d)
 
-	horizon := int64(1000)
-	insertEntry(t, d, subID, "old-read-unsaved", 500, true, false)   // eligible
-	insertEntry(t, d, subID, "old-read-saved", 500, true, true)      // saved — retain
-	insertEntry(t, d, subID, "old-unread", 500, false, false)        // unread — retain
-	insertEntry(t, d, subID, "new-read-unsaved", 2000, true, false)  // too new — retain
+	insertEntry(t, d, subID, "old-read-unsaved", 500, true, false)
+	insertEntry(t, d, subID, "old-read-saved", 500, true, true)
+	insertEntry(t, d, subID, "old-unread", 500, false, false)
+	insertEntry(t, d, subID, "new-read-unsaved", 2000, true, false)
 
-	deleted, tombstoned, err := dbPass(ctx, d, horizon, time.Now().Unix())
+	deleted, tombstoned, err := dbPass(ctx, d, 1000, time.Now().Unix())
 	require.NoError(t, err)
 	require.Equal(t, 1, deleted)
 	require.Equal(t, 1, tombstoned)
 
-	// Verify only the eligible entry was deleted
 	var count int
-	require.NoError(t, d.QueryRowContext(ctx, "SELECT COUNT(*) FROM entries WHERE subscription_id = ?", subID).Scan(&count))
+	require.NoError(t, d.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM entries WHERE subscription_id = ?", subID).Scan(&count))
 	require.Equal(t, 3, count)
 
-	// Verify tombstone was written
 	var tc int
-	require.NoError(t, d.QueryRowContext(ctx, "SELECT COUNT(*) FROM tombstones WHERE subscription_id = ?", subID).Scan(&tc))
+	require.NoError(t, d.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM tombstones WHERE subscription_id = ?", subID).Scan(&tc))
 	require.Equal(t, 1, tc)
 }
 
@@ -748,28 +754,24 @@ func TestDBPass_Idempotent(t *testing.T) {
 	d := openTestDB(t)
 	ctx := context.Background()
 	subID := insertSub(t, d)
-
-	insertEntry(t, d, subID, "eligible", 100, true, false)
+	insertEntry(t, d, subID, "e", 100, true, false)
 
 	_, _, err := dbPass(ctx, d, 500, time.Now().Unix())
 	require.NoError(t, err)
 
-	// Second run — nothing left to delete, no error
 	deleted, tombstoned, err := dbPass(ctx, d, 500, time.Now().Unix())
 	require.NoError(t, err)
 	require.Equal(t, 0, deleted)
 	require.Equal(t, 0, tombstoned)
 }
 
-func TestDBPass_OnConflictDoNothing_ExistingTombstone(t *testing.T) {
+func TestDBPass_ExistingTombstone_NoConflictError(t *testing.T) {
 	t.Parallel()
 	d := openTestDB(t)
 	ctx := context.Background()
 	subID := insertSub(t, d)
-
 	insertEntry(t, d, subID, "entry", 100, true, false)
 
-	// Pre-insert tombstone
 	tx, err := d.BeginTx(ctx, nil)
 	require.NoError(t, err)
 	require.NoError(t, db.InsertTombstones(ctx, tx, []db.NewTombstone{
@@ -777,19 +779,16 @@ func TestDBPass_OnConflictDoNothing_ExistingTombstone(t *testing.T) {
 	}))
 	require.NoError(t, tx.Commit())
 
-	// dbPass must succeed without error despite tombstone conflict
 	deleted, _, err := dbPass(ctx, d, 500, time.Now().Unix())
 	require.NoError(t, err)
 	require.Equal(t, 1, deleted)
 }
 
 func TestDBPass_Chunking(t *testing.T) {
-	// 2500 eligible entries → 3 chunk transactions (1000 + 1000 + 500)
 	t.Parallel()
 	d := openTestDB(t)
 	ctx := context.Background()
 	subID := insertSub(t, d)
-
 	for i := range 2500 {
 		insertEntry(t, d, subID, fmt.Sprintf("h%d", i), 100, true, false)
 	}
@@ -800,21 +799,135 @@ func TestDBPass_Chunking(t *testing.T) {
 	require.Equal(t, 2500, tombstoned)
 
 	var count int
-	require.NoError(t, d.QueryRowContext(ctx, "SELECT COUNT(*) FROM entries WHERE subscription_id = ?", subID).Scan(&count))
+	require.NoError(t, d.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM entries WHERE subscription_id = ?", subID).Scan(&count))
 	require.Equal(t, 0, count)
 }
+
+// FS pass tests
+
+func TestFSPass_EvictsOldFiles(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeCacheFile(t, dir, "aabbccddeeff00112233445566778899aabbccddeeff001122", 500)
+	writeCacheFile(t, dir, "bb00112233445566778899001122334455667788990011223344", 2000)
+
+	evicted, err := fsPass(dir, 1000, nil)
+	require.NoError(t, err)
+	require.Equal(t, 1, evicted)
+	require.NoFileExists(t, filepath.Join(dir, "aa", "aabbccddeeff00112233445566778899aabbccddeeff001122.bin"))
+	require.FileExists(t, filepath.Join(dir, "bb", "bb00112233445566778899001122334455667788990011223344.bin"))
+}
+
+func TestFSPass_MissingBin_GracefulENOENT(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	hash := "cc001122334455667788990011223344556677889900aabbccdd"
+	bucket := filepath.Join(dir, hash[:2])
+	require.NoError(t, os.MkdirAll(bucket, 0o755))
+	meta, _ := json.Marshal(map[string]any{"content_type": "image/jpeg", "byte_count": 0, "fetched_at": int64(100)})
+	require.NoError(t, os.WriteFile(filepath.Join(bucket, hash+".meta"), meta, 0o644))
+
+	evicted, err := fsPass(dir, 500, nil)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, evicted, 1)
+	require.NoFileExists(t, filepath.Join(bucket, hash+".meta"))
+}
+
+func TestFSPass_OrphanBin_Removed(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	hash := "dd00112233445566778899001122334455667788990011223344"
+	bucket := filepath.Join(dir, hash[:2])
+	require.NoError(t, os.MkdirAll(bucket, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(bucket, hash+".bin"), []byte("orphan"), 0o644))
+
+	evicted, err := fsPass(dir, 500, nil)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, evicted, 1)
+	require.NoFileExists(t, filepath.Join(bucket, hash+".bin"))
+}
+
+func TestFSPass_EmptyDir(t *testing.T) {
+	t.Parallel()
+	evicted, err := fsPass(t.TempDir(), 1000, nil)
+	require.NoError(t, err)
+	require.Equal(t, 0, evicted)
+}
+
+func TestFSPass_NonExistentDir(t *testing.T) {
+	t.Parallel()
+	evicted, err := fsPass("/tmp/tap-m11-nonexistent-99999", 1000, nil)
+	require.NoError(t, err)
+	require.Equal(t, 0, evicted)
+}
+
+func TestFSPass_OnEvictCallback(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeCacheFile(t, dir, "ee001122334455667788990011223344556677889900aabbccdd", 100)
+	var n int
+	_, err := fsPass(dir, 500, func(count int) { n = count })
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+}
+
+// FTS regression test
+
+func TestDBPass_FTSTriggers_KeepFTSInSync(t *testing.T) {
+	// Contractual proof that M9's trigger-based FTS sync survives archival deletes.
+	// Skips FTS assertions if entries_fts does not exist (M9 not yet applied).
+	t.Parallel()
+	d := openTestDB(t)
+	ctx := context.Background()
+	subID := insertSub(t, d)
+	insertEntry(t, d, subID, "to-delete", 100, true, false)
+	insertEntry(t, d, subID, "to-keep", 100, false, false)
+
+	var ftsExists int
+	_ = d.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='entries_fts'",
+	).Scan(&ftsExists)
+
+	if ftsExists == 1 {
+		var before int
+		require.NoError(t, d.QueryRowContext(ctx,
+			"SELECT COUNT(*) FROM entries_fts WHERE entries_fts MATCH 'content'",
+		).Scan(&before))
+		require.Equal(t, 2, before)
+	}
+
+	_, _, err := dbPass(ctx, d, 500, time.Now().Unix())
+	require.NoError(t, err)
+
+	if ftsExists == 1 {
+		var after int
+		require.NoError(t, d.QueryRowContext(ctx,
+			"SELECT COUNT(*) FROM entries_fts WHERE entries_fts MATCH 'content'",
+		).Scan(&after))
+		require.Equal(t, 1, after)
+	}
+
+	var entryCount int
+	require.NoError(t, d.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM entries WHERE subscription_id = ?", subID,
+	).Scan(&entryCount))
+	require.Equal(t, 1, entryCount)
+}
+
+// suppress unused import error when errors package is only used in sweep.go
+var _ = errors.New
 ```
 
 - [ ] **Step 2: Run tests, confirm they fail**
 
 ```bash
-go test ./internal/archival/... -run "TestDBPass" -race -v
+go test ./internal/archival/... -race -v
 ```
-Expected: FAIL — package doesn't exist yet, or `dbPass` undefined.
 
-- [ ] **Step 3: Implement `internal/archival/sweep.go` (DB pass only)**
+Expected: FAIL — package does not exist yet.
 
-Create `internal/archival/sweep.go`:
+- [ ] **Step 3: Implement `internal/archival/sweep.go`**
 
 ```go
 package archival
@@ -828,16 +941,12 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/bcrisp4/tap/internal/db"
 )
 
 const chunkSize = 1000
 
-// dbPass deletes eligible entries and records tombstones in chunk transactions.
-// Returns (deleted, tombstoned, error). tombstoned may be less than deleted if
-// some tombstones already existed (ON CONFLICT DO NOTHING).
 func dbPass(ctx context.Context, d *sql.DB, horizonUnix, nowUnix int64) (deleted, tombstoned int, err error) {
 	for {
 		rows, err := db.ListArchivable(ctx, d, horizonUnix, chunkSize)
@@ -849,14 +958,10 @@ func dbPass(ctx context.Context, d *sql.DB, horizonUnix, nowUnix int64) (deleted
 		}
 
 		ids := make([]int64, len(rows))
-		tombstones := make([]db.NewTombstone, len(rows))
+		tbs := make([]db.NewTombstone, len(rows))
 		for i, r := range rows {
 			ids[i] = r.ID
-			tombstones[i] = db.NewTombstone{
-				SubscriptionID: r.SubscriptionID,
-				EntryHash:      r.Hash,
-				DeletedAt:      nowUnix,
-			}
+			tbs[i] = db.NewTombstone{SubscriptionID: r.SubscriptionID, EntryHash: r.Hash, DeletedAt: nowUnix}
 		}
 
 		tx, err := d.BeginTx(ctx, nil)
@@ -864,15 +969,12 @@ func dbPass(ctx context.Context, d *sql.DB, horizonUnix, nowUnix int64) (deleted
 			return deleted, tombstoned, fmt.Errorf("begin tx: %w", err)
 		}
 
-		if err := db.InsertTombstones(ctx, tx, tombstones); err != nil {
+		if err := db.InsertTombstones(ctx, tx, tbs); err != nil {
 			_ = tx.Rollback()
 			return deleted, tombstoned, err
 		}
 
-		// Build DELETE ... WHERE id IN (...)
-		// Inline ids — safe because these are int64 from our own DB, not user input.
-		query := buildDeleteByIDs(ids)
-		res, err := tx.ExecContext(ctx, query)
+		res, err := tx.ExecContext(ctx, buildDeleteByIDs(ids))
 		if err != nil {
 			_ = tx.Rollback()
 			return deleted, tombstoned, fmt.Errorf("delete entries chunk: %w", err)
@@ -884,12 +986,12 @@ func dbPass(ctx context.Context, d *sql.DB, horizonUnix, nowUnix int64) (deleted
 
 		n, _ := res.RowsAffected()
 		deleted += int(n)
-		tombstoned += len(tombstones)
+		tombstoned += len(tbs)
 	}
 }
 
-// buildDeleteByIDs constructs a DELETE statement for a slice of int64 IDs.
-// IDs are internal DB values, not user input, so direct interpolation is safe.
+// buildDeleteByIDs constructs a DELETE for a slice of internal int64 IDs.
+// IDs come from our own DB rows, not user input, so direct interpolation is safe.
 func buildDeleteByIDs(ids []int64) string {
 	if len(ids) == 0 {
 		return "DELETE FROM entries WHERE 1=0"
@@ -905,7 +1007,7 @@ func buildDeleteByIDs(ids []int64) string {
 }
 
 // cacheFileMeta mirrors the JSON sidecar written by internal/proxy.Cache.
-// Only FetchedAt is read by the FS pass; other fields are decoded but ignored.
+// Must match M3's sidecar shape exactly.
 type cacheFileMeta struct {
 	ContentType string `json:"content_type"`
 	ETag        string `json:"etag,omitempty"`
@@ -913,20 +1015,13 @@ type cacheFileMeta struct {
 	FetchedAt   int64  `json:"fetched_at"`
 }
 
-// fsPass walks cacheDir and unlinks .bin + .meta pairs whose fetched_at is
-// older than ageCapUnix. Returns count of evicted file pairs.
 func fsPass(cacheDir string, ageCapUnix int64, onEvict func(int)) (evicted int, err error) {
-	// Two-pass: collect candidates from .meta files, then delete.
-	type candidate struct {
-		binPath  string
-		metaPath string
-	}
+	type candidate struct{ binPath, metaPath string }
 	var candidates []candidate
-	var orphanBins []string // .bin files with no corresponding .meta
+	var orphanBins []string
+	metaBases := map[string]bool{}
 
-	seenBins := map[string]bool{}
-
-	err = filepath.WalkDir(cacheDir, func(path string, d os.DirEntry, werr error) error {
+	walkErr := filepath.WalkDir(cacheDir, func(path string, d os.DirEntry, werr error) error {
 		if werr != nil {
 			if errors.Is(werr, os.ErrNotExist) {
 				return nil
@@ -936,82 +1031,59 @@ func fsPass(cacheDir string, ageCapUnix int64, onEvict func(int)) (evicted int, 
 		if d.IsDir() {
 			return nil
 		}
-
 		ext := filepath.Ext(path)
 		base := path[:len(path)-len(ext)]
-
-		if ext == ".bin" {
-			seenBins[base] = true
-			return nil
-		}
 		if ext != ".meta" {
 			return nil
 		}
-
-		// Read and decode the sidecar
-		data, err := os.ReadFile(path)
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				return nil
+		metaBases[base] = true
+		data, rerr := os.ReadFile(path)
+		if rerr != nil {
+			if !errors.Is(rerr, os.ErrNotExist) {
+				slog.Warn("archival: read meta sidecar", "path", path, "err", rerr)
 			}
-			slog.Warn("archival: read meta sidecar", "path", path, "err", err)
 			return nil
 		}
 		var meta cacheFileMeta
-		if err := json.Unmarshal(data, &meta); err != nil {
-			slog.Warn("archival: decode meta sidecar", "path", path, "err", err)
+		if jerr := json.Unmarshal(data, &meta); jerr != nil {
+			slog.Warn("archival: decode meta sidecar", "path", path, "err", jerr)
 			return nil
 		}
-
 		if meta.FetchedAt < ageCapUnix {
-			candidates = append(candidates, candidate{
-				binPath:  base + ".bin",
-				metaPath: path,
-			})
+			candidates = append(candidates, candidate{binPath: base + ".bin", metaPath: path})
 		}
 		return nil
 	})
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return 0, fmt.Errorf("walk cache dir: %w", err)
+	if walkErr != nil && !errors.Is(walkErr, os.ErrNotExist) {
+		return 0, fmt.Errorf("walk cache dir: %w", walkErr)
 	}
 
-	// Detect orphan .bin files (no .meta sibling found in walk)
-	err = filepath.WalkDir(cacheDir, func(path string, d os.DirEntry, werr error) error {
+	_ = filepath.WalkDir(cacheDir, func(path string, d os.DirEntry, werr error) error {
 		if werr != nil || d.IsDir() {
-			return werr
+			return nil
 		}
 		if filepath.Ext(path) != ".bin" {
 			return nil
 		}
 		base := path[:len(path)-len(".bin")]
-		if !seenBins[base] {
-			// seenBins is populated from first walk; check if .meta exists
-		}
-		// Simpler: check if .meta exists alongside
-		if _, err := os.Stat(base + ".meta"); errors.Is(err, os.ErrNotExist) {
+		if !metaBases[base] {
 			orphanBins = append(orphanBins, path)
 		}
 		return nil
 	})
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		slog.Warn("archival: walk for orphan bins", "err", err)
-	}
 
-	// Evict candidates
 	for _, c := range candidates {
-		if err := os.Remove(c.binPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-			slog.Warn("archival: remove bin", "path", c.binPath, "err", err)
+		if rerr := os.Remove(c.binPath); rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
+			slog.Warn("archival: remove bin", "path", c.binPath, "err", rerr)
 		}
-		if err := os.Remove(c.metaPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-			slog.Warn("archival: remove meta", "path", c.metaPath, "err", err)
+		if rerr := os.Remove(c.metaPath); rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
+			slog.Warn("archival: remove meta", "path", c.metaPath, "err", rerr)
 		}
 		evicted++
 	}
-
-	// Remove orphan bins
 	for _, path := range orphanBins {
-		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			slog.Warn("archival: remove orphan bin", "path", path, "err", err)
+		if rerr := os.Remove(path); rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
+			slog.Warn("archival: remove orphan bin", "path", path, "err", rerr)
 		}
 		evicted++
 	}
@@ -1022,224 +1094,35 @@ func fsPass(cacheDir string, ageCapUnix int64, onEvict func(int)) (evicted int, 
 	return evicted, nil
 }
 
-// Note: boolInt is defined in sweep_test.go (same package, test-only helper).
-// Do NOT add boolInt here — it would be a duplicate compile error.
-```
+// ExportedDBPass is a test-only shim for cmd/tap/main_test.go.
+func ExportedDBPass(ctx context.Context, d *sql.DB, horizonUnix, nowUnix int64) (int, int, error) {
+	return dbPass(ctx, d, horizonUnix, nowUnix)
+}
 
-Note: `boolInt` is unexported and lives in sweep.go for use by tests in the same package. If there's already a `boolToInt` in the `db` package, do not import it here — keep packages clean.
+// ExportedFSPass is a test-only shim for cmd/tap/main_test.go.
+func ExportedFSPass(cacheDir string, ageCapUnix int64, onEvict func(int)) (int, error) {
+	return fsPass(cacheDir, ageCapUnix, onEvict)
+}
+```
 
 - [ ] **Step 4: Run tests, confirm they pass**
 
 ```bash
-go test ./internal/archival/... -run "TestDBPass" -race -v
+go test ./internal/archival/... -race -v
 ```
-Expected: PASS.
+
+Expected: PASS — all DB pass, FS pass, and FTS regression tests green.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add internal/archival/sweep.go internal/archival/sweep_test.go
-git commit -m "M11: implement archival dbPass with chunk transactions"
+git commit -m "M11: implement archival dbPass and fsPass"
 ```
 
 ---
 
-## Task 6: `sweep_test.go` — FS pass tests + FTS regression
-
-**Skills to invoke:** `superpowers:test-driven-development`, `golang-testing`
-
-**Files:**
-- Modify: `internal/archival/sweep_test.go` (add FS pass tests and FTS regression)
-
-- [ ] **Step 1: Write FS pass tests**
-
-Add to `internal/archival/sweep_test.go`:
-
-```go
-import (
-	"encoding/json"
-	"os"
-	"path/filepath"
-	// ... existing imports
-)
-
-// writeCacheFile writes a .bin + .meta pair to the test cache dir.
-func writeCacheFile(t *testing.T, dir, hash string, fetchedAt int64) {
-	t.Helper()
-	bucket := hash[:2]
-	bucketDir := filepath.Join(dir, bucket)
-	require.NoError(t, os.MkdirAll(bucketDir, 0o755))
-
-	binPath := filepath.Join(bucketDir, hash+".bin")
-	metaPath := filepath.Join(bucketDir, hash+".meta")
-
-	require.NoError(t, os.WriteFile(binPath, []byte("imgdata"), 0o644))
-	meta, err := json.Marshal(map[string]any{
-		"content_type": "image/jpeg",
-		"byte_count":   7,
-		"fetched_at":   fetchedAt,
-	})
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(metaPath, meta, 0o644))
-}
-
-func TestFSPass_EvictsOldFiles(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-
-	ageCap := int64(1000) // files with fetched_at < 1000 are evicted
-	writeCacheFile(t, dir, "aabbcc001122334455667788990011223344556677889900aabb", 500) // old → evict
-	writeCacheFile(t, dir, "bb00112233445566778899001122334455667788990011223344", 2000) // new → keep
-
-	evicted, err := fsPass(dir, ageCap, nil)
-	require.NoError(t, err)
-	require.Equal(t, 1, evicted)
-
-	// Old files must be gone
-	require.NoFileExists(t, filepath.Join(dir, "aa", "aabbcc001122334455667788990011223344556677889900aabb.bin"))
-	require.NoFileExists(t, filepath.Join(dir, "aa", "aabbcc001122334455667788990011223344556677889900aabb.meta"))
-	// New files must remain
-	require.FileExists(t, filepath.Join(dir, "bb", "bb00112233445566778899001122334455667788990011223344.bin"))
-}
-
-func TestFSPass_MissingBin_GracefulENOENT(t *testing.T) {
-	// .meta exists (old), .bin already gone (evicted by M3 LRU) — should succeed, remove .meta
-	t.Parallel()
-	dir := t.TempDir()
-
-	hash := "cc001122334455667788990011223344556677889900aabbccdd"
-	bucket := hash[:2]
-	bucketDir := filepath.Join(dir, bucket)
-	require.NoError(t, os.MkdirAll(bucketDir, 0o755))
-
-	meta, _ := json.Marshal(map[string]any{"content_type": "image/jpeg", "byte_count": 0, "fetched_at": int64(100)})
-	require.NoError(t, os.WriteFile(filepath.Join(bucketDir, hash+".meta"), meta, 0o644))
-	// No .bin file
-
-	evicted, err := fsPass(dir, 500, nil)
-	require.NoError(t, err)
-	require.GreaterOrEqual(t, evicted, 1)
-	require.NoFileExists(t, filepath.Join(bucketDir, hash+".meta"))
-}
-
-func TestFSPass_MissingMeta_OrphanBinRemoved(t *testing.T) {
-	// .bin exists, .meta missing — orphan cleanup
-	t.Parallel()
-	dir := t.TempDir()
-
-	hash := "dd00112233445566778899001122334455667788990011223344"
-	bucket := hash[:2]
-	bucketDir := filepath.Join(dir, bucket)
-	require.NoError(t, os.MkdirAll(bucketDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(bucketDir, hash+".bin"), []byte("orphan"), 0o644))
-
-	evicted, err := fsPass(dir, 500, nil)
-	require.NoError(t, err)
-	require.GreaterOrEqual(t, evicted, 1)
-	require.NoFileExists(t, filepath.Join(bucketDir, hash+".bin"))
-}
-
-func TestFSPass_EmptyDir_NoError(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	evicted, err := fsPass(dir, 1000, nil)
-	require.NoError(t, err)
-	require.Equal(t, 0, evicted)
-}
-
-func TestFSPass_OnEvictCallback(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	writeCacheFile(t, dir, "ee001122334455667788990011223344556677889900aabbccdd", 100)
-
-	var callbackN int
-	_, err := fsPass(dir, 500, func(n int) { callbackN = n })
-	require.NoError(t, err)
-	require.Equal(t, 1, callbackN)
-}
-
-func TestFSPass_NonExistentDir_NoError(t *testing.T) {
-	t.Parallel()
-	evicted, err := fsPass("/tmp/tap-archival-test-nonexistent-dir-12345", 1000, nil)
-	require.NoError(t, err)
-	require.Equal(t, 0, evicted)
-}
-```
-
-- [ ] **Step 2: Write FTS regression test**
-
-Add to `internal/archival/sweep_test.go`:
-
-```go
-func TestDBPass_FTSTriggers_KeepFTSInSync(t *testing.T) {
-	// This test is the contractual proof that M9's trigger-based FTS sync
-	// survives archival deletes. If M9's migrations are not applied, this
-	// test is still valid — dbPass deletes from entries correctly — but the
-	// FTS assertion will trivially pass (no FTS index to corrupt).
-	t.Parallel()
-	d := openTestDB(t)
-	ctx := context.Background()
-	subID := insertSub(t, d)
-
-	// Insert two entries: one to be archived, one to keep
-	insertEntry(t, d, subID, "to-delete", 100, true, false)
-	insertEntry(t, d, subID, "to-keep", 100, false, false) // unread — retained
-
-	// Check if the FTS table exists (M9 may not have run yet in this environment)
-	var ftsExists int
-	_ = d.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='entries_fts'",
-	).Scan(&ftsExists)
-
-	if ftsExists == 1 {
-		// Verify both entries appear in FTS before sweep
-		var beforeCount int
-		require.NoError(t, d.QueryRowContext(ctx,
-			"SELECT COUNT(*) FROM entries_fts WHERE entries_fts MATCH 'content'",
-		).Scan(&beforeCount))
-		require.Equal(t, 2, beforeCount, "both entries must appear in FTS before sweep")
-	}
-
-	_, _, err := dbPass(ctx, d, 500, time.Now().Unix())
-	require.NoError(t, err)
-
-	if ftsExists == 1 {
-		// After sweep: deleted entry must be gone from FTS, kept entry must remain
-		var afterCount int
-		require.NoError(t, d.QueryRowContext(ctx,
-			"SELECT COUNT(*) FROM entries_fts WHERE entries_fts MATCH 'content'",
-		).Scan(&afterCount))
-		require.Equal(t, 1, afterCount, "only retained entry must appear in FTS after sweep")
-	}
-
-	// Regardless of FTS: entries table must have exactly 1 row
-	var entryCount int
-	require.NoError(t, d.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM entries WHERE subscription_id = ?", subID,
-	).Scan(&entryCount))
-	require.Equal(t, 1, entryCount)
-}
-```
-
-- [ ] **Step 3: Run tests**
-
-```bash
-go test ./internal/archival/... -run "TestFSPass|TestDBPass_FTS" -race -v
-```
-Expected: PASS — FS pass tests and FTS regression test all green.
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add internal/archival/sweep_test.go
-git commit -m "M11: add FS pass tests and FTS regression test"
-```
-
----
-
-## Task 7: `internal/archival/archiver.go` — lifecycle
-
-**Skills to invoke:** `superpowers:test-driven-development`, `golang-concurrency`, `golang-context`
+## Task 6: `internal/archival/archiver.go` — lifecycle
 
 **Files:**
 - Create: `internal/archival/archiver.go`
@@ -1253,8 +1136,6 @@ Create `internal/archival/archiver_test.go`:
 package archival
 
 import (
-	"context"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -1263,58 +1144,40 @@ import (
 )
 
 func TestArchiver_StartStop_NoSweep(t *testing.T) {
-	// Start and stop with a long interval — no sweep fires, clean exit.
 	t.Parallel()
 	d := openTestDB(t)
-
 	a := NewArchiver(d, ArchiverOpts{
-		Horizon:     90 * 24 * time.Hour,
-		CacheAgeCap: 14 * 24 * time.Hour,
-		Interval:    24 * time.Hour, // won't fire during test
-		CacheDir:    t.TempDir(),
+		Interval: 24 * time.Hour,
+		CacheDir: t.TempDir(),
 	})
 	a.Start()
-	a.Stop() // must not block indefinitely
+	a.Stop()
 }
 
 func TestArchiver_Stop_WaitsForInProgressSweep(t *testing.T) {
-	// Block the DB pass via a gate channel; Stop() must wait until it unblocks.
 	t.Parallel()
 	d := openTestDB(t)
-
 	gate := make(chan struct{})
-	var sweepStarted atomic.Bool
+	var started atomic.Bool
 
 	a := NewArchiver(d, ArchiverOpts{
-		Horizon:     1 * time.Second,
-		CacheAgeCap: 1 * time.Second,
-		Interval:    1 * time.Millisecond, // fires immediately
-		CacheDir:    t.TempDir(),
-		// inject a hook to block the sweep
-		sweepHook: func() {
-			sweepStarted.Store(true)
-			<-gate
-		},
+		Interval:  1 * time.Millisecond,
+		CacheDir:  t.TempDir(),
+		sweepHook: func() { started.Store(true); <-gate },
 	})
 	a.Start()
 
-	// Wait until the sweep actually starts
-	require.Eventually(t, func() bool { return sweepStarted.Load() }, 2*time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool { return started.Load() }, 2*time.Second, 5*time.Millisecond)
 
 	stopDone := make(chan struct{})
-	go func() {
-		a.Stop()
-		close(stopDone)
-	}()
+	go func() { a.Stop(); close(stopDone) }()
 
-	// Stop should be blocked while sweep is in progress
 	select {
 	case <-stopDone:
 		t.Fatal("Stop() returned before sweep finished")
 	case <-time.After(100 * time.Millisecond):
 	}
 
-	// Unblock the sweep — Stop() should now return
 	close(gate)
 	select {
 	case <-stopDone:
@@ -1323,41 +1186,28 @@ func TestArchiver_Stop_WaitsForInProgressSweep(t *testing.T) {
 	}
 }
 
-func TestArchiver_ClockInjection_SweepFires(t *testing.T) {
-	// Use a controlled clock — advance past interval, verify sweep was called.
+func TestArchiver_SweepFires(t *testing.T) {
 	t.Parallel()
 	d := openTestDB(t)
-
-	var sweepCount atomic.Int32
-	now := time.Now()
-	mu := sync.Mutex{}
-
+	var count atomic.Int32
 	a := NewArchiver(d, ArchiverOpts{
-		Horizon:     90 * 24 * time.Hour,
-		CacheAgeCap: 14 * 24 * time.Hour,
-		Interval:    1 * time.Millisecond, // fires almost immediately with real ticker
-		CacheDir:    t.TempDir(),
-		Now:         func() time.Time { mu.Lock(); defer mu.Unlock(); return now },
-		sweepHook:   func() { sweepCount.Add(1) },
+		Interval:  1 * time.Millisecond,
+		CacheDir:  t.TempDir(),
+		sweepHook: func() { count.Add(1) },
 	})
 	a.Start()
-
-	require.Eventually(t, func() bool {
-		return sweepCount.Load() >= 1
-	}, 2*time.Second, 10*time.Millisecond)
-
+	require.Eventually(t, func() bool { return count.Load() >= 1 }, 2*time.Second, 5*time.Millisecond)
 	a.Stop()
-	require.GreaterOrEqual(t, sweepCount.Load(), int32(1))
+	require.GreaterOrEqual(t, count.Load(), int32(1))
 }
 ```
-
-Note: `sweepHook` is an unexported field on `ArchiverOpts` used for testing — it's called at the start of each sweep. This is a test seam; nil in production.
 
 - [ ] **Step 2: Run tests, confirm they fail**
 
 ```bash
-go test ./internal/archival/... -run "TestArchiver" -race -v
+go test ./internal/archival/... -run TestArchiver -race -v
 ```
+
 Expected: FAIL — `NewArchiver`, `ArchiverOpts`, `Archiver` undefined.
 
 - [ ] **Step 3: Implement `internal/archival/archiver.go`**
@@ -1375,19 +1225,17 @@ import (
 
 // ArchiverOpts configures the archival sweep.
 type ArchiverOpts struct {
-	Horizon     time.Duration    // entries older than Now()-Horizon are deleted (read+unsaved)
-	CacheAgeCap time.Duration    // cache files with fetched_at older than Now()-CacheAgeCap are unlinked
+	Horizon     time.Duration    // entries older than Now()-Horizon are deleted; default 90d
+	CacheAgeCap time.Duration    // cache files older than Now()-CacheAgeCap are unlinked; default 14d
 	Interval    time.Duration    // sweep cadence; default 24h
 	CacheDir    string           // proxy cache root directory
-	Now         func() time.Time // clock injection for tests; defaults to time.Now
+	Now         func() time.Time // clock injection; defaults to time.Now
 	OnEvict     func(n int)      // optional; M12 wires tap_proxy_cache_evictions_total{reason="age_sweep"}
-	sweepHook   func()           // test seam: called at start of each sweep, before passes run
+	sweepHook   func()           // test seam: called at sweep entry before passes run
 }
 
-// Archiver is the third concurrent concern in Tap alongside the HTTP server
-// and the polling scheduler. It runs a daily two-pass archival sweep:
-// 1. DB pass: delete read+unsaved entries older than Horizon, record tombstones.
-// 2. FS pass: unlink proxy cache files older than CacheAgeCap.
+// Archiver is the third concurrent concern in Tap: daily sweep of old entries
+// and old cache files.
 type Archiver struct {
 	db   *sql.DB
 	opts ArchiverOpts
@@ -1400,7 +1248,7 @@ type Archiver struct {
 	stopOnce  sync.Once
 }
 
-// NewArchiver creates an archiver. Call Start() to begin the sweep ticker.
+// NewArchiver creates an Archiver. Call Start() to begin the sweep ticker.
 func NewArchiver(d *sql.DB, opts ArchiverOpts) *Archiver {
 	if opts.Interval <= 0 {
 		opts.Interval = 24 * time.Hour
@@ -1415,12 +1263,7 @@ func NewArchiver(d *sql.DB, opts ArchiverOpts) *Archiver {
 		opts.Now = time.Now
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Archiver{
-		db:     d,
-		opts:   opts,
-		ctx:    ctx,
-		cancel: cancel,
-	}
+	return &Archiver{db: d, opts: opts, ctx: ctx, cancel: cancel}
 }
 
 // Start launches the archival ticker goroutine. Idempotent.
@@ -1441,10 +1284,8 @@ func (a *Archiver) Stop() {
 
 func (a *Archiver) loop() {
 	defer a.wg.Done()
-
 	ticker := time.NewTicker(a.opts.Interval)
 	defer ticker.Stop()
-
 	for {
 		select {
 		case <-a.ctx.Done():
@@ -1486,19 +1327,21 @@ func (a *Archiver) sweep() {
 }
 ```
 
-- [ ] **Step 4: Run tests**
+- [ ] **Step 4: Run all archival tests**
 
 ```bash
 go test ./internal/archival/... -race -v
 ```
-Expected: PASS — all archiver and sweep tests green.
+
+Expected: PASS — all tests green.
 
 - [ ] **Step 5: Run full test suite**
 
 ```bash
 make test
 ```
-Expected: PASS — no regressions across the full project.
+
+Expected: PASS.
 
 - [ ] **Step 6: Commit**
 
@@ -1509,16 +1352,14 @@ git commit -m "M11: implement Archiver lifecycle with Start/Stop"
 
 ---
 
-## Task 8: Wire `Archiver` into `cmd/tap/main.go`
-
-**Skills to invoke:** `golang-context`
+## Task 7: Wire `Archiver` into `cmd/tap/main.go`
 
 **Files:**
 - Modify: `cmd/tap/main.go`
 
-- [ ] **Step 1: Add flag declarations**
+- [ ] **Step 1: Add three new flag declarations**
 
-In `runServer()`, add three new flags alongside the existing `proxyCacheCap` and related flags:
+In `runServer()`, after the `proxyCacheCap` / `proxyBodyCap` flags, add:
 
 ```go
 archiveInterval = flag.Duration("archive-interval",
@@ -1526,15 +1367,13 @@ archiveInterval = flag.Duration("archive-interval",
     "how often the archival sweep runs")
 archiveHorizon = flag.Duration("archive-horizon",
     envOrDuration("TAP_ARCHIVE_HORIZON", 2160*time.Hour), // 90d
-    "delete read+unsaved entries older than this")
+    "delete read+unsaved entries older than this horizon")
 cacheAgeCap = flag.Duration("cache-age-cap",
     envOrDuration("TAP_CACHE_AGE_CAP", 336*time.Hour), // 14d
-    "unlink proxy cache files with fetched_at older than this")
+    "unlink proxy cache files with fetched_at older than this age")
 ```
 
-- [ ] **Step 2: Wire the Archiver**
-
-After `sched.Start()` and before the `<-ctx.Done()` block, add:
+- [ ] **Step 2: Wire the Archiver after `sched.Start()`**
 
 ```go
 archiver := archival.NewArchiver(d, archival.ArchiverOpts{
@@ -1549,24 +1388,25 @@ archiver.Start()
 
 - [ ] **Step 3: Update shutdown ordering**
 
-Replace:
+Change the shutdown block from:
+
 ```go
 _ = srv.Shutdown(shutdownCtx)
 sched.Stop()
 ```
 
-With:
+to:
+
 ```go
 _ = srv.Shutdown(shutdownCtx)
 archiver.Stop()
 sched.Stop()
 ```
 
-This ensures: HTTP drains first → archiver sweep finishes → scheduler stops → DB closes.
+Ordering is load-bearing: HTTP drains first → archiver finishes → scheduler stops → `d.Close()`.
 
 - [ ] **Step 4: Add import**
 
-Add to the import block:
 ```go
 "github.com/bcrisp4/tap/internal/archival"
 ```
@@ -1575,46 +1415,46 @@ Add to the import block:
 
 ```bash
 make build
-./bin/tap --archive-horizon=168h --cache-age-cap=72h &
+TAP_ADMIN_USERNAME=admin TAP_ADMIN_PASSWORD=password12345 ./bin/tap --data /tmp/tap-m11-smoke &
+PID=$!
 sleep 1
-kill %1
+curl -sf http://127.0.0.1:8080/healthz && echo "OK"
+kill $PID
+rm -rf /tmp/tap-m11-smoke
 ```
-Expected: binary starts, logs `"no users in database"` or `"bootstrapped admin"`, exits cleanly on SIGTERM.
+
+Expected: `OK`, clean exit.
 
 - [ ] **Step 6: Run full test suite**
 
 ```bash
 make test
 ```
+
 Expected: PASS.
 
 - [ ] **Step 7: Commit**
 
 ```bash
 git add cmd/tap/main.go
-git commit -m "M11: wire Archiver into runServer with archive-interval/horizon/cache-age-cap flags"
+git commit -m "M11: wire Archiver into runServer with archive flags"
 ```
 
 ---
 
-## Task 9: End-to-end test in `cmd/tap/main_test.go`
-
-**Skills to invoke:** `superpowers:test-driven-development`, `golang-testing`
+## Task 8: End-to-end tests in `cmd/tap/main_test.go`
 
 **Files:**
 - Modify: `cmd/tap/main_test.go`
 
-- [ ] **Step 1: Write end-to-end tests**
+- [ ] **Step 1: Add end-to-end DB sweep test**
 
-Add to `cmd/tap/main_test.go` (following the pattern of existing integration tests in that file):
+Add to `cmd/tap/main_test.go` (check existing imports; add any missing ones from `encoding/json`, `os`, `path/filepath`, `github.com/bcrisp4/tap/internal/archival`, `github.com/bcrisp4/tap/internal/poll`, `github.com/bcrisp4/tap/internal/processor`, `github.com/bcrisp4/tap/internal/sanitise`):
 
 ```go
-func TestArchival_EndToEnd(t *testing.T) {
-	// Poll a fixture feed, mark an entry read, run a sweep, assert it's gone,
-	// re-poll and assert the tombstoned entry does not reappear.
+func TestArchival_DBSweep_EndToEnd(t *testing.T) {
 	t.Parallel()
-
-	d := newTestDB(t) // uses db.Open(":memory:") + db.Migrate
+	d := newTestDB(t) // opens :memory: + Migrate
 
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/atom+xml")
@@ -1630,197 +1470,200 @@ func TestArchival_EndToEnd(t *testing.T) {
 </feed>`)
 	}))
 	t.Cleanup(origin.Close)
-
 	ctx := context.Background()
-	proc := processor.New(sanitise.DefaultPolicy(), nil)
 
-	// Subscribe
+	proc := processor.New(sanitise.DefaultPolicy(), nil)
 	subID, err := db.InsertSubscription(ctx, d, db.NewSubscription{
 		Title: "e2e", FeedURL: origin.URL + "/feed", NextPoll: 0, Created: time.Now().Unix(),
 	})
 	require.NoError(t, err)
 
-	// Poll
 	w := poll.NewWorker(d, http.DefaultClient, poll.WorkerOpts{Processor: proc})
 	w.Run(ctx, db.DueSubscription{ID: subID, FeedURL: origin.URL + "/feed"})
 
 	entries, _, _, err := db.ListEntries(ctx, d, db.ListEntriesParams{Limit: 10})
 	require.NoError(t, err)
-	require.Len(t, entries, 1, "entry must land after poll")
+	require.Len(t, entries, 1)
 
-	// Mark read
 	require.NoError(t, db.UpdateEntry(ctx, d, entries[0].ID, db.EntryUpdate{Read: boolPtr(true)}))
 
-	// Run sweep with a horizon far in the future so the entry (published 2024) is archived
-	horizonUnix := time.Now().Unix() // now is well past 2024-01-01
-	deleted, tombstoned, err := archival.ExportedDBPass(ctx, d, horizonUnix, time.Now().Unix())
+	// published_at is 2024-01-01; horizon = now is well past it
+	deleted, tombstoned, err := archival.ExportedDBPass(ctx, d, time.Now().Unix(), time.Now().Unix())
 	require.NoError(t, err)
 	require.Equal(t, 1, deleted)
 	require.Equal(t, 1, tombstoned)
 
-	// Entry must be gone
 	entries, _, _, err = db.ListEntries(ctx, d, db.ListEntriesParams{Limit: 10})
 	require.NoError(t, err)
-	require.Empty(t, entries, "archived entry must be gone")
+	require.Empty(t, entries)
 
-	// Re-poll — tombstoned entry must NOT reappear
+	// Re-poll — tombstoned entry must not reappear
 	w.Run(ctx, db.DueSubscription{ID: subID, FeedURL: origin.URL + "/feed"})
 	entries, _, _, err = db.ListEntries(ctx, d, db.ListEntriesParams{Limit: 10})
 	require.NoError(t, err)
-	require.Empty(t, entries, "tombstoned entry must not reappear after re-poll")
+	require.Empty(t, entries, "tombstoned entry must not reappear")
 }
 
 func boolPtr(b bool) *bool { return &b }
-```
 
-Note: `archival.ExportedDBPass` is a thin exported wrapper around the unexported `dbPass` for test access. Add this to `sweep.go`:
-
-```go
-// ExportedDBPass is a test-only export of dbPass.
-func ExportedDBPass(ctx context.Context, d *sql.DB, horizonUnix, nowUnix int64) (int, int, error) {
-	return dbPass(ctx, d, horizonUnix, nowUnix)
-}
-```
-
-- [ ] **Step 2: Add FS sweep end-to-end test**
-
-Also add to `cmd/tap/main_test.go`:
-
-```go
-func TestArchival_FSPass_EndToEnd(t *testing.T) {
+func TestArchival_FSSweep_EndToEnd(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
-	// Write old and new cache files
-	writeTestCacheFile(t, dir, "aabbccddeeff00112233445566778899aabbccddeeff001122", 100)   // old
-	writeTestCacheFile(t, dir, "ffeeddccbbaa99887766554433221100ffeeddccbbaa998877", 99999) // new
+	writeE2ECacheFile(t, dir, "aabbccddeeff00112233445566778899aabbccddeeff001122", 100)
+	writeE2ECacheFile(t, dir, "ffeeddccbbaa99887766554433221100ffeeddccbbaa998877", 99999)
 
 	evicted, err := archival.ExportedFSPass(dir, 1000, nil)
 	require.NoError(t, err)
 	require.Equal(t, 1, evicted)
-
-	bucket1 := filepath.Join(dir, "aa")
-	require.NoFileExists(t, filepath.Join(bucket1, "aabbccddeeff00112233445566778899aabbccddeeff001122.bin"))
+	require.NoFileExists(t, filepath.Join(dir, "aa", "aabbccddeeff00112233445566778899aabbccddeeff001122.bin"))
 	require.FileExists(t, filepath.Join(dir, "ff", "ffeeddccbbaa99887766554433221100ffeeddccbbaa998877.bin"))
 }
 
-func writeTestCacheFile(t *testing.T, dir, hash string, fetchedAt int64) {
+func writeE2ECacheFile(t *testing.T, dir, hash string, fetchedAt int64) {
 	t.Helper()
 	bucket := filepath.Join(dir, hash[:2])
 	require.NoError(t, os.MkdirAll(bucket, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(bucket, hash+".bin"), []byte("data"), 0o644))
-	meta, _ := json.Marshal(map[string]any{"content_type": "image/jpeg", "byte_count": 4, "fetched_at": fetchedAt})
+	meta, _ := json.Marshal(map[string]any{
+		"content_type": "image/jpeg", "byte_count": 4, "fetched_at": fetchedAt,
+	})
 	require.NoError(t, os.WriteFile(filepath.Join(bucket, hash+".meta"), meta, 0o644))
 }
 ```
 
-Also add `ExportedFSPass` to `sweep.go`:
-
-```go
-// ExportedFSPass is a test-only export of fsPass.
-func ExportedFSPass(cacheDir string, ageCapUnix int64, onEvict func(int)) (int, error) {
-	return fsPass(cacheDir, ageCapUnix, onEvict)
-}
-```
-
-- [ ] **Step 3: Run the new tests**
+- [ ] **Step 2: Run the new tests**
 
 ```bash
 go test ./cmd/tap/... -run "TestArchival" -race -v
 ```
+
 Expected: PASS.
 
-- [ ] **Step 4: Run full test suite**
+- [ ] **Step 3: Run full test suite**
 
 ```bash
 make test
 ```
-Expected: PASS — full green.
 
-- [ ] **Step 5: Commit**
+Expected: PASS.
+
+- [ ] **Step 4: Commit**
 
 ```bash
-git add cmd/tap/main_test.go internal/archival/sweep.go
+git add cmd/tap/main_test.go
 git commit -m "M11: end-to-end archival tests"
+```
+
+---
+
+## Task 9: README / CLAUDE.md update
+
+**Files:**
+- Modify: `CLAUDE.md` (trust-posture section)
+
+- [ ] **Step 1: Find the M6 trust-posture paragraph**
+
+```bash
+grep -n "Authentication (M6)\|M6 in progress\|M6.*auth" CLAUDE.md | head -5
+```
+
+- [ ] **Step 2: Add M11 paragraph after the M6 block**
+
+> **Archival + tombstones (M11).** A daily sweep deletes read-and-unsaved entries older than `--archive-horizon` (default 90d), recording tombstones so re-published entries do not resurface as unread. A second daily pass unlinks proxy cache files older than `--cache-age-cap` (default 14d). Both bounds are configurable via flags or environment variables. The tombstone table (`tombstones`) is small and grows slowly; tombstones are permanent by design — the dedup guarantee requires durability. The archival sweep is the third concurrent concern alongside the HTTP server and polling pipeline; it starts after migrations and stops cleanly on shutdown.
+
+Also update the "M6 in progress" status line to "M11 in progress" (the spec at the top of CLAUDE.md tracks the current milestone).
+
+And add the upgrade note wherever prior upgrade notes appear:
+
+> Migration 0010 adds the `tombstones` table. Existing M10 databases migrate cleanly. Entries already in the database are subject to archival on the next sweep if they meet the horizon criterion.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add CLAUDE.md
+git commit -m "M11: update CLAUDE.md trust posture and milestone status"
 ```
 
 ---
 
 ## Task 10: Final verification
 
-**Skills to invoke:** `superpowers:verification-before-completion`
-
 - [ ] **Step 1: Full test suite with race detector**
 
 ```bash
 make test
 ```
-Expected: `ok` for all packages, no race conditions, no failures.
+
+Expected: `ok` for every package, zero failures, zero races.
 
 - [ ] **Step 2: Static binary build**
 
 ```bash
 make build
-ls -lh bin/tap
+file bin/tap
 ```
-Expected: binary exists, `file bin/tap` shows a statically linked ELF.
 
-- [ ] **Step 3: Smoke-test against fresh data dir**
+Expected: `ELF 64-bit LSB executable ... statically linked`.
 
-```bash
-TAP_ADMIN_USERNAME=admin TAP_ADMIN_PASSWORD=password12345 ./bin/tap --data /tmp/tap-m11-test &
-PID=$!
-sleep 2
-curl -sf http://127.0.0.1:8080/healthz && echo "OK"
-kill $PID
-rm -rf /tmp/tap-m11-test
-```
-Expected: `OK`, clean shutdown.
-
-- [ ] **Step 4: Verify migration sequence**
+- [ ] **Step 3: Verify migration sequence**
 
 ```bash
 ls internal/db/migrations/
 ```
-Expected: `0001_initial.sql` through `0010_tombstones.sql` with no gaps.
 
-- [ ] **Step 5: Commit final state if any cleanup happened**
+Expected: `0001_initial.sql` through `0010_tombstones.sql`, no gaps.
+
+- [ ] **Step 4: Smoke-test against fresh data dir**
 
 ```bash
-git status
-# If clean, nothing to do. If any minor fixes landed:
-git add -p
-git commit -m "M11: final cleanup"
+TAP_ADMIN_USERNAME=admin TAP_ADMIN_PASSWORD=password12345 ./bin/tap --data /tmp/tap-m11-final &
+PID=$!
+sleep 1
+curl -sf http://127.0.0.1:8080/healthz && echo "OK"
+kill $PID
+rm -rf /tmp/tap-m11-final
 ```
+
+Expected: `OK`, clean exit.
 
 ---
 
-## Spec coverage check
+## Spec coverage
 
 | Spec requirement | Task |
 |---|---|
-| `0010_tombstones.sql` migration | Task 1 |
-| `db.InsertTombstones` | Task 2 |
-| `db.IsTombstoned` | Task 2 |
-| `ON CONFLICT DO NOTHING` idempotency | Task 2 |
-| Cascade delete with subscription | Task 2 |
-| `db.ListArchivable` | Task 3 |
-| Tombstone consult in poll worker | Task 4 |
-| `dbPass` chunking (1000-row transactions) | Task 5 |
-| `dbPass` idempotency | Task 5 |
-| FTS regression test | Task 6 |
-| `fsPass` age-cap eviction | Task 6 |
-| `fsPass` ENOENT graceful handling | Task 6 |
-| `fsPass` orphan bin cleanup | Task 6 |
-| `OnEvict` callback | Task 6 |
-| `Archiver.Start()`/`Stop()` lifecycle | Task 7 |
-| Clock injection via `Now func()` | Task 7 |
-| `Stop()` waits for in-progress sweep | Task 7 |
-| `archival.sweep.start` log event | Task 7 (archiver.go) |
-| `archival.sweep.complete` log event with required attributes | Task 7 (archiver.go) |
-| `--archive-interval`, `--archive-horizon`, `--cache-age-cap` flags | Task 8 |
-| Shutdown ordering (HTTP → archiver → scheduler → DB) | Task 8 |
-| End-to-end: poll → mark read → sweep → gone → re-poll → not reappear | Task 9 |
-| End-to-end FS pass | Task 9 |
+| `0010_tombstones.sql` with `ON DELETE CASCADE` | Task 1 |
+| `db.InsertTombstones` (bulk, in tx, idempotent) | Task 2 |
+| `db.IsTombstoned` (point lookup) | Task 2 |
+| `ON CONFLICT DO NOTHING` — first `deleted_at` preserved | Task 2 |
+| Cascade delete when subscription removed | Task 2 |
+| `db.ListArchivable` with criteria + limit | Task 3 |
+| Worker tombstone consult before insert | Task 4 |
+| Tombstone hit → not inserted | Task 4 |
+| Tombstone miss → inserted | Task 4 |
+| Mixed (1 of 3 tombstoned) | Task 4 |
+| `dbPass` eligible deleted + tombstoned in same tx | Task 5 |
+| `dbPass` saved/unread/too-new retained | Task 5 |
+| `dbPass` idempotent | Task 5 |
+| `dbPass` chunking (2500 → 3 transactions) | Task 5 |
+| `dbPass` pre-existing tombstone → no error | Task 5 |
+| FTS regression test | Task 5 |
+| `fsPass` old files evicted | Task 5 |
+| `fsPass` new files retained | Task 5 |
+| `fsPass` missing `.bin` → graceful | Task 5 |
+| `fsPass` orphan `.bin` → removed | Task 5 |
+| `fsPass` empty/non-existent dir | Task 5 |
+| `fsPass` `OnEvict` callback | Task 5 |
+| `Archiver.Start()`/`Stop()` lifecycle | Task 6 |
+| `Stop()` waits for in-progress sweep | Task 6 |
+| `sweepHook` test seam | Task 6 |
+| `archival.sweep.start` log event | Task 6 |
+| `archival.sweep.complete` with all 4 attributes | Task 6 |
+| `OnEvict` nil in M11 wire-up | Task 7 |
+| `--archive-interval`, `--archive-horizon`, `--cache-age-cap` | Task 7 |
+| Shutdown ordering: HTTP → archiver → scheduler → DB | Task 7 |
+| End-to-end DB: poll → mark read → sweep → gone → re-poll → still gone | Task 8 |
+| End-to-end FS: old evicted, new retained | Task 8 |
 | Migration 0010 applies cleanly | Task 10 |
 | `make build` static binary | Task 10 |
