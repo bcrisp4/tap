@@ -22,6 +22,10 @@ const (
 	ErrCodeConflict               = "conflict"
 	ErrCodeInternal               = "internal"
 	ErrCodeExtractSelectorInvalid = "extract_selector_invalid"
+	ErrCodeInvalidCredentials     = "invalid_credentials"
+	ErrCodeInvalidSession         = "invalid_session"
+	ErrCodeCSRFInvalid            = "csrf_invalid"
+	ErrCodePasswordTooShort       = "password_too_short"
 )
 
 func writeJSON(w http.ResponseWriter, status int, body any) {
