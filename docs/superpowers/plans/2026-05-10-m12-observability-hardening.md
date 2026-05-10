@@ -1,63 +1,87 @@
 # M12 — Observability + Production Hardening Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make Tap production-ready for unattended self-hosted operation by adding Prometheus metrics, OTel traces, structured log taxonomy, brute-force lockout, argon2 re-hash-on-verify, a recent-errors ring buffer, system-status panel, healthcheck subcommand, and a full security audit pass.
+**Goal:** Land Prometheus metrics, OTel traces, structured log taxonomy, brute-force lockout (per-source + per-username), argon2 re-hash-on-verify, a recent-errors ring buffer, system-status SPA panel (admin-only), `tap healthcheck` subcommand, `tap admin list` + `tap admin disable` CLI extensions, and a full security audit pass as specified in `docs/specs/2026-05-10-m12-observability-hardening.md`. After M12, `GET /metrics` (when `--metrics-enabled`) returns Prometheus exposition with `# HELP` descriptions for every instrument; `--otlp-endpoint` exports traces and metrics to an OTel collector; the login endpoint enforces per-source rate limiting and per-username escalating lockout; argon2 hashes stored under weaker params silently upgrade on next login; `GET /api/v1/status` returns version/uptime/recent-errors for admins; and `tap healthcheck` exits 0/1 for the distroless Dockerfile `HEALTHCHECK`.
 
-**Architecture:** Three new packages (`internal/metrics`, `internal/ratelimit`, `internal/ring`) integrate with existing packages via the global OTel provider pattern; `internal/tracing` adds a tracing package. The `cmd/tap/main.go` wire-up section in the spec is the integration point. TDD throughout — rate limiter, ring buffer, re-hash logic, and admin CLI are all unit-testable.
+**Architecture:** Four new leaf packages (`internal/metrics`, `internal/tracing`, `internal/ring`, `internal/ratelimit`) integrate with existing packages. Metrics uses the global OTel provider pattern with a Prometheus bridge — instruments are safe to call before `Init` (no-op). The ring buffer is wired as a `slog.Handler` wrapper so warn/error events are captured automatically without manual call sites. Rate limiting is in-memory only (concept §3: live counters reset on restart). The `cmd/tap/main.go` wire-up section in the spec is the integration point for all four packages. TDD throughout — rate limiter, ring buffer, re-hash logic, and admin CLI are all unit-testable.
 
-**Tech Stack:** `go.opentelemetry.io/otel` SDK, `go.opentelemetry.io/otel/bridge/prometheus` + `github.com/prometheus/client_golang`, OTLP HTTP/gRPC exporters, `golang.org/x/time/rate` (token bucket), stdlib `log/slog`.
-
-**Spec:** `docs/specs/2026-05-10-m12-observability-hardening.md`
-
-**Skills to invoke per task (listed inline below).**
+**Tech Stack:** Go 1.25, `go.opentelemetry.io/otel` SDK, `go.opentelemetry.io/otel/bridge/prometheus` + `github.com/prometheus/client_golang`, OTLP HTTP/gRPC exporters, `golang.org/x/time/rate` (token bucket), stdlib `log/slog`, Svelte 5 + TypeScript.
 
 ---
 
-## File Map
+## Skills and tools to apply
 
-### New files
-| File | Purpose |
-|---|---|
-| `internal/metrics/provider.go` | OTel MeterProvider + Prometheus bridge init/shutdown |
-| `internal/metrics/instruments.go` | All metric instrument definitions with `# HELP` descriptions |
-| `internal/metrics/handler.go` | `promhttp` HTTP handler for `GET /metrics` |
-| `internal/metrics/provider_test.go` | Provider init/shutdown, no-op safety, double-init guard |
-| `internal/metrics/instruments_test.go` | Prometheus text exposition contains expected metric + description |
-| `internal/tracing/provider.go` | OTel TracerProvider init/shutdown, no-op when unconfigured |
-| `internal/tracing/middleware.go` | Inbound HTTP span + `request_id` middleware |
-| `internal/tracing/roundtripper.go` | Outbound HTTP tracing RoundTripper wrapper |
-| `internal/tracing/provider_test.go` | Init with/without endpoint, Shutdown |
-| `internal/tracing/middleware_test.go` | Span created, X-Request-ID header set, request_id in logs |
-| `internal/ring/buffer.go` | Fixed-capacity ring buffer of structured error events |
-| `internal/ring/handler.go` | `slog.Handler` wrapper that feeds the ring buffer |
-| `internal/ring/buffer_test.go` | Ring semantics, Recent(), concurrency, handler integration |
-| `internal/ratelimit/limiter.go` | Per-source token bucket + per-username escalating lockout |
-| `internal/ratelimit/limiter_test.go` | Allow/Record*, lockout escalation, cleanup, race safety |
+Always-on for every code-touching task:
 
-### Modified files
-| File | What changes |
-|---|---|
-| `internal/auth/argon2.go` | Add `NeedsRehash(encoded string, current Params) (bool, error)` |
-| `internal/auth/argon2_test.go` | Tests for `NeedsRehash` |
-| `internal/api/api.go` | Add `MuxOpts` fields: `Limiter`, `RingBuffer`, `TrustedProxy`, `MetricsEnabled`, `StartTime`, `Version`; mount `/metrics`, `/api/v1/status` |
-| `internal/api/auth.go` | Wire limiter into login handler; add re-hash-on-verify; emit structured log events |
-| `internal/api/auth_test.go` | Rate-limited login returns 429; re-hash triggered on weak params |
-| `internal/api/status.go` | New: `GET /api/v1/status` handler (admin-only) |
-| `internal/api/status_test.go` | New: 200 admin, 403 user, 401 unauthed, response shape |
-| `internal/api/middleware.go` | Wrap tracing middleware outermost; add `requireAdmin` helper |
-| `internal/api/errors.go` | Add `ErrCodeForbidden`, `ErrCodeRateLimited` |
-| `internal/poll/worker.go` | Emit `poll.start`/`poll.success`/`poll.failure` log events; increment poll metrics; add poll spans |
-| `internal/proxy/handler.go` | Increment `tap_proxy_cache_hits_total` / `tap_proxy_cache_misses_total` |
-| `internal/proxy/cache.go` | Increment `tap_proxy_cache_evictions_total{reason=size_cap}` and `tap_proxy_cache_bytes` |
-| `internal/httpx/client.go` | Accept optional `TracingRoundTripper` in `Opts`; wrap transport when set |
-| `cmd/tap/main.go` | Add 12 new flags; wire metrics/tracing Init; wrap slog handler; wire Limiter + RingBuffer into MuxOpts; wire Archiver `OnEvict`; extend shutdown sequence; emit `startup`/`shutdown` events; extend `/healthz` JSON body |
-| `cmd/tap/admin.go` | Add `tap admin list`, `tap admin disable`, `tap healthcheck` subcommands |
-| `cmd/tap/admin_test.go` | Tests for new subcommands |
-| `web/src/lib/status.ts` | New: `getStatus()` + `StatusResponse` type |
-| `web/src/lib/api.ts` | Wire `getStatus` |
-| `web/src/components/SystemStatus.svelte` | New: system-status panel component |
-| `web/src/views/Settings.svelte` | Conditionally render `<SystemStatus>` for admin role |
+- **`superpowers:test-driven-development`** — red/green/refactor on every behaviour-bearing change. Mandated by `docs/roadmap.md` §"Working cadence". Pure scaffolding (flag declarations, metric `# HELP` strings, migration SQL) is exempt; everything with branches, error handling, or state is in scope.
+- **`superpowers:verification-before-completion`** — before marking a task done, actually run the verification command in the task's step and confirm the output matches the expected output.
+
+Reach for as needed:
+
+- **`golang-observability`** — OTel SDK wiring (`MeterProvider`, `TracerProvider`, Prometheus bridge via `go.opentelemetry.io/otel/bridge/prometheus`), OTLP exporter configuration (HTTP vs gRPC scheme detection), `slog` structured log taxonomy, span attributes, `slog.InfoContext(ctx, ...)` for trace-correlated logs.
+- **`golang-security`** — `crypto/subtle.ConstantTimeCompare` for lockout-until comparisons, `crypto/rand` for request-ID generation, argon2 PHC string parsing for `NeedsRehash`, `X-Forwarded-For` trust boundary (`--trusted-proxy` flag), `http.MaxBytesReader` audit.
+- **`golang-concurrency`** — `sync.Mutex` protection on ring buffer and rate-limiter maps; `sync/atomic` for `Scheduler.ActiveCount()`; cleanup goroutine lifecycle (channel-based stop, no goroutine leaks); test with `-race`.
+- **`golang-error-handling`** — sentinel error codes (`ErrCodeForbidden`, `ErrCodeRateLimited`); `errors.As(*http.MaxBytesError)` → 413; single-handling rule (log or return, never both); `slog.WarnContext`/`slog.ErrorContext` for observable failures.
+- **`golang-testing`** + **`golang-stretchr-testify`** — match the existing repo style (`require.NoError`, table-driven). Use `httptest.Server` for API handler tests; `goleak.VerifyTestMain` on the `internal/ratelimit` package to catch cleanup goroutine leaks.
+- **`golang-context`** — `context.WithValue` for `requestIDKey{}` propagation through the tracing middleware; `slog.With("request_id", id)` for log correlation.
+- **`golang-cli`** — `flag.NewFlagSet` per new admin subcommand; exit codes 0/1/2/3 per the existing `adminExit*` constants; stderr for errors, stdout for success.
+- **`golang-naming`** — `NewBuffer`, `NewHandler`, `NewLimiter` constructors; unexported ring buffer fields; `ErrCodeForbidden` not `ForbiddenErrCode`.
+- **`golang-modernize`** — Go 1.25 idioms; no `ioutil`, no `errors.New` where `fmt.Errorf` with `%w` is cleaner.
+- **`svelte-runes`** — Svelte 5 `$state`, `$derived`, `$effect` in `SystemStatus.svelte`.
+
+MCP tools:
+
+- **`context7` (`mcp__plugin_context7_context7__query-docs`)** — fetch live docs for `go.opentelemetry.io/otel/bridge/prometheus` and `github.com/prometheus/client_golang/prometheus` if import paths or API signatures differ from this plan. The OTel SDK API stabilised at v1.x but bridge package names shift between minor versions — verify before writing `import` blocks.
+
+---
+
+## File structure
+
+| Path | Action | Responsibility |
+|---|---|---|
+| `internal/ring/buffer.go` | **create** | `Event`, `Buffer`, `NewBuffer`, `Add`, `Recent` — fixed-capacity mutex-guarded ring. |
+| `internal/ring/handler.go` | **create** | `NewHandler(next, buf)` — `slog.Handler` wrapper; feeds `buf` on warn/error records. |
+| `internal/ring/buffer_test.go` | **create** | Ring semantics, `Recent` newest-first, concurrency under `-race`, handler integration. |
+| `internal/ratelimit/limiter.go` | **create** | `Opts`, `Limiter`, `NewLimiter`, `Allow`, `RecordSuccess`, `RecordFailure`, `Stop`. Per-source token bucket + per-username escalating lockout. In-memory only. |
+| `internal/ratelimit/limiter_test.go` | **create** | Allow/Record* happy paths, lockout after threshold, escalation doubles, success resets, source rate limit, cleanup prunes stale entries, concurrent safety. |
+| `internal/metrics/provider.go` | **create** | `Opts`, `Init`, `InitWithRegistry`, `Shutdown` — OTel `MeterProvider` + Prometheus bridge. Global no-op default until `Init` called. |
+| `internal/metrics/instruments.go` | **create** | All instrument vars (`PollsTotal`, `HTTPRequestsTotal`, etc.) with full `# HELP` description strings. `registerInstruments()` called by `Init`. |
+| `internal/metrics/handler.go` | **create** | `Handler() http.Handler` — `promhttp.HandlerFor` pointed at the bridge registry. |
+| `internal/metrics/provider_test.go` | **create** | No-op before `Init` (no panic), `Init`/`Shutdown` roundtrip, double-`Init` returns error. |
+| `internal/metrics/instruments_test.go` | **create** | After `Init`, Prometheus gather returns `tap_polls_total` with non-empty `# HELP`. |
+| `internal/tracing/provider.go` | **create** | `Opts`, `Init`, `Shutdown` — OTel `TracerProvider`; no-op when `OTLPEndpoint` empty. |
+| `internal/tracing/middleware.go` | **create** | `Middleware(h)` — generates `request_id`, starts span, injects into context + response header. |
+| `internal/tracing/roundtripper.go` | **create** | `NewRoundTripper(wrapped)` — child span per outbound HTTP call; host only, no credentials in attributes. |
+| `internal/tracing/provider_test.go` | **create** | `Init` with/without endpoint; `Shutdown` clean. |
+| `internal/tracing/middleware_test.go` | **create** | `X-Request-ID` header is 32 hex chars; span attributes set. |
+| `internal/auth/argon2.go` | modify | Add `NeedsRehash(encoded string, current Params) (bool, error)`. |
+| `internal/auth/argon2_test.go` | modify | `NeedsRehash` false for current params, true for weaker Memory/Time, error on malformed. |
+| `internal/api/errors.go` | modify | Add `ErrCodeForbidden = "forbidden"`, `ErrCodeRateLimited = "rate_limited"`. |
+| `internal/api/status.go` | **create** | `statusHandler(deps statusDeps)` — `GET /api/v1/status`, admin-only, returns version/uptime/db/polls/recent-errors. |
+| `internal/api/status_test.go` | **create** | 200 admin, 403 user-role, 401 no-session, `recent_errors` shape. |
+| `internal/api/auth.go` | modify | Wire `Limiter.Allow` before credential check; `RecordSuccess`/`RecordFailure` after; re-hash-on-verify after successful login; emit `auth.login.*` log events. |
+| `internal/api/auth_test.go` | modify | 429 + `Retry-After` header when rate-limited; re-hash triggered on weak-params hash. |
+| `internal/api/middleware.go` | modify | Mount `tracing.Middleware` outermost; add `requireAdmin` role check helper. |
+| `internal/api/api.go` | modify | `MuxOpts` gains `Limiter`, `RingBuffer`, `TrustedProxy`, `MetricsEnabled`, `StartTime`, `Version`, `PollsActive`; mount `/metrics` (conditional) and `GET /api/v1/status`; extend `/healthz` to return JSON. |
+| `internal/api/api_test.go` | modify | `/healthz` returns JSON with `status`/`version`/`uptime_seconds`/`db`/`polls_active`; `/metrics` 200 when enabled, 404 when disabled. |
+| `internal/poll/worker.go` | modify | Emit `poll.start`/`poll.success`/`poll.failure` slog events; increment `PollsTotal`, `PollDuration`, `EntriesInserted`, `ConditionalGetHits`; wrap poll in OTel span. |
+| `internal/proxy/handler.go` | modify | Increment `ProxyCacheHits` / `ProxyCacheMisses`. |
+| `internal/proxy/cache.go` | modify | Increment `ProxyCacheEvictions{reason=size_cap}`; record `ProxyCacheBytes` gauge. |
+| `internal/httpx/client.go` | modify | `Opts` gains optional `Tracer http.RoundTripper`; `NewClient` wraps transport with it when non-nil. |
+| `cmd/tap/main.go` | modify | 12 new flags; `configureLogger` gains level param; wire `metrics.Init`, `ring.NewBuffer`+handler wrap, `tracing.Init`, `ratelimit.NewLimiter`, Archiver `OnEvict`; update `api.NewMux` call; extend shutdown sequence; emit `startup`/`shutdown` events. |
+| `cmd/tap/admin.go` | modify | Add `runAdminList`, `runAdminDisable`; dispatch from `runAdmin` switch. |
+| `cmd/tap/main.go` | modify | Add `tap healthcheck` branch before `tap admin` branch. |
+| `cmd/tap/admin_test.go` | modify | `tap admin list` happy + empty; `tap admin disable` happy + not-found + already-disabled; `tap healthcheck` exits 0/1. |
+| `internal/api/subscriptions.go` | modify | Add `http.MaxBytesReader` to POST + PATCH handlers (deferred-items fix); return 413 on `*http.MaxBytesError`. |
+| `internal/api/entries.go` | modify | Add `http.MaxBytesReader` to PATCH handler (deferred-items fix); return 413. |
+| `internal/api/subscriptions_test.go` | modify | POST >1 MiB body → 413. |
+| `internal/api/entries_test.go` | modify | PATCH >1 MiB body → 413. |
+| `web/src/lib/status.ts` | **create** | `StatusResponse` type + `getStatus()` function. |
+| `web/src/lib/__tests__/status.test.ts` | **create** | 200 → populates, 403 → throws. |
+| `web/src/components/SystemStatus.svelte` | **create** | Polls `getStatus` every 60s; renders version/uptime/db/polls/recent-errors. |
+| `web/src/views/Settings.svelte` | modify | Conditionally render `<SystemStatus>` when `$auth.user?.role === 'admin'`. |
+| `go.mod` / `go.sum` | modify | Add OTel SDK, Prometheus client, OTLP exporters, `golang.org/x/time`. |
 | `web/src/lib/__tests__/status.test.ts` | New: status fetch, 403 path |
 
 ---
