@@ -435,3 +435,96 @@ func TestWorker_CommitFailure_UsesExponentialBackoff(t *testing.T) {
 	require.GreaterOrEqual(t, nextPoll, earliest, "commit failure must back off, not retry in 5m flat")
 	require.Less(t, nextPoll, latest)
 }
+
+func TestWorker_Extract_ReplacesContentOnSuccess(t *testing.T) {
+	t.Parallel()
+	const atom = `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Linkonly</title>
+  <id>urn:linkonly</id>
+  <updated>2026-05-01T00:00:00Z</updated>
+  <entry>
+    <title>One</title>
+    <id>urn:linkonly:1</id>
+    <link href="https://link.example/1"/>
+    <updated>2026-05-01T00:00:00Z</updated>
+    <content type="html">&lt;p&gt;teaser&lt;/p&gt;</content>
+  </entry>
+</feed>`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(atom))
+	}))
+	defer srv.Close()
+
+	d := newDB(t)
+	subID, err := db.InsertSubscription(context.Background(), d, db.NewSubscription{
+		Title: "x", FeedURL: srv.URL, NextPoll: 0, Created: 0,
+	})
+	require.NoError(t, err)
+
+	var calls int
+	fakeExtract := func(ctx context.Context, c *http.Client, url, sel string, cap int64) (string, error) {
+		calls++
+		require.Equal(t, "https://link.example/1", url)
+		require.Equal(t, "", sel)
+		return "<p>extracted body</p>", nil
+	}
+
+	w := NewWorker(d, http.DefaultClient, WorkerOpts{
+		Processor: processor.New(sanitise.DefaultPolicy(), nil),
+		Extract:   fakeExtract,
+	})
+	w.Run(context.Background(), db.DueSubscription{
+		ID: subID, FeedURL: srv.URL, Extract: true,
+	})
+
+	require.Equal(t, 1, calls)
+	entries, _, _, err := db.ListEntries(context.Background(), d, db.ListEntriesParams{Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	full, err := db.GetEntry(context.Background(), d, entries[0].ID)
+	require.NoError(t, err)
+	require.Contains(t, full.Content, "extracted body")
+	require.NotContains(t, full.Content, "teaser")
+}
+
+func TestWorker_Extract_FalseSkipsExtraction(t *testing.T) {
+	t.Parallel()
+	const atom = `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Linkonly</title>
+  <id>urn:linkonly</id>
+  <entry><title>One</title><id>urn:linkonly:1</id>
+    <link href="https://link.example/1"/>
+    <updated>2026-05-01T00:00:00Z</updated>
+    <content type="html">&lt;p&gt;teaser&lt;/p&gt;</content></entry>
+</feed>`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(atom))
+	}))
+	defer srv.Close()
+
+	d := newDB(t)
+	subID, _ := db.InsertSubscription(context.Background(), d, db.NewSubscription{
+		Title: "x", FeedURL: srv.URL, NextPoll: 0, Created: 0,
+	})
+
+	var calls int
+	fakeExtract := func(ctx context.Context, c *http.Client, url, sel string, cap int64) (string, error) {
+		calls++
+		return "should-not-appear", nil
+	}
+
+	w := NewWorker(d, http.DefaultClient, WorkerOpts{
+		Processor: processor.New(sanitise.DefaultPolicy(), nil),
+		Extract:   fakeExtract,
+	})
+	w.Run(context.Background(), db.DueSubscription{
+		ID: subID, FeedURL: srv.URL, Extract: false,
+	})
+
+	require.Equal(t, 0, calls, "Extract must not be called when sub.Extract is false")
+	entries, _, _, _ := db.ListEntries(context.Background(), d, db.ListEntriesParams{Limit: 10})
+	full, _ := db.GetEntry(context.Background(), d, entries[0].ID)
+	require.Contains(t, full.Content, "teaser")
+}
