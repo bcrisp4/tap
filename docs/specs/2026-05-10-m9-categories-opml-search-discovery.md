@@ -66,13 +66,11 @@ CREATE TRIGGER entries_fts_insert AFTER INSERT ON entries BEGIN
 END;
 
 CREATE TRIGGER entries_fts_delete AFTER DELETE ON entries BEGIN
-    INSERT INTO entries_fts(entries_fts, rowid, title, content_text, author)
-    VALUES ('delete', old.id, old.title, tap_strip_html(old.content), old.author);
+    INSERT INTO entries_fts(entries_fts, rowid) VALUES ('delete', old.id);
 END;
 
 CREATE TRIGGER entries_fts_update AFTER UPDATE ON entries BEGIN
-    INSERT INTO entries_fts(entries_fts, rowid, title, content_text, author)
-    VALUES ('delete', old.id, old.title, tap_strip_html(old.content), old.author);
+    INSERT INTO entries_fts(entries_fts, rowid) VALUES ('delete', old.id);
     INSERT INTO entries_fts(rowid, title, content_text, author)
     VALUES (new.id, new.title, tap_strip_html(new.content), new.author);
 END;
@@ -344,7 +342,7 @@ The FEEDS group becomes a category-grouped layout:
 
 #### `/` keybinding
 
-Pressing `/` outside a form control focuses the search input. If the current route is not `/search`, navigate there first (preserving any existing `?q=` if the input is non-empty). This keybinding is absent from M8's keyboard shortcut surface — it lands here, alongside the search feature it targets.
+Pressing `/` outside a form control focuses the search input. If the current route is not `/search`, navigate there first (preserving any existing `?q=` if the input is non-empty). This keybinding is registered entirely in M9 — M8's keyboard shortcut surface does not include it, not even as a stub or no-op. There is no `focusSearch()` interface contract in M8 that M9 implements; M9 adds the binding from scratch alongside the search feature it targets.
 
 #### `web/src/lib/api.ts` extensions
 
@@ -389,7 +387,7 @@ No new flags. The OPML 10 MiB cap is a hard-coded per-route constant in `interna
 | Concern | Lands in |
 |---|---|
 | Nested categories / category hierarchy | Won't ship — Tap categories are intentionally flat |
-| Per-category entry retention horizon | M11 (archival preferences) |
+| Per-category entry retention horizon | Future — M11 does not include per-category horizon preferences (M11 ships only a global `--archive-horizon` flag). Requires a new column on `categories` and sweep query changes; not yet sequenced. |
 | OPML import progress stream / async job | Won't ship — synchronous import with per-item error list is sufficient |
 | Well-known path probing on discovery (`/feed`, `/rss`) | Deferred — add when a real user case surfaces |
 | Search snippets / highlighted matches | Deferred — FTS5 snippet() function can be added later |
