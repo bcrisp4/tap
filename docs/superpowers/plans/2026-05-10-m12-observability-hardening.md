@@ -2489,12 +2489,81 @@ git commit -m "M12: add tap admin list, tap admin disable, and tap healthcheck s
 
 ## Task 13: Poll worker metrics and log taxonomy
 
-**Skills:** `golang-observability`, `golang-error-handling`
+**Skills:** `superpowers:test-driven-development`, `golang-observability`, `golang-error-handling`
 
 **Files:**
 - Modify: `internal/poll/worker.go`
+- Modify: `internal/poll/worker_test.go`
 
-- [ ] **Step 1: Add poll metrics and structured log events to worker**
+- [ ] **Step 1: Write failing tests for poll log events and metrics**
+
+Read `internal/poll/worker_test.go` to understand the existing test harness (fixture HTTP server, in-memory DB). Append new test cases:
+
+```go
+func TestWorker_EmitsPollSuccessLogEvent(t *testing.T) {
+	// Capture slog output by installing a test handler.
+	var records []slog.Record
+	h := slogtest.NewHandler(t, &records)
+	slog.SetDefault(slog.New(h))
+
+	// Set up a fixture feed origin that returns 200 + minimal RSS.
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/rss+xml")
+		fmt.Fprint(w, minimalRSS("Test", "https://example.com/feed", 0))
+	}))
+	defer origin.Close()
+
+	// ... run a poll against the fixture origin using the existing worker test helper ...
+	// After the poll completes, assert at least one record has event="poll.success".
+	var found bool
+	for _, rec := range records {
+		rec.Attrs(func(a slog.Attr) bool {
+			if a.Key == "event" && a.Value.String() == "poll.success" {
+				found = true
+			}
+			return true
+		})
+	}
+	assert.True(t, found, "expected poll.success log event")
+}
+
+func TestWorker_EmitsPollFailureLogEvent(t *testing.T) {
+	// Origin that returns 500.
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer origin.Close()
+
+	var records []slog.Record
+	h := slogtest.NewHandler(t, &records)
+	slog.SetDefault(slog.New(h))
+
+	// ... run a poll against the 500 origin ...
+	// After the poll, assert event="poll.failure" is present with "error_count" attr.
+	var found bool
+	for _, rec := range records {
+		rec.Attrs(func(a slog.Attr) bool {
+			if a.Key == "event" && a.Value.String() == "poll.failure" {
+				found = true
+			}
+			return true
+		})
+	}
+	assert.True(t, found, "expected poll.failure log event")
+}
+```
+
+Note: `slogtest.NewHandler` is from `golang.org/x/exp/slog/slogtest` or implement a simple capturing handler using the existing test helper pattern in the codebase. Check `internal/poll/worker_test.go` for the correct harness shape before writing.
+
+- [ ] **Step 2: Run tests — expect failure (event attributes not emitted yet)**
+
+```bash
+go test ./internal/poll/... -race -run "TestWorker_EmitsPoll" 2>&1 | tail -10
+```
+
+Expected: FAIL — event attribute not found.
+
+- [ ] **Step 3: Add poll metrics and structured log events to worker**
 
 In `internal/poll/worker.go`, in the poll execution function:
 
@@ -2528,7 +2597,7 @@ slog.WarnContext(ctx, "poll failed",
     "error_count", sub.ErrorCount+1)
 ```
 
-- [ ] **Step 2: Add poll spans**
+- [ ] **Step 4: Add poll spans**
 
 Wrap the poll execution with a span:
 
@@ -2539,16 +2608,26 @@ defer span.End()
 span.SetAttributes(attribute.Int64("feed_id", sub.ID))
 ```
 
-- [ ] **Step 3: Build and run poll tests**
+- [ ] **Step 5: Run poll tests — expect pass**
+
+```bash
+go test ./internal/poll/... -race -run "TestWorker_EmitsPoll" 2>&1 | tail -10
+```
+
+Expected: all PASS.
+
+- [ ] **Step 6: Run full poll test suite**
 
 ```bash
 go test ./internal/poll/... -race 2>&1 | tail -10
 ```
 
-- [ ] **Step 4: Commit**
+Expected: all PASS.
+
+- [ ] **Step 7: Commit**
 
 ```bash
-git add internal/poll/worker.go
+git add internal/poll/worker.go internal/poll/worker_test.go
 git commit -m "M12: add poll metrics and structured log events to poll worker"
 ```
 
@@ -2556,13 +2635,49 @@ git commit -m "M12: add poll metrics and structured log events to poll worker"
 
 ## Task 14: Proxy cache metrics
 
-**Skills:** `golang-observability`
+**Skills:** `superpowers:test-driven-development`, `golang-observability`
 
 **Files:**
 - Modify: `internal/proxy/handler.go`
 - Modify: `internal/proxy/cache.go`
+- Modify: `internal/proxy/handler_test.go`
+- Modify: `internal/proxy/cache_test.go`
 
-- [ ] **Step 1: Wire cache hit/miss counters in `handler.go`**
+- [ ] **Step 1: Write failing tests for hit/miss and eviction counters**
+
+Read `internal/proxy/handler_test.go` and `internal/proxy/cache_test.go` to understand the existing harness. Append:
+
+```go
+// In handler_test.go:
+func TestHandler_IncrementsCacheHitCounter(t *testing.T) {
+	// Prime the cache with a known token, then serve a request.
+	// After the request, gather Prometheus metrics and assert
+	// tap_proxy_cache_hits_total is 1.
+	// Use metrics.InitWithRegistry(prometheus.NewRegistry(), metrics.Opts{}) for isolation.
+}
+
+func TestHandler_IncrementsCacheMissCounter(t *testing.T) {
+	// Cold cache request. Assert tap_proxy_cache_misses_total is 1.
+}
+
+// In cache_test.go:
+func TestCache_IncrementsEvictionCounter(t *testing.T) {
+	// Fill cache past cap so inline LRU fires.
+	// Assert tap_proxy_cache_evictions_total{reason="size_cap"} > 0.
+}
+```
+
+Note: follow the pattern of the existing proxy handler tests — they set up a `proxy.Cache` with a temp dir and a fixture HTTP origin. Use `metrics.InitWithRegistry` with an isolated `prometheus.NewRegistry()` so test runs don't share metric state.
+
+- [ ] **Step 2: Run tests — expect failure**
+
+```bash
+go test ./internal/proxy/... -race -run "TestHandler_IncrementsCacheHit\|TestHandler_IncrementsCacheMiss\|TestCache_IncrementsEviction" 2>&1 | tail -10
+```
+
+Expected: FAIL — counters not yet wired.
+
+- [ ] **Step 3: Wire cache hit/miss counters in `handler.go`**
 
 In the proxy handler, where the cache lookup result is known:
 
@@ -2574,7 +2689,7 @@ metrics.ProxyCacheHits.Add(r.Context(), 1)
 metrics.ProxyCacheMisses.Add(r.Context(), 1)
 ```
 
-- [ ] **Step 2: Wire eviction and bytes gauge in `cache.go`**
+- [ ] **Step 4: Wire eviction and bytes gauge in `cache.go`**
 
 After a size-cap eviction completes:
 
@@ -2590,13 +2705,23 @@ After a new file is written to cache:
 metrics.ProxyCacheBytes.Record(context.Background(), currentBytes)
 ```
 
-- [ ] **Step 3: Run proxy tests**
+- [ ] **Step 5: Run new tests — expect pass**
+
+```bash
+go test ./internal/proxy/... -race -run "TestHandler_IncrementsCacheHit\|TestHandler_IncrementsCacheMiss\|TestCache_IncrementsEviction" 2>&1 | tail -10
+```
+
+Expected: all PASS.
+
+- [ ] **Step 6: Run full proxy test suite**
 
 ```bash
 go test ./internal/proxy/... -race 2>&1 | tail -10
 ```
 
-- [ ] **Step 4: Commit**
+Expected: all PASS.
+
+- [ ] **Step 7: Commit**
 
 ```bash
 git add internal/proxy/
@@ -2777,27 +2902,82 @@ git commit -m "M12: add system-status panel — getStatus(), SystemStatus compon
 
 ## Task 16: `MaxBytesReader` audit — deferred-items fix
 
-**Skills:** `golang-security`
+**Skills:** `superpowers:test-driven-development`, `golang-security`
 
 **Files:**
 - Modify: `internal/api/subscriptions.go`
 - Modify: `internal/api/entries.go`
+- Modify: `internal/api/subscriptions_test.go`
+- Modify: `internal/api/entries_test.go`
 
-- [ ] **Step 1: Verify current state of subscriptions.go write handlers**
+- [ ] **Step 1: Write failing tests for 413 on oversize body**
+
+Append to `internal/api/subscriptions_test.go`:
+
+```go
+func TestCreateSubscription_BodyTooLarge(t *testing.T) {
+	ts := newTestServer(t, withAdminSession())
+	defer ts.Close()
+
+	body := strings.Repeat("x", 2<<20) // 2 MiB
+	resp, _ := ts.Client().Post(ts.URL+"/api/v1/subscriptions", "application/json",
+		strings.NewReader(body))
+	assert.Equal(t, http.StatusRequestEntityTooLarge, resp.StatusCode)
+}
+
+func TestPatchSubscription_BodyTooLarge(t *testing.T) {
+	ts := newTestServer(t, withAdminSession(), withSubscription())
+	defer ts.Close()
+
+	body := strings.Repeat("x", 2<<20)
+	req, _ := http.NewRequest("PATCH", ts.URL+"/api/v1/subscriptions/1", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := ts.Client().Do(req)
+	assert.Equal(t, http.StatusRequestEntityTooLarge, resp.StatusCode)
+}
+```
+
+Append to `internal/api/entries_test.go`:
+
+```go
+func TestPatchEntry_BodyTooLarge(t *testing.T) {
+	ts := newTestServer(t, withAdminSession(), withEntry())
+	defer ts.Close()
+
+	body := strings.Repeat("x", 2<<20)
+	req, _ := http.NewRequest("PATCH", ts.URL+"/api/v1/entries/1", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := ts.Client().Do(req)
+	assert.Equal(t, http.StatusRequestEntityTooLarge, resp.StatusCode)
+}
+```
+
+- [ ] **Step 2: Run tests — expect failure (returns 400 today, not 413)**
+
+```bash
+go test ./internal/api/... -race -run "TestCreate.*Large\|TestPatch.*Large\|TestPatchEntry.*Large" 2>&1 | tail -10
+```
+
+Expected: FAIL — handlers return 400 not 413 (no `MaxBytesReader` yet).
+
+- [ ] **Step 3: Inspect current handler bodies**
 
 ```bash
 grep -n "MaxBytesReader\|json.NewDecoder\|json.Decode" /home/ben.guest/Users/ben/src/tap/internal/api/subscriptions.go
+grep -n "MaxBytesReader\|json.NewDecoder\|json.Decode" /home/ben.guest/Users/ben/src/tap/internal/api/entries.go
 ```
 
-- [ ] **Step 2: Add `MaxBytesReader` to POST /subscriptions handler**
+Confirms which decoders need the `MaxBytesReader` wrapper.
 
-In the `createSubscription` handler, before `json.NewDecoder`:
+- [ ] **Step 4: Add `MaxBytesReader` to POST /subscriptions, PATCH /subscriptions/{id}, and PATCH /entries/{id}**
+
+In each handler, before `json.NewDecoder`:
 
 ```go
 r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MiB
 ```
 
-After `json.Decode`, ensure `*http.MaxBytesError` is handled:
+After `json.Decode`, add the 413 detection (before the existing `bad_request` path):
 
 ```go
 if err != nil {
@@ -2811,32 +2991,23 @@ if err != nil {
 }
 ```
 
-Apply the same pattern to `PATCH /subscriptions/{id}` and `PATCH /entries/{id}`.
-
-- [ ] **Step 3: Write regression tests for 413**
-
-Append to `internal/api/subscriptions_test.go`:
-
-```go
-func TestCreateSubscription_BodyTooLarge(t *testing.T) {
-	ts := newTestServer(t, withAdminSession())
-	defer ts.Close()
-
-	// 2 MiB body
-	body := strings.Repeat("x", 2<<20)
-	resp, _ := ts.Client().Post(ts.URL+"/api/v1/subscriptions", "application/json",
-		strings.NewReader(body))
-	assert.Equal(t, http.StatusRequestEntityTooLarge, resp.StatusCode)
-}
-```
-
-- [ ] **Step 4: Run and verify**
+- [ ] **Step 5: Run tests — expect pass**
 
 ```bash
-go test ./internal/api/... -race -run "TestCreate.*Large\|TestPatch.*Large" 2>&1 | tail -10
+go test ./internal/api/... -race -run "TestCreate.*Large\|TestPatch.*Large\|TestPatchEntry.*Large" 2>&1 | tail -10
 ```
 
-- [ ] **Step 5: Commit**
+Expected: all PASS.
+
+- [ ] **Step 6: Run full API test suite**
+
+```bash
+go test ./internal/api/... -race 2>&1 | tail -10
+```
+
+Expected: all PASS.
+
+- [ ] **Step 7: Commit**
 
 ```bash
 git add internal/api/subscriptions.go internal/api/entries.go internal/api/subscriptions_test.go internal/api/entries_test.go
@@ -2964,6 +3135,10 @@ Expected: 404 response.
 git add -A
 git commit -m "M12: final integration — all tests green, smoke tests pass"
 ```
+
+- [ ] **Step 7: Run `/simplify`**
+
+Invoke the `simplify` skill to review all changed code for reuse, quality, and efficiency. Fix any issues found before closing the milestone.
 
 ---
 
