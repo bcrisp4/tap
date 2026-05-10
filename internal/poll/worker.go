@@ -10,17 +10,27 @@ import (
 
 	"github.com/bcrisp4/tap/internal/cadence"
 	"github.com/bcrisp4/tap/internal/db"
+	"github.com/bcrisp4/tap/internal/extract"
 	"github.com/bcrisp4/tap/internal/feed"
 	"github.com/bcrisp4/tap/internal/processor"
 	"github.com/mmcdole/gofeed"
 )
 
+// ExtractFunc matches extract.Extract — declared as a type so tests can
+// inject deterministic in-memory extractors without spinning up an
+// httptest origin. Same shape of test seam as Now func() time.Time.
+type ExtractFunc func(ctx context.Context, client *http.Client,
+	articleURL, selector string, bodyCap int64) (string, error)
+
 type WorkerOpts struct {
-	Processor *processor.Processor // applied to every entry's HTML body. Required (panics on nil).
-	Floor     time.Duration        // min interval between polls; default 15m
-	Ceiling   time.Duration        // max interval between polls; default 24h
-	ErrorBase time.Duration        // first-error backoff base, doubled per consecutive error; default 5m
-	Now       func() time.Time     // default time.Now (overridable in tests)
+	Processor          *processor.Processor // applied to every entry's HTML body. Required (panics on nil).
+	Floor              time.Duration        // min interval between polls; default 15m
+	Ceiling            time.Duration        // max interval between polls; default 24h
+	ErrorBase          time.Duration        // first-error backoff base, doubled per consecutive error; default 5m
+	Now                func() time.Time     // default time.Now (overridable in tests)
+	Extract            ExtractFunc          // default extract.Extract; test seam
+	ExtractConcurrency int                  // default 4
+	ExtractBodyCap     int64                // default 5 MiB
 }
 
 type Worker struct {
@@ -47,6 +57,15 @@ func NewWorker(d *sql.DB, c *http.Client, o WorkerOpts) *Worker {
 	}
 	if o.Now == nil {
 		o.Now = time.Now
+	}
+	if o.Extract == nil {
+		o.Extract = extract.Extract
+	}
+	if o.ExtractConcurrency <= 0 {
+		o.ExtractConcurrency = 4
+	}
+	if o.ExtractBodyCap <= 0 {
+		o.ExtractBodyCap = 5 << 20
 	}
 	if c == nil {
 		c = http.DefaultClient

@@ -16,13 +16,16 @@ import (
 )
 
 type SchedulerOpts struct {
-	TickInterval time.Duration        // default 60s
-	Workers      int                  // default 3
-	Processor    *processor.Processor // default processor.New(sanitise.DefaultPolicy(), nil)
-	Floor        time.Duration        // min interval between polls; default 15m
-	Ceiling      time.Duration        // max interval between polls; default 24h
-	ErrorBase    time.Duration        // first-error backoff base, doubled per consecutive error; default 5m
-	Now          func() time.Time     // default time.Now (overridable in tests)
+	TickInterval       time.Duration        // default 60s
+	Workers            int                  // default 3
+	Processor          *processor.Processor // default processor.New(sanitise.DefaultPolicy(), nil)
+	Floor              time.Duration        // min interval between polls; default 15m
+	Ceiling            time.Duration        // max interval between polls; default 24h
+	ErrorBase          time.Duration        // first-error backoff base, doubled per consecutive error; default 5m
+	Now                func() time.Time     // default time.Now (overridable in tests)
+	Extract            ExtractFunc
+	ExtractConcurrency int
+	ExtractBodyCap     int64
 }
 
 type Scheduler struct {
@@ -77,11 +80,14 @@ func NewScheduler(base context.Context, d *sql.DB, c *http.Client, o SchedulerOp
 		opts:     o,
 		inflight: NewInflight(),
 		worker: NewWorker(d, c, WorkerOpts{
-			Processor: o.Processor,
-			Floor:     o.Floor,
-			Ceiling:   o.Ceiling,
-			ErrorBase: o.ErrorBase,
-			Now:       o.Now,
+			Processor:          o.Processor,
+			Floor:              o.Floor,
+			Ceiling:            o.Ceiling,
+			ErrorBase:          o.ErrorBase,
+			Now:                o.Now,
+			Extract:            o.Extract,
+			ExtractConcurrency: o.ExtractConcurrency,
+			ExtractBodyCap:     o.ExtractBodyCap,
 		}),
 		jobs:         make(chan db.DueSubscription, o.Workers*2),
 		tickDone:     make(chan struct{}),

@@ -378,6 +378,19 @@ func TestWorker_NotModified_VelocityQueryFailure_AdvancesNextPoll(t *testing.T) 
 	require.True(t, lastError.Valid, "last_error should record the velocity-query failure")
 }
 
+func TestNewWorker_DefaultsExtractFunc(t *testing.T) {
+	t.Parallel()
+	d := newDB(t)
+	w := NewWorker(d, http.DefaultClient, WorkerOpts{
+		Processor: processor.New(sanitise.DefaultPolicy(), nil),
+	})
+	// Defaults: ExtractConcurrency = 4, ExtractBodyCap = 5 MiB,
+	// Extract = extract.Extract (non-nil).
+	require.Equal(t, 4, w.opts.ExtractConcurrency)
+	require.Equal(t, int64(5<<20), w.opts.ExtractBodyCap)
+	require.NotNil(t, w.opts.Extract)
+}
+
 func TestWorker_CommitFailure_UsesExponentialBackoff(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
