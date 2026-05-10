@@ -314,6 +314,25 @@ func TestRequireCSRFAcceptsMatchingReferer(t *testing.T) {
 	require.True(t, called)
 }
 
+func TestRequireCSRFRejectsMismatchedOriginEvenWithMatchingReferer(t *testing.T) {
+	// Origin is authoritative when present. A mismatched Origin must NOT
+	// be salvaged by a matching Referer — otherwise an attacker who can
+	// influence the Referer (or strip Origin) could bypass the same-origin
+	// check.
+	t.Parallel()
+	h := withSession(t, "tok", requireCSRF()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("handler should not run")
+	})))
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	req.Host = "tap.example"
+	req.Header.Set("Origin", "https://attacker.example")  // present but mismatches
+	req.Header.Set("Referer", "https://tap.example/path") // matches — must NOT save the request
+	req.Header.Set("X-CSRF-Token", "tok")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusForbidden, rr.Code)
+}
+
 func TestRequireCSRFAcceptsBothMissing(t *testing.T) {
 	// Both Origin and Referer missing → SameSite=Lax + an authenticated
 	// session already cover the cross-site case. requireCSRF still needs

@@ -144,26 +144,19 @@ func requireCSRF() func(http.Handler) http.Handler {
 	}
 }
 
-// originOK is the Origin/Referer host check. Returns true if both headers
-// are absent (concept §7.8: SameSite=Lax + auth already cover that case),
-// or if at least one of them parses to a host equal to r.Host.
+// originOK enforces same-origin discipline as a defence-in-depth check
+// alongside the X-CSRF-Token. Origin is authoritative when present;
+// Referer is only consulted as a fallback when Origin is absent. If both
+// are absent, requireCSRF accepts (concept §7.8: SameSite=Lax + an
+// authenticated session already cover that case).
 func originOK(r *http.Request) bool {
-	origin := r.Header.Get("Origin")
-	referer := r.Header.Get("Referer")
-	if origin == "" && referer == "" {
-		return true
-	}
-	if origin != "" {
+	if origin := r.Header.Get("Origin"); origin != "" {
 		u, err := url.Parse(origin)
-		if err == nil && u.Host == r.Host {
-			return true
-		}
+		return err == nil && u.Host == r.Host
 	}
-	if referer != "" {
+	if referer := r.Header.Get("Referer"); referer != "" {
 		u, err := url.Parse(referer)
-		if err == nil && u.Host == r.Host {
-			return true
-		}
+		return err == nil && u.Host == r.Host
 	}
-	return false
+	return true
 }
