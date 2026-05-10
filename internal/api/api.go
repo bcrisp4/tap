@@ -5,23 +5,12 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/go-webauthn/webauthn/webauthn"
+
 	"github.com/bcrisp4/tap/internal/auth"
 )
 
 // MuxOpts carries optional dependencies for NewMux.
-//
-//   - Poke is called after a successful POST /api/v1/subscriptions so the
-//     scheduler can run an immediate tick.
-//   - ProxyHandler is mounted at GET /api/v1/proxy/{token} when non-nil.
-//   - SessionIdleTTL / SessionAbsoluteTTL set the cookie + sessions-row
-//     expiries (defaults: 7d / 90d).
-//   - CookieSecure controls whether the session cookie carries the Secure
-//     attribute. Resolved against the listen address by main().
-//   - HashParams: argon2 cost. Production passes auth.DefaultParams; tests
-//     pass a low-cost variant for speed.
-//
-// The zero value is valid: the defaults above kick in for the TTLs and
-// HashParams, and the proxy / scheduler routes are skipped.
 type MuxOpts struct {
 	Poke               func()
 	ProxyHandler       http.Handler
@@ -29,20 +18,13 @@ type MuxOpts struct {
 	SessionAbsoluteTTL time.Duration
 	CookieSecure       bool
 	HashParams         auth.Params
+	WebAuthnInstance   *webauthn.WebAuthn
 }
 
-// NewMux returns the API mux. db is required for everything except /healthz;
-// when db is nil the mux degenerates to /healthz-only so callers that just
-// want the health surface still work. (POST /api/v1/sessions also needs db
-// for the user lookup, so it lives inside the db != nil branch.)
-//
-// The mux mounts the auth middleware on every authenticated route; the only
-// public surfaces are GET /healthz and POST /api/v1/sessions. State-changing
-// authenticated routes additionally pass through the CSRF middleware.
+// NewMux returns the API mux.
 func NewMux(db *sql.DB, opts MuxOpts) *http.ServeMux {
 	m := http.NewServeMux()
 
-	// Defaults for callers (notably tests) that leave fields zero.
 	if opts.SessionIdleTTL <= 0 {
 		opts.SessionIdleTTL = 7 * 24 * time.Hour
 	}
@@ -60,41 +42,63 @@ func NewMux(db *sql.DB, opts MuxOpts) *http.ServeMux {
 		cookieSecure:       opts.CookieSecure,
 	}
 
-	// Public routes.
 	m.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		_, _ = w.Write([]byte("ok"))
 	})
 
 	if db == nil {
-		// /healthz only — login + every authenticated route reads/writes the
-		// DB and would panic on a nil handle. Callers that pass nil are
-		// asking for the health surface and nothing else.
 		return m
 	}
 
 	m.Handle("POST /api/v1/sessions", loginHandler(deps))
 
-	// Authenticated routes. Sub-muxes carry the existing handler bodies;
-	// each route is then mounted on the parent mux through the appropriate
-	// middleware. Going via sub-muxes (instead of wrapping the parent)
-	// keeps /healthz and POST /sessions outside the auth chain — concept
-	// §7.5: only login + healthz are public.
 	authed := requireSession(db, opts.SessionIdleTTL)
 	authedCSRF := chain(authed, requireCSRF())
+	authedAdmin := chain(authed, requireAdmin())
+	authedAdminCSRF := chain(authed, requireAdmin(), requireCSRF())
 
-	m.Handle("GET /api/v1/sessions/current", authed(getSessionCurrentHandler()))
+	// Existing auth routes.
+	m.Handle("GET /api/v1/sessions/current", authed(getSessionCurrentHandler(db)))
 	m.Handle("DELETE /api/v1/sessions/current", authedCSRF(logoutHandler(deps)))
 	m.Handle("PATCH /api/v1/me/password", authedCSRF(passwordChangeHandler(deps, opts.HashParams)))
+
+	// Session listing and revocation.
+	m.Handle("GET /api/v1/sessions", authed(listSessionsHandler(db)))
+	m.Handle("DELETE /api/v1/sessions/{id}", authedCSRF(revokeSessionHandler(db)))
+	m.Handle("DELETE /api/v1/sessions", authedCSRF(revokeAllOtherSessionsHandler(db)))
+
+	// TOTP endpoints.
+	m.Handle("POST /api/v1/me/totp", authedCSRF(beginTOTPEnrolmentHandler(db, opts.HashParams)))
+	m.Handle("POST /api/v1/me/totp/confirm", authedCSRF(confirmTOTPEnrolmentHandler(db, opts.HashParams)))
+	m.Handle("DELETE /api/v1/me/totp", authedCSRF(deleteTOTPHandler(db)))
+	m.Handle("POST /api/v1/me/totp/recovery-codes", authedCSRF(regenerateRecoveryCodesHandler(db, opts.HashParams)))
+
+	// Passkey registration endpoints (require active session).
+	if opts.WebAuthnInstance != nil {
+		m.Handle("POST /api/v1/me/passkeys/registration/begin", authedCSRF(beginPasskeyRegistrationHandler(db, opts.WebAuthnInstance)))
+		m.Handle("POST /api/v1/me/passkeys/registration/finish", authedCSRF(finishPasskeyRegistrationHandler(db, opts.WebAuthnInstance)))
+		// Passkey login (public — no session required).
+		m.Handle("POST /api/v1/passkey-sessions/begin", beginPasskeyLoginHandler(db, opts.WebAuthnInstance, deps))
+		m.Handle("POST /api/v1/passkey-sessions/finish", finishPasskeyLoginHandler(db, opts.WebAuthnInstance, deps))
+	}
+
+	m.Handle("GET /api/v1/me/passkeys", authed(listPasskeysHandler(db)))
+	m.Handle("DELETE /api/v1/me/passkeys/{id}", authedCSRF(deletePasskeyHandler(db)))
+
+	// Admin endpoints.
+	m.Handle("GET /api/v1/admin/users", authedAdmin(listUsersHandler(db)))
+	m.Handle("POST /api/v1/admin/users", authedAdminCSRF(createUserHandler(db, opts.HashParams)))
+	m.Handle("PATCH /api/v1/admin/users/{id}", authedAdminCSRF(patchUserHandler(db)))
+	m.Handle("POST /api/v1/admin/users/{id}/password-reset", authedAdminCSRF(resetUserPasswordHandler(db, opts.HashParams)))
+	m.Handle("POST /api/v1/admin/users/{id}/disable-totp", authedAdminCSRF(disableUserTOTPHandler(db)))
+	m.Handle("DELETE /api/v1/admin/users/{id}", authedAdminCSRF(deleteUserHandler(db)))
 
 	subsMux := http.NewServeMux()
 	registerSubscriptionRoutes(subsMux, db, opts.Poke)
 	entriesMux := http.NewServeMux()
 	registerEntryRoutes(entriesMux, db)
 
-	// Explicit per-pattern mount: the stdlib mux doesn't expose registered
-	// patterns, and we want each pattern wrapped with the right middleware
-	// (writes go through CSRF; reads only need the session).
 	for _, p := range []struct {
 		method, path string
 		handler      http.Handler
@@ -111,11 +115,6 @@ func NewMux(db *sql.DB, opts MuxOpts) *http.ServeMux {
 	}
 
 	if opts.ProxyHandler != nil {
-		// {token} is a Go 1.22+ ServeMux path placeholder; the handler
-		// reads it via r.PathValue("token"). The proxy is a GET-only
-		// authenticated route — no CSRF check needed (CSRF only protects
-		// state-changing requests), and importantly the proxy's outbound
-		// fetch never forwards the SPA's Cookie/Authorization headers.
 		m.Handle("GET /api/v1/proxy/{token}", authed(opts.ProxyHandler))
 	}
 

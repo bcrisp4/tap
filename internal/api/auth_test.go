@@ -166,7 +166,7 @@ func TestGetSessionCurrent(t *testing.T) {
 	u := db.User{ID: 7, Username: "ben", Role: "admin"}
 	s := db.Session{ID: 99, UserID: 7, CSRFToken: "csrf-xyz"}
 
-	h := withFakeAuth(t, u, s, getSessionCurrentHandler())
+	h := withFakeAuth(t, u, s, getSessionCurrentHandler(nil))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/sessions/current", nil)
 	rr := httptest.NewRecorder()

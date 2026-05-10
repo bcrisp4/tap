@@ -26,6 +26,18 @@ const (
 	ErrCodeInvalidSession         = "invalid_session"
 	ErrCodeCSRFInvalid            = "csrf_invalid"
 	ErrCodePasswordTooShort       = "password_too_short"
+
+	// M7 error codes.
+	ErrCodeTOTPRequired               = "totp_required"
+	ErrCodeTOTPInvalid                = "totp_invalid"
+	ErrCodeRecoveryCodeInvalid        = "recovery_code_invalid"
+	ErrCodeTOTPNotEnrolled            = "totp_not_enrolled"
+	ErrCodeTOTPAlreadyEnrolled        = "totp_already_enrolled"
+	ErrCodePasskeyNotFound            = "passkey_not_found"
+	ErrCodeCannotRevokeCurrentSession = "cannot_revoke_current_session"
+	ErrCodeAdminRequired              = "admin_required"
+	ErrCodeUserAlreadyExists          = "user_already_exists"
+	ErrCodeCannotDeleteSelf           = "cannot_delete_self"
 )
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

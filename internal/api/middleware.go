@@ -7,8 +7,10 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
+	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/bcrisp4/tap/internal/db"
@@ -107,6 +109,41 @@ func hashCookie(cookieValue string) (string, bool) {
 	}
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:]), true
+}
+
+// requireAdmin reads the user from context and returns 403 admin_required
+// if the user's role is not "admin".
+func requireAdmin() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			u, ok := userFromContext(r.Context())
+			if !ok || u.Role != "admin" {
+				writeError(w, http.StatusForbidden, ErrCodeAdminRequired, "admin access required")
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// clientAddress extracts a best-effort client IP from X-Forwarded-For or RemoteAddr.
+// Picks the first non-private IP from X-Forwarded-For so deployments behind a single
+// trusted reverse proxy get a meaningful address without over-trusting arbitrary chains.
+func clientAddress(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		for _, part := range strings.Split(xff, ",") {
+			candidate := strings.TrimSpace(part)
+			ip := net.ParseIP(candidate)
+			if ip != nil && !ip.IsPrivate() && !ip.IsLoopback() {
+				return candidate
+			}
+		}
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }
 
 // requireCSRF passes through GET/HEAD/OPTIONS, otherwise:
