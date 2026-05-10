@@ -123,11 +123,7 @@ func confirmTOTPEnrolmentHandler(d *sql.DB, hashParams auth.Params) http.Handler
 			return
 		}
 
-		if err := db.ConfirmTOTPSecret(r.Context(), d, u.ID); err != nil {
-			writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())
-			return
-		}
-
+		// Generate + hash codes before opening the transaction (pure CPU work).
 		codes, err := auth.GenerateRecoveryCodes()
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())
@@ -142,7 +138,9 @@ func confirmTOTPEnrolmentHandler(d *sql.DB, hashParams auth.Params) http.Handler
 			}
 			hashes[i] = h
 		}
-		if err := db.InsertRecoveryCodes(r.Context(), d, u.ID, hashes); err != nil {
+		// Atomically confirm TOTP and insert recovery codes so a crash between
+		// the two writes cannot leave TOTP active with no recovery codes.
+		if err := db.ConfirmTOTPWithRecoveryCodes(r.Context(), d, u.ID, hashes); err != nil {
 			writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())
 			return
 		}

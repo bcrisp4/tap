@@ -54,6 +54,25 @@ func TestTOTPSecret_UpsertReplacesUnconfirmed(t *testing.T) {
 	require.False(t, s.Confirmed, "upsert should reset confirmed to false")
 }
 
+func TestConfirmTOTPWithRecoveryCodes_Atomic(t *testing.T) {
+	d := newTestDB(t)
+	ctx := context.Background()
+	userID := insertTestUser(t, d, "carol-atomic")
+
+	require.NoError(t, InsertTOTPSecret(ctx, d, userID, []byte("enc")))
+	hashes := []string{"h1", "h2", "h3"}
+
+	require.NoError(t, ConfirmTOTPWithRecoveryCodes(ctx, d, userID, hashes))
+
+	s, err := GetTOTPSecret(ctx, d, userID)
+	require.NoError(t, err)
+	require.True(t, s.Confirmed)
+
+	codes, err := GetUnconsumedRecoveryCodes(ctx, d, userID)
+	require.NoError(t, err)
+	require.Len(t, codes, 3)
+}
+
 func TestRecoveryCodes_InsertConsumeDelete(t *testing.T) {
 	d := newTestDB(t)
 	ctx := context.Background()

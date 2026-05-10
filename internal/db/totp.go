@@ -79,6 +79,28 @@ func InsertRecoveryCodes(ctx context.Context, d *sql.DB, userID int64, hashes []
 	return tx.Commit()
 }
 
+// ConfirmTOTPWithRecoveryCodes atomically sets confirmed=1 on the TOTP secret
+// and inserts the recovery code hashes in a single transaction. This prevents
+// the failure mode where TOTP is confirmed but no recovery codes exist.
+func ConfirmTOTPWithRecoveryCodes(ctx context.Context, d *sql.DB, userID int64, hashes []string) error {
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("confirm totp with recovery codes: begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE totp_secrets SET confirmed = 1 WHERE user_id = ?`, userID); err != nil {
+		return fmt.Errorf("confirm totp secret: %w", err)
+	}
+	for _, h := range hashes {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO recovery_codes (user_id, code_hash) VALUES (?, ?)`, userID, h); err != nil {
+			return fmt.Errorf("insert recovery codes: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
 func GetUnconsumedRecoveryCodes(ctx context.Context, d *sql.DB, userID int64) ([]RecoveryCode, error) {
 	rows, err := d.QueryContext(ctx,
 		`SELECT id, user_id, code_hash, consumed_at FROM recovery_codes

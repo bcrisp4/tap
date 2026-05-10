@@ -9,6 +9,7 @@ import (
 	"math/big"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/bcrisp4/tap/internal/auth"
@@ -74,6 +75,10 @@ func createUserHandler(d *sql.DB, hashParams auth.Params) http.Handler {
 				return
 			}
 			writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "invalid JSON body")
+			return
+		}
+		if strings.TrimSpace(body.Username) == "" {
+			writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "username is required")
 			return
 		}
 		if err := auth.ValidatePassword(body.Password); err != nil {

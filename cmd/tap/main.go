@@ -223,8 +223,15 @@ func runServer() {
 	waRPID := *webAuthnRPID
 	waOrigin := *webAuthnOrigin
 	if waRPID == "" || waOrigin == "" {
-		host, _, _ := net.SplitHostPort(*addr)
+		host, port, _ := net.SplitHostPort(*addr)
 		if host == "" {
+			host = "localhost"
+		}
+		// Normalise any loopback IP (127.x.x.x, ::1) to "localhost" so that
+		// the WebAuthn RP ID matches the browser's origin when the user opens
+		// the app at http://localhost:<port>. Without this, rpID would be
+		// "127.0.0.1" but the browser presents the origin as "localhost".
+		if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
 			host = "localhost"
 		}
 		if waRPID == "" {
@@ -235,7 +242,10 @@ func runServer() {
 			if cookieSecure {
 				scheme = "https"
 			}
-			waOrigin = scheme + "://" + *addr
+			// Use waRPID (already normalised) rather than the raw addr so that
+			// the origin and RPID are consistent (both "localhost", not a mix
+			// of "localhost" and "127.0.0.1").
+			waOrigin = scheme + "://" + waRPID + ":" + port
 		}
 	}
 	var waInstance *webauthn.WebAuthn
