@@ -80,3 +80,67 @@ func TestRequireSessionPassesValidCookie(t *testing.T) {
 	require.Equal(t, "csrf-1", sawSession.CSRFToken)
 	_ = strings.TrimSpace
 }
+
+func TestRequireSessionRejectsMissingCookie(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	h := requireSession(d, time.Hour)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("handler should not run")
+	}))
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/", nil))
+	require.Equal(t, http.StatusUnauthorized, rr.Code)
+	require.Contains(t, rr.Body.String(), `"code":"invalid_session"`)
+}
+
+func TestRequireSessionRejectsBadCookie(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	h := requireSession(d, time.Hour)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("handler should not run")
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(&http.Cookie{Name: "tap_session", Value: "not-base64-not-a-known-hash!"})
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusUnauthorized, rr.Code)
+}
+
+func TestRequireSessionRejectsExpiredAndDeletes(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	ctx := context.Background()
+	uid, err := db.InsertUser(ctx, d, db.NewUser{Username: "ben", PasswordHash: "x", Role: "admin", CreatedAt: 0})
+	require.NoError(t, err)
+
+	raw := []byte("0123456789abcdef0123456789abcdef")
+	cookieVal := base64.RawURLEncoding.EncodeToString(raw)
+	hash := sha256.Sum256(raw)
+
+	sid, err := db.InsertSession(ctx, d, db.NewSession{
+		UserID:    uid,
+		TokenHash: hex.EncodeToString(hash[:]),
+		CSRFToken: "c",
+		CreatedAt: 0, LastSeenAt: 0,
+		IdleExpiresAt:     1, // far in the past
+		AbsoluteExpiresAt: 1,
+	})
+	require.NoError(t, err)
+
+	h := requireSession(d, time.Hour)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("handler should not run")
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(&http.Cookie{Name: "tap_session", Value: cookieVal})
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusUnauthorized, rr.Code)
+
+	// Session row should be deleted by the middleware.
+	_, err = db.GetSessionByTokenHash(ctx, d, hex.EncodeToString(hash[:]))
+	require.Error(t, err) // sql.ErrNoRows
+	_ = sid
+}
