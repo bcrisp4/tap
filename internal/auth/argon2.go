@@ -84,3 +84,22 @@ func Verify(encoded, password string) (bool, error) {
 	got := argon2.IDKey([]byte(password), salt, p.Time, p.Memory, p.Threads, uint32(len(want)))
 	return subtle.ConstantTimeCompare(got, want) == 1, nil
 }
+
+// ErrPasswordTooShort is returned by ValidatePassword for inputs shorter
+// than MinPasswordLength runes.
+var ErrPasswordTooShort = errors.New("password too short")
+
+// MinPasswordLength is the minimum length policy for new passwords.
+// Length over class diversity per modern guidance — no complexity rules.
+const MinPasswordLength = 8
+
+// ValidatePassword returns ErrPasswordTooShort if s is shorter than
+// MinPasswordLength runes. Caller is responsible for trimming whitespace
+// if appropriate (the API and CLI accept passwords verbatim — leading
+// or trailing spaces become part of the password).
+func ValidatePassword(s string) error {
+	if len([]rune(s)) < MinPasswordLength {
+		return ErrPasswordTooShort
+	}
+	return nil
+}

@@ -47,3 +47,27 @@ func TestVerifyRejectsMalformedEncoding(t *testing.T) {
 		require.Error(t, err, "encoded=%q", e)
 	}
 }
+
+func TestValidatePassword(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		in   string
+		want error
+	}{
+		{"empty", "", ErrPasswordTooShort},
+		{"seven chars", "1234567", ErrPasswordTooShort},
+		{"eight chars", "12345678", nil},
+		{"long", strings.Repeat("a", 200), nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidatePassword(tc.in)
+			if tc.want == nil {
+				require.NoError(t, err)
+			} else {
+				require.ErrorIs(t, err, tc.want)
+			}
+		})
+	}
+}
