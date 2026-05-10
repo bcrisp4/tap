@@ -116,6 +116,41 @@ func Verify(encoded, password string) (bool, error) {
 	return subtle.ConstantTimeCompare(got, want) == 1, nil
 }
 
+// NeedsRehash returns true if the encoded hash was produced with params that
+// are strictly weaker than current on any axis (Time, Memory, or Threads).
+// The PHC encoding carries the params used at hash time, so this comparison
+// is purely a string parse — no crypto work is performed.
+func NeedsRehash(encoded string, current Params) (bool, error) {
+	parts := strings.Split(encoded, "$")
+	if len(parts) != 6 || parts[0] != "" || parts[1] != "argon2id" {
+		return false, errors.New("argon2: malformed hash")
+	}
+	paramFields := strings.Split(parts[3], ",")
+	if len(paramFields) != 3 {
+		return false, fmt.Errorf("argon2: malformed params %q", parts[3])
+	}
+	var p Params
+	for i, prefix := range []string{"m=", "t=", "p="} {
+		val, ok := strings.CutPrefix(paramFields[i], prefix)
+		if !ok {
+			return false, fmt.Errorf("argon2: malformed params %q", parts[3])
+		}
+		n, err := strconv.ParseUint(val, 10, 32)
+		if err != nil {
+			return false, fmt.Errorf("argon2: parse param %s: %w", prefix, err)
+		}
+		switch i {
+		case 0:
+			p.Memory = uint32(n)
+		case 1:
+			p.Time = uint32(n)
+		case 2:
+			p.Threads = uint8(n)
+		}
+	}
+	return p.Time < current.Time || p.Memory < current.Memory || uint32(p.Threads) < uint32(current.Threads), nil
+}
+
 // ErrPasswordTooShort is returned by ValidatePassword for inputs shorter
 // than MinPasswordLength runes.
 var ErrPasswordTooShort = errors.New("password too short")
