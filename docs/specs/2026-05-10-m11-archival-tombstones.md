@@ -53,7 +53,7 @@ func (a *Archiver) Stop()  // waits for any in-progress sweep before returning
 Structured log events emitted by `sweep()` use the exact keys defined by M12's log taxonomy so the ring buffer handler captures them correctly:
 
 - `archival.sweep.start` — `slog.Info` at sweep entry, no required attributes beyond the event key.
-- `archival.sweep.complete` — `slog.Info` on completion, required attributes: `entries_deleted int`, `cache_files_evicted int`, `duration_ms int64`. The attribute `tombstones_written` is pending M12 resolution — m12-author will either add it to the `archival.sweep.complete` event definition or confirm it should be omitted; M11's implementation must match whichever they decide.
+- `archival.sweep.complete` — `slog.Info` on completion, required attributes: `entries_deleted int`, `tombstones_written int`, `cache_files_evicted int`, `duration_ms int64`.
 
 Errors in the FS pass are logged at `WARN` but do not abort the sweep or affect the DB pass result.
 
