@@ -43,8 +43,9 @@ MCP tools:
 | `internal/db/migrations/0007_2fa_passkeys_sessions_meta.sql` | **create** | `sessions` table recreation (nullable `user_id`, new cols); `pending_logins`, `totp_secrets`, `recovery_codes`, `passkeys` tables. |
 | `internal/db/subscriptions.go` | modify | All query functions gain `userID int64` param + `WHERE user_id = ?` filter. `NewSubscription` gains `UserID`. |
 | `internal/db/subscriptions_test.go` | modify | Per-user isolation: userA's subs invisible to userB. |
-| `internal/db/entries.go` | modify | Same `userID` filter treatment as subscriptions. |
-| `internal/db/entries_test.go` | modify | Per-user isolation enforced on list + get. |
+| `internal/db/entries.go` | modify | Same `userID` filter treatment as subscriptions. **`UpdateAfterPoll`/`PollResult` must also include `UserID`** — entries.user_id is NOT NULL after migration 0006. |
+| `internal/db/entries_test.go` | modify | Per-user isolation enforced on list + get; UpdateAfterPoll with UserID. |
+| `internal/poll/worker.go` | modify | Pass `sub.UserID` into `PollResult.UserID` when constructing the poll result. |
 | `internal/db/sessions.go` | modify | `Session`/`NewSession` gain `UserAgent`, `Address`, `WebAuthnChallenge` fields. New: `ListSessionsByUserID`, `SetWebAuthnChallenge`, `ClearWebAuthnChallenge`. |
 | `internal/db/sessions_test.go` | modify | Cover new fields and new functions. |
 | `internal/db/users.go` | modify | New: `ListUsers`, `DeleteUser`, `EnableUser`, `GetUserTOTPStatus`, `GetUserPasskeyCount`. |
@@ -72,7 +73,7 @@ MCP tools:
 | `internal/api/passkeys_test.go` | **create** | Registration begin/finish; list (no credential_id/public_key); delete; login begin/finish with mock asserter. |
 | `internal/api/admin.go` | **create** | `listUsersHandler`, `createUserHandler`, `patchUserHandler`, `resetUserPasswordHandler`, `disableUserTOTPHandler`, `deleteUserHandler`. |
 | `internal/api/admin_test.go` | **create** | Each endpoint: non-admin 403; happy path; edge cases per spec. |
-| `internal/api/api.go` | modify | `MuxOpts` gains `WebAuthnConfig *webauthn.WebAuthn`. Wire TOTP, passkey, session-list, admin routes with correct middleware. |
+| `internal/api/api.go` | modify | `MuxOpts` gains `WebAuthnInstance *webauthn.WebAuthn`. Wire TOTP, passkey, session-list, admin routes with correct middleware. |
 | `internal/api/subscriptions.go` | modify | All handlers pass `userFromContext` user ID into db calls. |
 | `internal/api/subscriptions_test.go` | modify | Cross-user isolation: userB cannot read/delete userA's subscription. |
 | `internal/api/entries.go` | modify | All handlers pass user ID into db calls. |
@@ -159,20 +160,19 @@ Add to `internal/db/migrate_test.go`:
 
 ```go
 func TestMigrate_0006_UserDataIsolation(t *testing.T) {
-    d := openTestDB(t)
-    // migration already applied by openTestDB (which calls Migrate)
-    // verify columns exist
+    d := newTestDB(t)
+    // newTestDB runs all migrations. Verify user_id column exists and FK is enforced:
+    // an insert with a non-existent user_id must fail with FOREIGN KEY, not "no such column".
     _, err := d.ExecContext(context.Background(),
         `INSERT INTO subscriptions (title, feed_url, next_poll_at, created_at, user_id)
-         VALUES ('t', 'http://x.com/feed', 0, 0, 1)`) // user_id=1 doesn't exist, FK active
-    // Should fail with FK constraint, not "no such column"
+         VALUES ('t', 'http://x.com/feed', 0, 0, 999)`) // user_id=999 doesn't exist
     require.Error(t, err)
     require.Contains(t, err.Error(), "FOREIGN KEY")
 }
 ```
 
 Run: `go test ./internal/db/... -run TestMigrate_0006 -v`
-Expected: FAIL (migration not yet applied to test DB setup — you will verify column absence first).
+Expected: PASS (migration is applied by newTestDB; the FK rejects the bogus user_id).
 
 - [ ] **Step 3: Verify migration applies clean and test passes**
 
@@ -271,7 +271,7 @@ Add to `internal/db/migrate_test.go`:
 
 ```go
 func TestMigrate_0007_2FAAndPasskeys(t *testing.T) {
-    d := openTestDB(t)
+    d := newTestDB(t)
     ctx := context.Background()
     // Verify sessions table has new columns
     _, err := d.ExecContext(ctx,
@@ -761,7 +761,7 @@ import (
 )
 
 func TestTOTPSecret_Roundtrip(t *testing.T) {
-    d := openTestDB(t)
+    d := newTestDB(t)
     ctx := context.Background()
     userID := insertTestUser(t, d, "alice")
 
@@ -776,7 +776,7 @@ func TestTOTPSecret_Roundtrip(t *testing.T) {
 }
 
 func TestTOTPSecret_ConfirmAndDelete(t *testing.T) {
-    d := openTestDB(t)
+    d := newTestDB(t)
     ctx := context.Background()
     userID := insertTestUser(t, d, "bob")
 
@@ -793,7 +793,7 @@ func TestTOTPSecret_ConfirmAndDelete(t *testing.T) {
 }
 
 func TestRecoveryCodes_InsertConsumeDelete(t *testing.T) {
-    d := openTestDB(t)
+    d := newTestDB(t)
     ctx := context.Background()
     userID := insertTestUser(t, d, "carol")
 
@@ -979,7 +979,7 @@ import (
 )
 
 func TestPasskey_Roundtrip(t *testing.T) {
-    d := openTestDB(t)
+    d := newTestDB(t)
     ctx := context.Background()
     userID := insertTestUser(t, d, "dave")
 
@@ -1003,7 +1003,7 @@ func TestPasskey_Roundtrip(t *testing.T) {
 }
 
 func TestPasskey_ListAndDelete(t *testing.T) {
-    d := openTestDB(t)
+    d := newTestDB(t)
     ctx := context.Background()
     u1 := insertTestUser(t, d, "eve")
     u2 := insertTestUser(t, d, "frank")
@@ -1031,7 +1031,7 @@ func TestPasskey_ListAndDelete(t *testing.T) {
 }
 
 func TestPasskey_UpdateSignCounter(t *testing.T) {
-    d := openTestDB(t)
+    d := newTestDB(t)
     ctx := context.Background()
     userID := insertTestUser(t, d, "grace")
 
@@ -1175,7 +1175,7 @@ import (
 )
 
 func TestPendingLogin_Roundtrip(t *testing.T) {
-    d := openTestDB(t)
+    d := newTestDB(t)
     ctx := context.Background()
     userID := insertTestUser(t, d, "hannah")
 
@@ -1193,7 +1193,7 @@ func TestPendingLogin_Roundtrip(t *testing.T) {
 }
 
 func TestPendingLogin_DeleteExpired(t *testing.T) {
-    d := openTestDB(t)
+    d := newTestDB(t)
     ctx := context.Background()
     userID := insertTestUser(t, d, "ivan")
 
@@ -1306,14 +1306,14 @@ Add to `internal/db/subscriptions_test.go`:
 
 ```go
 func TestSubscriptions_UserIsolation(t *testing.T) {
-    d := openTestDB(t)
+    d := newTestDB(t)
     ctx := context.Background()
     u1 := insertTestUser(t, d, "u1")
     u2 := insertTestUser(t, d, "u2")
 
     _, err := db.InsertSubscription(ctx, d, db.NewSubscription{
         UserID: u1, Title: "Feed A", FeedURL: "http://a.com/feed",
-        NextPollAt: 0, CreatedAt: 0,
+        NextPoll: 0, Created: 0,
     })
     require.NoError(t, err)
 
@@ -1336,13 +1336,31 @@ Expected: FAIL (compile error — `userID` parameter not yet accepted).
 
 In `internal/db/subscriptions.go`, add `userID int64` parameter to `ListSubscriptions`, `GetSubscription`, `InsertSubscription`, `UpdateSubscription*`, and `DeleteSubscription`. Add `WHERE user_id = ?` (or `AND user_id = ?`) to each. Add `UserID int64` to `NewSubscription`.
 
-- [ ] **Step 3: Same treatment for entries (GREEN)**
+- [ ] **Step 3: Same treatment for entries, including `UpdateAfterPoll` (GREEN)**
 
 In `internal/db/entries.go`, add `userID int64` to `ListEntries`, `GetEntry`, `UpdateEntry`. Add `WHERE user_id = ?` clauses.
 
-- [ ] **Step 4: Update `db.Session` and `db.NewSession` structs in `internal/db/sessions.go`**
+**CRITICAL:** Also update `UpdateAfterPoll`. After migration 0006, `entries.user_id` is `NOT NULL`. The existing `INSERT INTO entries` in `UpdateAfterPoll` (at `internal/db/entries.go:198`) does not include `user_id`, so every poll will fail with a NOT NULL constraint. Fix by:
+1. Adding `userID int64` to `PollResult` (or as a separate parameter to `UpdateAfterPoll`).
+2. Including `user_id` in the INSERT:
 
-Add `UserAgent`, `Address`, `WebAuthnChallenge` fields to both structs. Update `InsertSession` to include the new columns. Add:
+```go
+res, ierr := tx.ExecContext(ctx, `
+    INSERT INTO entries (subscription_id, user_id, hash, title, author, url, content, published_at, fetched_at, extract_failed)
+    VALUES (?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?)
+    ON CONFLICT (subscription_id, hash) DO NOTHING
+`, subID, r.UserID, e.Hash, e.Title, e.Author, e.URL, e.Content, e.PublishedAt, r.NowUnix, boolToInt(e.ExtractFailed))
+```
+
+`r.UserID` is populated by the poll worker from `DueSubscription.UserID` (which it already reads for per-feed credentials). Update `poll/worker.go` accordingly when it constructs the `PollResult`.
+
+- [ ] **Step 4: Update `db.Session`, `db.NewSession`, and all session query functions in `internal/db/sessions.go`**
+
+Add `UserAgent string`, `Address string`, `WebAuthnChallenge []byte` fields to both structs. Update:
+- `InsertSession`: include `user_agent`, `address`, `webauthn_challenge` in the INSERT.
+- `GetSessionByTokenHash`: extend the SELECT list and Scan call to include the three new columns. This is load-bearing — `requireSession` calls this function, and the session management endpoints need `UserAgent`/`Address` for the session listing UI. Omitting them causes silent zero-values in all session rows returned by the middleware.
+
+Add:
 
 ```go
 // ListSessionsByUserID returns all non-anonymous sessions for the user.
@@ -1571,7 +1589,8 @@ func listSessionsHandler(dep authDeps) http.Handler {
             return
         }
         // Map to DTO: include current: true where session.ID == s.ID
-        writeJSON(w, http.StatusOK, map[string]any{"data": toSessionDTOs(sessions, s.ID)})
+        // Spec says the endpoint returns [...] directly, not {"data": [...]}.
+        writeJSON(w, http.StatusOK, toSessionDTOs(sessions, s.ID))
     })
 }
 
@@ -1629,7 +1648,7 @@ git commit -m "M7: TOTP second step in login; session list + revoke endpoints"
 
 Create `internal/api/totp_test.go` with table-driven tests covering:
 - `POST /api/v1/me/totp` unauthenticated → 401; authenticated no secret → 200 + `secret_uri` + `secret`; already confirmed → 409 `totp_already_enrolled`
-- `POST /api/v1/me/totp/confirm` valid code → 200 + 8 `recovery_codes`; invalid code → 401 `totp_invalid`; no pending secret → 404
+- `POST /api/v1/me/totp/confirm` valid code → 200 + 8 `recovery_codes`; invalid code → 401 `totp_invalid`; no pending (unconfirmed) secret → 404 `totp_not_enrolled` (reuse the same code as the DELETE endpoint — both mean "no active TOTP enrolment to act on")
 - `DELETE /api/v1/me/totp` valid code → 204; invalid → 401; not enrolled → 409 `totp_not_enrolled`
 - `POST /api/v1/me/totp/recovery-codes` valid code → 200 + 8 new codes; old codes gone
 
@@ -1688,8 +1707,8 @@ func loadOrCreateTOTPKey(d *sql.DB) ([]byte, error) {
 
 Implement each of the four handlers following the spec. Key points:
 - `beginTOTPEnrolmentHandler` calls `auth.GenerateTOTPSecret()`, encrypts with `loadOrCreateTOTPKey`, inserts with `confirmed=false` via `db.InsertTOTPSecret`.
-- `confirmTOTPEnrolmentHandler` decrypts stored secret, calls `auth.VerifyTOTP`, on success calls `db.ConfirmTOTPSecret` + generates 8 recovery codes, hashes each with `auth.Hash(hashParams)`, inserts via `db.InsertRecoveryCodes` — all in a transaction.
-- `deleteTOTPHandler` accepts either `code` (TOTP) or `recovery_code`; validates then calls `db.DeleteTOTPSecret` + `db.DeleteRecoveryCodes`.
+- `confirmTOTPEnrolmentHandler` decrypts stored secret, calls `auth.VerifyTOTP`, on success wraps `db.ConfirmTOTPSecret` + `db.InsertRecoveryCodes` in a single `db.BeginTx` transaction so both succeed or both roll back atomically. Generate and hash the 8 codes before opening the transaction; pass the hashes in.
+- `deleteTOTPHandler` accepts either `code` (TOTP) or `recovery_code`; validates, then wraps `db.DeleteTOTPSecret` + `db.DeleteRecoveryCodes` in a single transaction — a crash between the two would leave the user in an inconsistent state.
 - `regenerateRecoveryCodesHandler` validates TOTP code, deletes old codes, inserts new.
 
 Inject `hashParams auth.Params` into handler factories (same pattern as `passwordChangeHandler`) so tests can pass low-cost params.
@@ -1960,8 +1979,8 @@ Expected: FAIL.
 
 Follow the same pattern as `runAdminPasswd`:
 - `GetUserByUsername`; missing → `fmt.Fprintf(os.Stderr, "user %q not found\n", username); os.Exit(2)`.
-- Open DB read-write; run migrations; open a transaction.
-- `db.DeleteTOTPSecret`; `db.DeleteRecoveryCodes`.
+- Open DB read-write; run migrations.
+- Wrap `db.DeleteTOTPSecret` + `db.DeleteRecoveryCodes` in a single transaction (both must succeed or both roll back).
 - Commit; `fmt.Printf("2FA disabled for %q\n", username); os.Exit(0)`.
 
 Add `disable-totp` to the `runAdmin` dispatcher switch.
@@ -1982,8 +2001,10 @@ if *webauthnRPID == "" {
     *webauthnRPID = host
 }
 if *webauthnOrigin == "" {
+    // cookieSecure is already resolved earlier in runServer via
+    // api.ResolveCookieSecure(cookieSecureEnum, *addr) — reuse it directly.
     scheme := "http"
-    if resolveCookieSecure(cookieSecureMode, *addr) { scheme = "https" }
+    if cookieSecure { scheme = "https" }
     *webauthnOrigin = scheme + "://" + *webauthnRPID
 }
 ```
