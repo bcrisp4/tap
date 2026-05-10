@@ -13,7 +13,7 @@
   <span class="count">{countShown} of {countTotal}</span>
   <span class="spacer"></span>
   {#if onRefresh}
-    <button class="icon" onclick={onRefresh} aria-label="Refresh">↻</button>
+    <button class="icon" onclick={onRefresh} aria-label="Refresh feeds">↻</button>
   {/if}
 </header>
 

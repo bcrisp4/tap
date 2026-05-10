@@ -6,7 +6,7 @@
   // subscriptions.load() call so the request fires once per page render.
 </script>
 
-<aside class="sidebar">
+<nav class="sidebar tap-sidebar" aria-label="Sidebar navigation">
   <div class="brand">tap<span class="dot">.</span></div>
 
   <div class="group-title">READING</div>
@@ -22,7 +22,7 @@
 
   <div class="group-title">SYSTEM</div>
   <AddFeedForm />
-</aside>
+</nav>
 
 <style>
   .sidebar {

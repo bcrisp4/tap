@@ -5,6 +5,16 @@ import type { EntryDetail } from '../../lib/types';
 // Mock child Svelte components.
 vi.mock('../../components/FeedAvatar.svelte', () => ({ default: vi.fn() }));
 vi.mock('../../components/JunctionDot.svelte', () => ({ default: vi.fn() }));
+vi.mock('../../components/Sidebar.svelte', () => ({ default: vi.fn() }));
+
+// Mock store (Reader doesn't use entries store directly, but import chain needs it).
+vi.mock('../../lib/store', () => ({
+  entries: {
+    subscribe: (fn: (v: { items: unknown[] }) => void) => { fn({ items: [] }); return () => {}; },
+    toggleRead: vi.fn(),
+  },
+  subscriptions: { subscribe: (fn: (v: unknown[]) => void) => { fn([]); return () => {}; }, load: vi.fn() },
+}));
 
 // Mock the router.
 const mockNavigate = vi.fn();
@@ -147,5 +157,12 @@ describe('Reader view', () => {
     await fireEvent.click(backBtn);
 
     expect(mockNavigate).toHaveBeenCalledWith('/');
+  });
+
+  it('renders a two-column layout with sidebar and reader pane', () => {
+    mockGetEntry.mockReturnValueOnce(new Promise(() => {}));
+    const { container } = render(Reader, { props: { id: 42 } });
+    expect(container.querySelector('.layout')).toBeTruthy();
+    expect(container.querySelector('.reader-pane')).toBeTruthy();
   });
 });

@@ -205,6 +205,12 @@
   }
   input {
     padding: 0.5rem;
+    font-family: var(--sans);
+    font-size: 14px;
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    background: var(--bg-soft);
+    color: var(--ink);
   }
   .error {
     color: var(--color-danger, #b00);
@@ -212,5 +218,20 @@
   .passkey-btn {
     background: none;
     border: 1px solid currentColor;
+  }
+  /* TOTP 6-digit input: monospaced, wide letter-spacing for code readability */
+  input[inputmode="numeric"] {
+    font-family: var(--mono);
+    letter-spacing: 0.2em;
+    font-size: 18px;
+  }
+  /* Recovery code toggle as a secondary text link */
+  button[type="button"]:not(.passkey-btn) {
+    color: var(--accent);
+    font-family: var(--sans);
+    font-size: 12px;
+    text-decoration: underline;
+    text-align: left;
+    padding: 0;
   }
 </style>

@@ -8,6 +8,15 @@ importers:
 
   .:
     devDependencies:
+      '@fontsource-variable/inter-tight':
+        specifier: ^5.2.7
+        version: 5.2.7
+      '@fontsource-variable/source-serif-4':
+        specifier: ^5.2.9
+        version: 5.2.9
+      '@fontsource/jetbrains-mono':
+        specifier: ^5.2.8
+        version: 5.2.8
       '@sveltejs/vite-plugin-svelte':
         specifier: ^5.1.1
         version: 5.1.1(svelte@5.55.5)(vite@6.4.2)
@@ -17,6 +26,9 @@ importers:
       '@testing-library/svelte':
         specifier: ^5.3.1
         version: 5.3.1(svelte@5.55.5)(vite@6.4.2)(vitest@4.1.5)
+      '@testing-library/user-event':
+        specifier: ^14.6.1
+        version: 14.6.1(@testing-library/dom@10.4.1)
       '@tsconfig/svelte':
         specifier: ^5.0.8
         version: 5.0.8
@@ -299,6 +311,15 @@ packages:
       '@noble/hashes':
         optional: true
 
+  '@fontsource-variable/inter-tight@5.2.7':
+    resolution: {integrity: sha512-uU0qW9vlzVQQv8GVrhn8SlNl2A44C0CE9IC6N9P0D9mwhmJcg8UF/fxvmdRayDPlMAnYqxlXtYENDIeZyVvxkg==}
+
+  '@fontsource-variable/source-serif-4@5.2.9':
+    resolution: {integrity: sha512-PPcxjLFk/fS0WHg79pDM2YNvz61kC+oYZ5cWZZyCS0DHpJncmuYOuiZAsvj4tDxlWPBEvxxcRLQQNmSaRbPkqw==}
+
+  '@fontsource/jetbrains-mono@5.2.8':
+    resolution: {integrity: sha512-6w8/SG4kqvIMu7xd7wt6x3idn1Qux3p9N62s6G3rfldOUYHpWcc2FKrqf+Vo44jRvqWj2oAtTHrZXEP23oSKwQ==}
+
   '@jridgewell/gen-mapping@0.3.13':
     resolution: {integrity: sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==}
 
@@ -502,6 +523,12 @@ packages:
         optional: true
       vitest:
         optional: true
+
+  '@testing-library/user-event@14.6.1':
+    resolution: {integrity: sha512-vq7fv0rnt+QTXgPxr5Hjc210p6YKq2kmdziLgnsZGgLJ9e6VAShx1pACLuRjd/AS/sr7phAR58OIIpf0LlmQNw==}
+    engines: {node: '>=12', npm: '>=6'}
+    peerDependencies:
+      '@testing-library/dom': '>=7.21.4'
 
   '@tsconfig/svelte@5.0.8':
     resolution: {integrity: sha512-UkNnw1/oFEfecR8ypyHIQuWYdkPvHiwcQ78sh+ymIiYoF+uc5H1UBetbjyqT+vgGJ3qQN6nhucJviX6HesWtKQ==}
@@ -1201,6 +1228,12 @@ snapshots:
 
   '@exodus/bytes@1.15.0': {}
 
+  '@fontsource-variable/inter-tight@5.2.7': {}
+
+  '@fontsource-variable/source-serif-4@5.2.9': {}
+
+  '@fontsource/jetbrains-mono@5.2.8': {}
+
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:
       '@jridgewell/sourcemap-codec': 1.5.5
@@ -1355,6 +1388,10 @@ snapshots:
     optionalDependencies:
       vite: 6.4.2
       vitest: 4.1.5(@vitest/coverage-v8@4.1.5)(jsdom@29.1.1)(vite@6.4.2)
+
+  '@testing-library/user-event@14.6.1(@testing-library/dom@10.4.1)':
+    dependencies:
+      '@testing-library/dom': 10.4.1
 
   '@tsconfig/svelte@5.0.8': {}
 
