@@ -113,15 +113,78 @@ func readUntilNewline(r io.Reader) (string, error) {
 	return strings.TrimRight(sb.String(), "\r"), nil
 }
 
-// runAdminCreate is implemented in Task G2.
+// runAdminCreate is the implementation of `tap admin create`. Reads
+// username + password (twice, no echo) from stdin, hashes via auth.Hash,
+// and inserts a new user row.
 func runAdminCreate(args []string, stdin io.Reader, stdout, stderr io.Writer, hashParams auth.Params) int {
-	_ = args
-	_ = stdin
-	_ = stdout
-	_ = hashParams
-	fmt.Fprintln(stderr, "tap admin create: not implemented yet")
-	_ = flag.NewFlagSet("admin create", flag.ContinueOnError) // import-keeper
-	return adminExitGeneric
+	fs := flag.NewFlagSet("admin create", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	dataDir := fs.String("data", envOr("TAP_DATA_DIR", "./data"), "data directory containing tap.db")
+	role := fs.String("role", "admin", "role for the new user (admin or user)")
+	if err := fs.Parse(args); err != nil {
+		return adminExitGeneric
+	}
+
+	if *role != "admin" && *role != "user" {
+		fmt.Fprintf(stderr, "role must be admin or user, got %q\n", *role)
+		return adminExitGeneric
+	}
+
+	username, err := readLine(stdin, "username: ", stdout)
+	if err != nil {
+		fmt.Fprintf(stderr, "read username: %v\n", err)
+		return adminExitGeneric
+	}
+	if username == "" {
+		fmt.Fprintln(stderr, "username is required")
+		return adminExitGeneric
+	}
+
+	pass1, err := readPassword(stdin, "password: ", stdout)
+	if err != nil {
+		fmt.Fprintf(stderr, "read password: %v\n", err)
+		return adminExitGeneric
+	}
+	if err := auth.ValidatePassword(pass1); err != nil {
+		fmt.Fprintf(stderr, "password too short (min %d): %v\n", auth.MinPasswordLength, err)
+		return adminExitGeneric
+	}
+	pass2, err := readPassword(stdin, "confirm:  ", stdout)
+	if err != nil {
+		fmt.Fprintf(stderr, "read password: %v\n", err)
+		return adminExitGeneric
+	}
+	if pass1 != pass2 {
+		fmt.Fprintln(stderr, "passwords do not match")
+		return adminExitPasswordMismatch
+	}
+
+	ctx := context.Background()
+	d, err := openAdminDB(ctx, *dataDir)
+	if err != nil {
+		fmt.Fprintf(stderr, "open db: %v\n", err)
+		return adminExitGeneric
+	}
+	defer d.Close()
+
+	hash, err := auth.Hash(pass1, hashParams)
+	if err != nil {
+		fmt.Fprintf(stderr, "hash password: %v\n", err)
+		return adminExitGeneric
+	}
+	id, err := db.InsertUser(ctx, d, db.NewUser{
+		Username: username, PasswordHash: hash, Role: *role, CreatedAt: timeNowUnix(),
+	})
+	if err != nil {
+		if errors.Is(err, db.ErrUserExists) {
+			fmt.Fprintf(stderr, "user '%s' already exists\n", username)
+			return adminExitUserExistsOrGone
+		}
+		fmt.Fprintf(stderr, "create user: %v\n", err)
+		return adminExitGeneric
+	}
+	fmt.Fprintf(stdout, "created %s user '%s' (id=%d)\n", *role, username, id)
+	return adminExitOK
 }
 
 // runAdminPasswd is implemented in Task G3.
