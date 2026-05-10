@@ -1082,13 +1082,6 @@ func (c *captureHandler) hasEvent(key string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, r := range c.records {
-		r.Attrs(func(a slog.Attr) bool {
-			if a.Key == "event" && a.Value.String() == key {
-				return false
-			}
-			return true
-		})
-		// Check if any attr matches
 		found := false
 		r.Attrs(func(a slog.Attr) bool {
 			if a.Key == "event" && a.Value.String() == key {

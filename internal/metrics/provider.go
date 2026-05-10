@@ -53,17 +53,19 @@ func InitWithRegistry(reg *prometheus.Registry, opts Opts) error {
 
 	shutdownFunc = func(ctx context.Context) error {
 		err := mp.Shutdown(ctx)
-		// Reset global registry for potential re-init in tests.
+		// Reset for potential re-init in tests.
 		mu.Lock()
 		globalReg = prometheus.NewRegistry()
 		shutdownFunc = nil
+		metricsHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) })
 		mu.Unlock()
 		return err
 	}
 	registerInstruments(mp)
 
-	// Store the registry so Handler() can use it.
-	activeReg = reg
+	// Capture the registry in a closure so Handler() never races on activeReg.
+	capturedReg := reg
+	metricsHandler = promhttp.HandlerFor(capturedReg, promhttp.HandlerOpts{EnableOpenMetrics: false})
 	return nil
 }
 
@@ -78,10 +80,12 @@ func Shutdown(ctx context.Context) error {
 	return fn(ctx)
 }
 
-var activeReg = globalReg
+var metricsHandler http.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	http.NotFound(w, r)
+})
 
 // Handler returns an HTTP handler serving Prometheus text exposition.
 // Only mount when --metrics-enabled.
 func Handler() http.Handler {
-	return promhttp.HandlerFor(activeReg, promhttp.HandlerOpts{EnableOpenMetrics: false})
+	return metricsHandler
 }
