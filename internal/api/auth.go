@@ -112,13 +112,16 @@ func setSessionCookie(w http.ResponseWriter, value string, absoluteTTL time.Dura
 	})
 }
 
-// clearSessionCookie writes a Max-Age=0 cookie that overrides the existing one.
+// clearSessionCookie writes a Max-Age=-1 cookie that overrides the existing
+// one and forces immediate deletion. Go's net/http only writes Max-Age=0 to
+// the wire when Cookie.MaxAge < 0; MaxAge==0 is treated as "unset" and the
+// attribute is omitted, which would leave a session cookie on the browser.
 func clearSessionCookie(w http.ResponseWriter, secure bool) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     "tap_session",
 		Value:    "",
 		Path:     "/",
-		MaxAge:   0,
+		MaxAge:   -1,
 		HttpOnly: true,
 		Secure:   secure,
 		SameSite: http.SameSiteLaxMode,

@@ -176,12 +176,14 @@ func TestLogoutDeletesSessionAndClearsCookie(t *testing.T) {
 	_, err = db.GetSessionByTokenHash(context.Background(), d, "h")
 	require.Error(t, err)
 
-	// Set-Cookie clears tap_session.
+	// Set-Cookie clears tap_session. MaxAge<0 ensures Max-Age=0 lands on
+	// the wire (Go's net/http omits the attribute entirely when MaxAge==0,
+	// which would leave a browser-session cookie behind instead of deleting).
 	var cleared bool
 	for _, c := range rr.Result().Cookies() {
 		if c.Name == "tap_session" {
 			cleared = true
-			require.Equal(t, 0, c.MaxAge)
+			require.Less(t, c.MaxAge, 0)
 		}
 	}
 	require.True(t, cleared, "tap_session should be cleared")
