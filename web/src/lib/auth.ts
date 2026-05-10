@@ -1,5 +1,11 @@
 import { writable } from 'svelte/store';
 import type { User, SessionResponse } from './types';
+import { offlineQueue } from './offlineQueue';
+import type { SWMessage } from '../sw/workerTypes';
+
+function notifySW(msg: SWMessage): void {
+  navigator.serviceWorker?.controller?.postMessage(msg);
+}
 
 export const ERR_UNAUTHORIZED = 'unauthorized';
 
@@ -44,6 +50,7 @@ export const auth = {
       }
       const body: SessionResponse = await jsonOr401(res);
       internal.set({ user: body.user, csrfToken: body.csrf_token, bootstrapped: true });
+      notifySW({ type: 'set-user', userId: body.user.id });
     } catch {
       internal.set({ user: null, csrfToken: null, bootstrapped: true });
     }
@@ -98,8 +105,17 @@ export const auth = {
   },
 
   async logout(): Promise<void> {
+    let userId: number | null = null;
     let csrfToken: string | null = null;
-    internal.update(s => { csrfToken = s.csrfToken; return s; });
+    internal.update(s => {
+      userId = s.user?.id ?? null;
+      csrfToken = s.csrfToken;
+      return s;
+    });
+    if (userId !== null) {
+      offlineQueue.clearForUser(userId);
+      notifySW({ type: 'logout', userId });
+    }
     try {
       await fetch(BASE + '/sessions/current', {
         method: 'DELETE',
