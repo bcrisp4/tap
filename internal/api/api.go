@@ -2,12 +2,14 @@ package api
 
 import (
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"time"
 
 	"github.com/go-webauthn/webauthn/webauthn"
 
 	"github.com/bcrisp4/tap/internal/auth"
+	"github.com/bcrisp4/tap/internal/metrics"
 	"github.com/bcrisp4/tap/internal/ratelimit"
 	"github.com/bcrisp4/tap/internal/ring"
 )
@@ -57,9 +59,37 @@ func NewMux(db *sql.DB, opts MuxOpts) *http.ServeMux {
 	}
 
 	m.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain")
-		_, _ = w.Write([]byte("ok"))
+		dbStatus := "ok"
+		if db != nil {
+			if err := db.PingContext(r.Context()); err != nil {
+				dbStatus = "degraded"
+			}
+		}
+		var active int64
+		if opts.PollsActive != nil {
+			active = opts.PollsActive()
+		}
+		status := "ok"
+		if dbStatus == "degraded" {
+			status = "degraded"
+		}
+		var uptime int64
+		if !opts.StartTime.IsZero() {
+			uptime = int64(time.Since(opts.StartTime).Seconds())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status":         status,
+			"version":        opts.Version,
+			"uptime_seconds": uptime,
+			"db":             dbStatus,
+			"polls_active":   active,
+		})
 	})
+
+	if opts.MetricsEnabled {
+		m.Handle("GET /metrics", metrics.Handler())
+	}
 
 	if db == nil {
 		return m
