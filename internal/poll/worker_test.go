@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -645,4 +646,154 @@ func TestWorker_Extract_AllFailuresPollStillSucceeds(t *testing.T) {
 		`SELECT COUNT(*) FROM entries WHERE subscription_id = ? AND extract_failed = 1`,
 		subID).Scan(&failed))
 	require.Equal(t, 2, failed)
+}
+
+func TestWorker_Extract_ConcurrencyLimit(t *testing.T) {
+	t.Parallel()
+	// Build an atom feed with 5 entries; assert the fake extractor never
+	// sees more than 2 in flight when ExtractConcurrency=2.
+	var sb strings.Builder
+	sb.WriteString(`<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom"><title>Burst</title><id>urn:burst</id>`)
+	for i := 1; i <= 5; i++ {
+		fmt.Fprintf(&sb, `<entry><title>e%d</title><id>urn:burst:%d</id>
+		<link href="https://burst.example/%d"/>
+		<updated>2026-05-01T00:00:00Z</updated>
+		<content type="html">&lt;p&gt;s&lt;/p&gt;</content></entry>`, i, i, i)
+	}
+	sb.WriteString(`</feed>`)
+	atom := sb.String()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(atom))
+	}))
+	defer srv.Close()
+
+	d := newDB(t)
+	subID, _ := db.InsertSubscription(context.Background(), d, db.NewSubscription{
+		Title: "x", FeedURL: srv.URL, NextPoll: 0, Created: 0,
+	})
+
+	var (
+		mu       sync.Mutex
+		inFlight int
+		peak     int
+	)
+	release := make(chan struct{})
+	barrier := func(ctx context.Context, c *http.Client, url, sel string, cap int64) (string, error) {
+		mu.Lock()
+		inFlight++
+		if inFlight > peak {
+			peak = inFlight
+		}
+		mu.Unlock()
+		<-release
+		mu.Lock()
+		inFlight--
+		mu.Unlock()
+		return "<p>x</p>", nil
+	}
+
+	w := NewWorker(d, http.DefaultClient, WorkerOpts{
+		Processor:          processor.New(sanitise.DefaultPolicy(), nil),
+		Extract:            barrier,
+		ExtractConcurrency: 2,
+	})
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		w.Run(context.Background(), db.DueSubscription{
+			ID: subID, FeedURL: srv.URL, Extract: true,
+		})
+	}()
+
+	// Wait until the limiter has settled at peak=2, then release everything.
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return peak == 2
+	}, 2*time.Second, 5*time.Millisecond)
+
+	close(release)
+	<-done
+
+	require.Equal(t, 2, peak, "ExtractConcurrency=2 must cap at-most 2 in flight")
+}
+
+func TestWorker_Extract_NoLinkSkipsSilently(t *testing.T) {
+	t.Parallel()
+	const atom = `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom"><title>Nolink</title><id>urn:nolink</id>
+  <entry><title>NoLink</title><id>urn:nolink:1</id>
+    <updated>2026-05-01T00:00:00Z</updated>
+    <content type="html">&lt;p&gt;summary&lt;/p&gt;</content></entry>
+</feed>`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(atom))
+	}))
+	defer srv.Close()
+
+	d := newDB(t)
+	subID, _ := db.InsertSubscription(context.Background(), d, db.NewSubscription{
+		Title: "x", FeedURL: srv.URL, NextPoll: 0, Created: 0,
+	})
+
+	var calls int
+	fakeExtract := func(ctx context.Context, c *http.Client, url, sel string, cap int64) (string, error) {
+		calls++
+		return "should-not-appear", nil
+	}
+
+	w := NewWorker(d, http.DefaultClient, WorkerOpts{
+		Processor: processor.New(sanitise.DefaultPolicy(), nil),
+		Extract:   fakeExtract,
+	})
+	w.Run(context.Background(), db.DueSubscription{
+		ID: subID, FeedURL: srv.URL, Extract: true,
+	})
+
+	require.Equal(t, 0, calls, "no-Link entries must skip extraction silently")
+	var failed int
+	require.NoError(t, d.QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM entries WHERE subscription_id = ? AND extract_failed = 1`,
+		subID).Scan(&failed))
+	require.Equal(t, 0, failed, "no-Link entries must NOT have extract_failed=1")
+}
+
+func TestWorker_Extract_OutputStillSanitised(t *testing.T) {
+	t.Parallel()
+	const atom = `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom"><title>San</title><id>urn:san</id>
+  <entry><title>One</title><id>urn:san:1</id>
+    <link href="https://san.example/1"/>
+    <updated>2026-05-01T00:00:00Z</updated>
+    <content type="html">&lt;p&gt;summary&lt;/p&gt;</content></entry>
+</feed>`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(atom))
+	}))
+	defer srv.Close()
+
+	d := newDB(t)
+	subID, _ := db.InsertSubscription(context.Background(), d, db.NewSubscription{
+		Title: "x", FeedURL: srv.URL, NextPoll: 0, Created: 0,
+	})
+
+	hostileExtract := func(ctx context.Context, c *http.Client, url, sel string, cap int64) (string, error) {
+		return `<p>real article</p><script>alert(1)</script>`, nil
+	}
+
+	w := NewWorker(d, http.DefaultClient, WorkerOpts{
+		Processor: processor.New(sanitise.DefaultPolicy(), nil),
+		Extract:   hostileExtract,
+	})
+	w.Run(context.Background(), db.DueSubscription{
+		ID: subID, FeedURL: srv.URL, Extract: true,
+	})
+
+	entries, _, _, _ := db.ListEntries(context.Background(), d, db.ListEntriesParams{Limit: 10})
+	full, _ := db.GetEntry(context.Background(), d, entries[0].ID)
+	require.Contains(t, full.Content, "real article")
+	require.NotContains(t, full.Content, "<script>", "extracted output must run through processor.Process")
+	require.NotContains(t, full.Content, "alert", "extracted output must run through processor.Process")
 }
