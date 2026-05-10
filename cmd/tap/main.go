@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/bcrisp4/tap/internal/api"
+	"github.com/bcrisp4/tap/internal/auth"
 	"github.com/bcrisp4/tap/internal/db"
 	"github.com/bcrisp4/tap/internal/httpx"
 	"github.com/bcrisp4/tap/internal/poll"
@@ -27,7 +28,19 @@ import (
 	"github.com/bcrisp4/tap/internal/server"
 )
 
+// main routes between the `tap admin ...` subcommand family and the regular
+// server. Subcommands return an exit code so tests can call them directly.
 func main() {
+	if len(os.Args) >= 2 && os.Args[1] == "admin" {
+		os.Exit(runAdmin(os.Args[2:], os.Stdin, os.Stdout, os.Stderr, auth.DefaultParams))
+	}
+	runServer()
+}
+
+// runServer is the long-running HTTP + scheduler entry point. This is the
+// historical body of main(); it became its own function when the admin
+// subcommand dispatcher landed.
+func runServer() {
 	var (
 		addr    = flag.String("addr", "127.0.0.1:8080", "HTTP listen address (set 0.0.0.0:8080 in containers)")
 		dataDir = flag.String("data", envOr("TAP_DATA_DIR", "./data"), "data directory containing tap.db")
