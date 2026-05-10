@@ -173,13 +173,14 @@ func (w *Worker) Run(ctx context.Context, sub db.DueSubscription) {
 		_ = g.Wait()
 	}
 
-	newEntries := make([]db.NewEntry, 0, len(pendings))
+	// Build candidate entries from parse results.
+	candidates := make([]db.NewEntry, 0, len(pendings))
 	for _, p := range pendings {
 		pubAt := now.Unix()
 		if p.item.PublishedParsed != nil {
 			pubAt = p.item.PublishedParsed.Unix()
 		}
-		newEntries = append(newEntries, db.NewEntry{
+		candidates = append(candidates, db.NewEntry{
 			Hash:          feed.EntryHash(sub.ID, p.item),
 			Title:         p.item.Title,
 			Author:        authorName(p.item),
@@ -188,6 +189,23 @@ func (w *Worker) Run(ctx context.Context, sub db.DueSubscription) {
 			PublishedAt:   pubAt,
 			ExtractFailed: p.extractFailed,
 		})
+	}
+
+	// Consult tombstones — drop any entry that has been previously archived.
+	// Read-only point lookups; runs outside the commit transaction.
+	newEntries := make([]db.NewEntry, 0, len(candidates))
+	for _, e := range candidates {
+		tombstoned, terr := db.IsTombstoned(ctx, w.db, sub.ID, e.Hash)
+		if terr != nil {
+			slog.WarnContext(ctx, "tombstone check failed, including entry",
+				"feed_id", sub.ID, "hash", e.Hash, "err", terr)
+			newEntries = append(newEntries, e)
+			continue
+		}
+		if tombstoned {
+			continue
+		}
+		newEntries = append(newEntries, e)
 	}
 
 	inserted, perr := db.UpdateAfterPoll(ctx, w.db, sub.ID, db.PollResult{

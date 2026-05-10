@@ -928,3 +928,135 @@ func TestWorkerAppliesFeedCredsToExtract(t *testing.T) {
 	require.Equal(t, "c", gotArticleCookie, "extract must receive the same creds as the feed fetch")
 	require.NotEmpty(t, gotArticleAuth)
 }
+
+func TestWorker_TombstonedEntryNotInserted(t *testing.T) {
+	t.Parallel()
+	d, uid := newDBUser(t)
+	ctx := context.Background()
+
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/atom+xml")
+		fmt.Fprint(w, sampleAtom) // one entry, id urn:sample:1
+	}))
+	t.Cleanup(origin.Close)
+
+	subID, err := db.InsertSubscription(ctx, d, db.NewSubscription{
+		UserID: uid, Title: "s", FeedURL: origin.URL + "/feed", NextPoll: 0, Created: 0,
+	})
+	require.NoError(t, err)
+	sub := db.DueSubscription{UserID: uid, ID: subID, FeedURL: origin.URL + "/feed"}
+
+	w := NewWorker(d, http.DefaultClient, WorkerOpts{
+		Processor: processor.New(sanitise.DefaultPolicy(), nil),
+	})
+
+	// First poll — entry lands
+	w.Run(ctx, sub)
+	entries, _, _, err := db.ListEntries(ctx, d, db.ListEntriesParams{UserID: uid, Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+
+	// Tombstone then delete the entry
+	tx, err := d.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	require.NoError(t, db.InsertTombstones(ctx, tx, []db.NewTombstone{
+		{SubscriptionID: subID, EntryHash: entries[0].Hash, DeletedAt: 9999},
+	}))
+	require.NoError(t, tx.Commit())
+	_, err = d.ExecContext(ctx, "DELETE FROM entries WHERE subscription_id = ?", subID)
+	require.NoError(t, err)
+
+	// Second poll — must not reinsert
+	w.Run(ctx, sub)
+	entries, _, _, err = db.ListEntries(ctx, d, db.ListEntriesParams{UserID: uid, Limit: 10})
+	require.NoError(t, err)
+	require.Empty(t, entries, "tombstoned entry must not reappear")
+}
+
+func TestWorker_TombstoneMiss_EntryInserted(t *testing.T) {
+	t.Parallel()
+	d, uid := newDBUser(t)
+	ctx := context.Background()
+
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/atom+xml")
+		fmt.Fprint(w, sampleAtom)
+	}))
+	t.Cleanup(origin.Close)
+
+	subID, err := db.InsertSubscription(ctx, d, db.NewSubscription{
+		UserID: uid, Title: "s", FeedURL: origin.URL + "/feed", NextPoll: 0, Created: 0,
+	})
+	require.NoError(t, err)
+
+	w := NewWorker(d, http.DefaultClient, WorkerOpts{
+		Processor: processor.New(sanitise.DefaultPolicy(), nil),
+	})
+	w.Run(ctx, db.DueSubscription{UserID: uid, ID: subID, FeedURL: origin.URL + "/feed"})
+
+	entries, _, _, err := db.ListEntries(ctx, d, db.ListEntriesParams{UserID: uid, Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, entries, 1, "non-tombstoned entry must be inserted normally")
+}
+
+func TestWorker_MixedTombstones(t *testing.T) {
+	t.Parallel()
+	d, uid := newDBUser(t)
+	ctx := context.Background()
+
+	const threeAtom = `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Three</title><id>urn:three</id><updated>2026-05-01T00:00:00Z</updated>
+  <entry><title>A</title><id>urn:three:1</id><link href="https://x/1"/>
+    <updated>2026-05-01T00:00:00Z</updated><content type="html">a</content></entry>
+  <entry><title>B</title><id>urn:three:2</id><link href="https://x/2"/>
+    <updated>2026-05-01T00:00:00Z</updated><content type="html">b</content></entry>
+  <entry><title>C</title><id>urn:three:3</id><link href="https://x/3"/>
+    <updated>2026-05-01T00:00:00Z</updated><content type="html">c</content></entry>
+</feed>`
+
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/atom+xml")
+		fmt.Fprint(w, threeAtom)
+	}))
+	t.Cleanup(origin.Close)
+
+	subID, err := db.InsertSubscription(ctx, d, db.NewSubscription{
+		UserID: uid, Title: "s", FeedURL: origin.URL + "/feed", NextPoll: 0, Created: 0,
+	})
+	require.NoError(t, err)
+	sub := db.DueSubscription{UserID: uid, ID: subID, FeedURL: origin.URL + "/feed"}
+	w := NewWorker(d, http.DefaultClient, WorkerOpts{
+		Processor: processor.New(sanitise.DefaultPolicy(), nil),
+	})
+
+	w.Run(ctx, sub)
+	entries, _, _, err := db.ListEntries(ctx, d, db.ListEntriesParams{UserID: uid, Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, entries, 3)
+
+	var tombstoneHash string
+	for _, e := range entries {
+		if e.URL == "https://x/2" {
+			tombstoneHash = e.Hash
+		}
+	}
+	require.NotEmpty(t, tombstoneHash)
+
+	tx, err := d.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	require.NoError(t, db.InsertTombstones(ctx, tx, []db.NewTombstone{
+		{SubscriptionID: subID, EntryHash: tombstoneHash, DeletedAt: 1000},
+	}))
+	require.NoError(t, tx.Commit())
+	_, err = d.ExecContext(ctx, "DELETE FROM entries WHERE subscription_id = ?", subID)
+	require.NoError(t, err)
+
+	w.Run(ctx, sub)
+	entries, _, _, err = db.ListEntries(ctx, d, db.ListEntriesParams{UserID: uid, Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, entries, 2)
+	for _, e := range entries {
+		require.NotEqual(t, tombstoneHash, e.Hash)
+	}
+}
