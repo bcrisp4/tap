@@ -27,13 +27,13 @@ These are locked in before M1 begins.
 | M3 | Media proxy + cache | `/api/v1/proxy/{token}` with signed tokens, sharded FS cache, MIME allowlist, request coalescing. | [`specs/2026-05-09-m3-media-proxy.md`](specs/2026-05-09-m3-media-proxy.md) |
 | M4 | Polling discipline | Adaptive cadence, per-host concurrency cap, SSRF guard with allowlist + redirect re-check, retry/backoff. | [`specs/2026-05-09-m4-polling-discipline.md`](specs/2026-05-09-m4-polling-discipline.md) |
 | M5 | Article extraction | Readability-style extractor + per-feed CSS rules, opt-in flag, graceful degradation. | [`specs/2026-05-09-m5-article-extraction.md`](specs/2026-05-09-m5-article-extraction.md) |
-| M6 | Auth foundations | Password login, sessions (cookie, hashed-at-rest, idle + absolute expiry), CSRF, admin bootstrap (CLI + env-var), credential redaction. | TBD |
-| M7 | 2FA + passkeys | TOTP enrolment, recovery codes, WebAuthn, session listing/revocation, admin reset paths. | TBD |
+| M6 | Auth foundations | Password login, sessions (cookie, hashed-at-rest, idle + absolute expiry), CSRF, admin bootstrap (CLI + env-var), credential redaction. | [`specs/2026-05-10-m6-auth-foundations.md`](specs/2026-05-10-m6-auth-foundations.md) |
+| M7 | 2FA + passkeys + per-user data isolation | TOTP enrolment, recovery codes, WebAuthn, session listing/revocation, admin reset paths, **user_id on subscriptions/entries with strict per-user query filters (privacy: even admins see only their own feeds)**. | TBD |
 | M8 | SPA polish | Three themes, serif/sans toggle, density toggle, keyboard shortcuts, mobile breakpoints, swipe gestures, animations, accessibility pass. | TBD |
 | M9 | Categories, OPML, search, add-feed flow | The organisational and ingest UX. SQLite FTS5 for full-text search. Discover-feeds-from-page-URL. | TBD |
 | M10 | Offline + PWA | Service worker, mutation queue persisted to local storage, warm-cache driver, manifest, status-bar theming. | TBD |
 | M11 | Archival + tombstones | Daily sweep, tombstone consult on insert, two-pass media cache eviction. | TBD |
-| M12 | Observability + production hardening | Structured logs, OTel metrics + traces, healthcheck subcommand, admin CLI, recent-errors ring buffer, brute-force lockout, system-status panel, security review pass. | TBD |
+| M12 | Observability + production hardening | Structured logs, OTel metrics + traces, healthcheck subcommand, admin CLI, recent-errors ring buffer, brute-force lockout, argon2 re-hash-on-verify (paired with any params bump), system-status panel, security review pass. | TBD |
 
 ## Deferred items (post-M6)
 
@@ -43,6 +43,7 @@ Items committed in the design but not yet sequenced into a specific milestone. T
 |---|---|---|
 | Per-user iframe-host allowlist | M6 user table | M2 ships a hard-coded default sourced from miniflux's `iframeAllowList` (13 hosts including `youtube.com`, `player.vimeo.com`, `bandcamp.com`, etc. — see `internal/sanitise/sanitise.go`). Per-user override stored in DB-backed preferences once the user table exists. |
 | SVG support in the media proxy | None (own decision) | M3 ships an `image/{png,jpeg,gif,webp,avif}` MIME allowlist and 415s SVG. No well-trodden pure-Go SVG sanitiser exists; two real options when we revisit: (a) roll our own XML allowlist walker mirroring M2's HTML post-pass (~200 LoC, edge cases around namespaces / SMIL / CSS in style attrs), or (b) rasterise SVG → PNG inside the proxy via `srwiley/oksvg` or similar (heavier dep, loses scalability). Likely a small follow-up extension to `internal/sanitise` rather than its own milestone. |
+| 413 on >1 MiB body across remaining write handlers | None | M6 fixed `loginHandler` and `passwordChangeHandler` (commit `3d436b4`) so they detect `*http.MaxBytesError` via `errors.As` and return `413 Request Entity Too Large` instead of `400 bad_request`. The same `MaxBytesReader → json.Decode` shape is used in `internal/api/subscriptions.go` (POST + PATCH `/subscriptions/{id}`) and `internal/api/entries.go` (PATCH `/entries/{id}`); they currently return `400` on oversize bodies. Spec compliance only — no security impact. ~5 lines per handler when we revisit. |
 
 ## Working cadence
 

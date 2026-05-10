@@ -68,7 +68,7 @@ function subscriptionsStore() {
     async add(feed_url: string) {
       // add() callers (AddFeedForm) await and surface errors in the UI,
       // so propagation is intentional here.
-      await api.addSubscription(feed_url);
+      await api.addSubscription({ feed_url });
       await this.load();
     },
   };

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/bcrisp4/tap/internal/db"
+	"github.com/bcrisp4/tap/internal/httpx"
 	"github.com/bcrisp4/tap/internal/processor"
 	"github.com/bcrisp4/tap/internal/sanitise"
 	"github.com/stretchr/testify/require"
@@ -466,7 +467,7 @@ func TestWorker_Extract_ReplacesContentOnSuccess(t *testing.T) {
 	require.NoError(t, err)
 
 	var calls int
-	fakeExtract := func(ctx context.Context, c *http.Client, url, sel string, cap int64) (string, error) {
+	fakeExtract := func(ctx context.Context, c *http.Client, url, sel string, cap int64, creds httpx.FeedCreds) (string, error) {
 		calls++
 		require.Equal(t, "https://link.example/1", url)
 		require.Equal(t, "", sel)
@@ -513,7 +514,7 @@ func TestWorker_Extract_FalseSkipsExtraction(t *testing.T) {
 	})
 
 	var calls int
-	fakeExtract := func(ctx context.Context, c *http.Client, url, sel string, cap int64) (string, error) {
+	fakeExtract := func(ctx context.Context, c *http.Client, url, sel string, cap int64, creds httpx.FeedCreds) (string, error) {
 		calls++
 		return "should-not-appear", nil
 	}
@@ -556,7 +557,7 @@ func TestWorker_Extract_OneFailureFallsBackToSummary(t *testing.T) {
 		Title: "x", FeedURL: srv.URL, NextPoll: 0, Created: 0,
 	})
 
-	fakeExtract := func(ctx context.Context, c *http.Client, url, sel string, cap int64) (string, error) {
+	fakeExtract := func(ctx context.Context, c *http.Client, url, sel string, cap int64, creds httpx.FeedCreds) (string, error) {
 		if strings.HasSuffix(url, "/2") {
 			return "", errors.New("simulated extract failure")
 		}
@@ -625,7 +626,7 @@ func TestWorker_Extract_AllFailuresPollStillSucceeds(t *testing.T) {
 		Title: "x", FeedURL: srv.URL, NextPoll: 0, Created: 0,
 	})
 
-	failExtract := func(ctx context.Context, c *http.Client, url, sel string, cap int64) (string, error) {
+	failExtract := func(ctx context.Context, c *http.Client, url, sel string, cap int64, creds httpx.FeedCreds) (string, error) {
 		return "", errors.New("always fail")
 	}
 
@@ -679,7 +680,7 @@ func TestWorker_Extract_ConcurrencyLimit(t *testing.T) {
 		peak     int
 	)
 	release := make(chan struct{})
-	barrier := func(ctx context.Context, c *http.Client, url, sel string, cap int64) (string, error) {
+	barrier := func(ctx context.Context, c *http.Client, url, sel string, cap int64, creds httpx.FeedCreds) (string, error) {
 		mu.Lock()
 		inFlight++
 		if inFlight > peak {
@@ -739,7 +740,7 @@ func TestWorker_Extract_NoLinkSkipsSilently(t *testing.T) {
 	})
 
 	var calls int
-	fakeExtract := func(ctx context.Context, c *http.Client, url, sel string, cap int64) (string, error) {
+	fakeExtract := func(ctx context.Context, c *http.Client, url, sel string, cap int64, creds httpx.FeedCreds) (string, error) {
 		calls++
 		return "should-not-appear", nil
 	}
@@ -779,7 +780,7 @@ func TestWorker_Extract_OutputStillSanitised(t *testing.T) {
 		Title: "x", FeedURL: srv.URL, NextPoll: 0, Created: 0,
 	})
 
-	hostileExtract := func(ctx context.Context, c *http.Client, url, sel string, cap int64) (string, error) {
+	hostileExtract := func(ctx context.Context, c *http.Client, url, sel string, cap int64, creds httpx.FeedCreds) (string, error) {
 		return `<p>real article</p><script>alert(1)</script>`, nil
 	}
 
@@ -796,4 +797,87 @@ func TestWorker_Extract_OutputStillSanitised(t *testing.T) {
 	require.Contains(t, full.Content, "real article")
 	require.NotContains(t, full.Content, "<script>", "extracted output must run through processor.Process")
 	require.NotContains(t, full.Content, "alert", "extracted output must run through processor.Process")
+}
+
+func TestWorkerAppliesFeedCredsToFeedFetch(t *testing.T) {
+	t.Parallel()
+	gotCookie := ""
+	gotAuth := ""
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotCookie = r.Header.Get("Cookie")
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/atom+xml")
+		_, _ = w.Write([]byte(`<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"><title>x</title></feed>`))
+	}))
+	defer srv.Close()
+
+	d := newDB(t)
+	subID, err := db.InsertSubscription(context.Background(), d, db.NewSubscription{
+		Title: "x", FeedURL: srv.URL, NextPoll: 0, Created: 0,
+	})
+	require.NoError(t, err)
+
+	w := NewWorker(d, srv.Client(), WorkerOpts{
+		Processor: processor.New(sanitise.DefaultPolicy(), nil),
+	})
+
+	w.Run(context.Background(), db.DueSubscription{
+		ID: subID, FeedURL: srv.URL,
+		Cookie: "c", BasicAuthUser: "u", BasicAuthPass: "p",
+	})
+	require.Equal(t, "c", gotCookie)
+	require.NotEmpty(t, gotAuth)
+}
+
+func TestWorkerAppliesFeedCredsToExtract(t *testing.T) {
+	t.Parallel()
+	feedCalled := false
+	gotArticleCookie := ""
+	gotArticleAuth := ""
+
+	// Capture srv.URL via closure so the feed body can point at /article on
+	// the same origin without templating.
+	mux := http.NewServeMux()
+	var articleURL string
+	mux.HandleFunc("/feed", func(w http.ResponseWriter, r *http.Request) {
+		feedCalled = true
+		w.Header().Set("Content-Type", "application/atom+xml")
+		fmt.Fprintf(w, `<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom">
+<title>x</title><id>urn:x</id>
+<entry>
+  <title>e</title>
+  <id>e1</id>
+  <link href="%s"/>
+  <updated>2024-01-01T00:00:00Z</updated>
+</entry>
+</feed>`, articleURL)
+	})
+	mux.HandleFunc("/article", func(w http.ResponseWriter, r *http.Request) {
+		gotArticleCookie = r.Header.Get("Cookie")
+		gotArticleAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<html><body><article><p>Sufficient text for readability extraction here, lorem ipsum dolor sit amet, consectetur adipiscing elit.</p></article></body></html>`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	articleURL = srv.URL + "/article"
+
+	d := newDB(t)
+	subID, err := db.InsertSubscription(context.Background(), d, db.NewSubscription{
+		Title: "x", FeedURL: srv.URL + "/feed", NextPoll: 0, Created: 0,
+	})
+	require.NoError(t, err)
+
+	w := NewWorker(d, srv.Client(), WorkerOpts{
+		Processor: processor.New(sanitise.DefaultPolicy(), nil),
+	})
+	w.Run(context.Background(), db.DueSubscription{
+		ID: subID, FeedURL: srv.URL + "/feed",
+		Extract: true,
+		Cookie:  "c", BasicAuthUser: "u", BasicAuthPass: "p",
+	})
+
+	require.True(t, feedCalled)
+	require.Equal(t, "c", gotArticleCookie, "extract must receive the same creds as the feed fetch")
+	require.NotEmpty(t, gotArticleAuth)
 }

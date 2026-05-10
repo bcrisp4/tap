@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/bcrisp4/tap/internal/api"
+	"github.com/bcrisp4/tap/internal/auth"
 	"github.com/bcrisp4/tap/internal/db"
 	"github.com/bcrisp4/tap/internal/httpx"
 	"github.com/bcrisp4/tap/internal/poll"
@@ -27,7 +28,19 @@ import (
 	"github.com/bcrisp4/tap/internal/server"
 )
 
+// main routes between the `tap admin ...` subcommand family and the regular
+// server. Subcommands return an exit code so tests can call them directly.
 func main() {
+	if len(os.Args) >= 2 && os.Args[1] == "admin" {
+		os.Exit(runAdmin(os.Args[2:], os.Stdin, os.Stdout, os.Stderr, auth.DefaultParams))
+	}
+	runServer()
+}
+
+// runServer is the long-running HTTP + scheduler entry point. This is the
+// historical body of main(); it became its own function when the admin
+// subcommand dispatcher landed.
+func runServer() {
 	var (
 		addr    = flag.String("addr", "127.0.0.1:8080", "HTTP listen address (set 0.0.0.0:8080 in containers)")
 		dataDir = flag.String("data", envOr("TAP_DATA_DIR", "./data"), "data directory containing tap.db")
@@ -50,6 +63,19 @@ func main() {
 		proxyCacheDir = flag.String("proxy-cache-dir", envOr("TAP_PROXY_CACHE_DIR", ""), "media cache directory (default: <data>/cache)")
 		proxyCacheCap = flag.Int64("proxy-cache-cap-bytes", envOrInt64("TAP_PROXY_CACHE_CAP_BYTES", 524288000), "media cache size cap in bytes")
 		proxyBodyCap  = flag.Int64("proxy-body-cap-bytes", envOrInt64("TAP_PROXY_BODY_CAP_BYTES", 10485760), "per-response body cap for media proxy origin fetches")
+
+		// Auth-related flags. The defaults track concept §7.4: 7-day idle TTL
+		// (refreshed on activity), 90-day absolute cap. Cookie Secure default
+		// is "auto": derived from --addr (loopback => off, anything else => on).
+		sessionIdleTTL = flag.Duration("session-idle-ttl",
+			envOrDuration("TAP_SESSION_IDLE_TTL", 7*24*time.Hour),
+			"refresh-on-activity expiry for session cookies")
+		sessionAbsoluteTTL = flag.Duration("session-absolute-ttl",
+			envOrDuration("TAP_SESSION_ABSOLUTE_TTL", 90*24*time.Hour),
+			"hard cap on session lifetime regardless of activity")
+		cookieSecureMode = flag.String("cookie-secure",
+			envOr("TAP_COOKIE_SECURE", "auto"),
+			"set Secure attribute on session cookie: auto|true|false")
 
 		ssrfAllow stringSlice
 	)
@@ -88,6 +114,33 @@ func main() {
 	if err := db.Migrate(ctx, d); err != nil {
 		slog.Error("migrate", "err", err)
 		os.Exit(1)
+	}
+
+	// First-launch admin bootstrap. Concept §7.1: when the DB has no users
+	// AND the operator supplied TAP_ADMIN_USERNAME + TAP_ADMIN_PASSWORD,
+	// create an admin row from those env vars. If users already exist, this
+	// path is a silent no-op even when the env vars are still set — that's
+	// the contract that lets containers keep the env vars in their
+	// definition without re-bootstrapping on every restart.
+	if n, err := db.CountUsers(ctx, d); err != nil {
+		slog.Error("count users", "err", err)
+		os.Exit(1)
+	} else if n == 0 {
+		user := os.Getenv("TAP_ADMIN_USERNAME")
+		pass := os.Getenv("TAP_ADMIN_PASSWORD")
+		switch {
+		case user != "" && pass != "":
+			if err := bootstrapAdmin(ctx, d, user, pass, auth.DefaultParams); err != nil {
+				slog.Error("bootstrap admin", "err", err)
+				os.Exit(1)
+			}
+			slog.Info("bootstrapped admin from environment", "username", user)
+		case user != "" || pass != "":
+			slog.Error("partial admin bootstrap: both TAP_ADMIN_USERNAME and TAP_ADMIN_PASSWORD must be set")
+			os.Exit(1)
+		default:
+			slog.Warn("no users in database; create one with 'tap admin create' or set TAP_ADMIN_USERNAME and TAP_ADMIN_PASSWORD")
+		}
 	}
 
 	// Resolve proxy cache dir: explicit flag wins; otherwise <dataDir>/cache.
@@ -143,11 +196,35 @@ func main() {
 	})
 	sched.Start()
 
+	// Resolve --cookie-secure once at startup. "auto" (the default) inspects
+	// --addr: loopback bind => Secure off, anything else => Secure on. Any
+	// other token is a startup error.
+	var cookieSecureEnum api.CookieSecureMode
+	switch strings.ToLower(*cookieSecureMode) {
+	case "auto", "":
+		cookieSecureEnum = api.CookieSecureAuto
+	case "true":
+		cookieSecureEnum = api.CookieSecureTrue
+	case "false":
+		cookieSecureEnum = api.CookieSecureFalse
+	default:
+		slog.Error("invalid --cookie-secure", "value", *cookieSecureMode)
+		os.Exit(1)
+	}
+	cookieSecure := api.ResolveCookieSecure(cookieSecureEnum, *addr)
+
 	mux := http.NewServeMux()
 	// /api/ and /healthz both go through the same factory; sched.Poke is wired
 	// into POST /api/v1/subscriptions so a freshly added feed polls immediately
 	// rather than waiting up to TickInterval (60s).
-	apiMux := api.NewMux(d, api.MuxOpts{Poke: sched.Poke, ProxyHandler: proxyHandler})
+	apiMux := api.NewMux(d, api.MuxOpts{
+		Poke:               sched.Poke,
+		ProxyHandler:       proxyHandler,
+		SessionIdleTTL:     *sessionIdleTTL,
+		SessionAbsoluteTTL: *sessionAbsoluteTTL,
+		CookieSecure:       cookieSecure,
+		HashParams:         auth.DefaultParams,
+	})
 	mux.Handle("/api/", apiMux)
 	mux.Handle("/healthz", apiMux)
 	mux.Handle("/", server.SPAHandler())

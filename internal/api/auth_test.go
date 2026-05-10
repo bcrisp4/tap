@@ -1,0 +1,346 @@
+package api
+
+import (
+	"bytes"
+	"context"
+	"database/sql"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/bcrisp4/tap/internal/auth"
+	"github.com/bcrisp4/tap/internal/db"
+	"github.com/stretchr/testify/require"
+)
+
+// testParams keeps the auth tests fast — production uses auth.DefaultParams.
+var testHashParams = auth.Params{Time: 1, Memory: 8 * 1024, Threads: 1, SaltLen: 8, KeyLen: 16}
+
+// seedUser inserts a user with the given password hashed under testHashParams.
+func seedUser(t *testing.T, d *sql.DB, username, password, role string) int64 {
+	t.Helper()
+	hash, err := auth.Hash(password, testHashParams)
+	require.NoError(t, err)
+	id, err := db.InsertUser(context.Background(), d, db.NewUser{
+		Username: username, PasswordHash: hash, Role: role, CreatedAt: 0,
+	})
+	require.NoError(t, err)
+	return id
+}
+
+func TestResolveCookieSecure(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		mode CookieSecureMode
+		addr string
+		want bool
+	}{
+		{"force-true overrides loopback", CookieSecureTrue, "127.0.0.1:8080", true},
+		{"force-false overrides public", CookieSecureFalse, "0.0.0.0:8080", false},
+		{"auto loopback ipv4", CookieSecureAuto, "127.0.0.1:8080", false},
+		{"auto loopback ipv6", CookieSecureAuto, "[::1]:8080", false},
+		{"auto localhost name", CookieSecureAuto, "localhost:8080", false},
+		{"auto bind-all empty host", CookieSecureAuto, ":8080", true},
+		{"auto unspecified ipv4", CookieSecureAuto, "0.0.0.0:8080", true},
+		{"auto bare hostname", CookieSecureAuto, "example.com:8080", true},
+		{"auto routable ipv4", CookieSecureAuto, "10.0.0.1:8080", true},
+		{"auto malformed addr fails safe", CookieSecureAuto, "not-a-host", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, resolveCookieSecure(tc.mode, tc.addr))
+		})
+	}
+}
+
+func TestLoginHappyPath(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	uid := seedUser(t, d, "ben", "correct horse battery staple", "admin")
+
+	deps := authDeps{
+		d:                  d,
+		sessionIdleTTL:     time.Hour,
+		sessionAbsoluteTTL: 24 * time.Hour,
+		cookieSecure:       false,
+	}
+
+	body, _ := json.Marshal(loginRequest{Username: "ben", Password: "correct horse battery staple"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/sessions", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	loginHandler(deps).ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+
+	var resp loginResponse
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+	require.Equal(t, uid, resp.User.ID)
+	require.Equal(t, "ben", resp.User.Username)
+	require.Equal(t, "admin", resp.User.Role)
+	require.NotEmpty(t, resp.CSRFToken)
+
+	cookies := rr.Result().Cookies()
+	require.NotEmpty(t, cookies)
+	var sessionCookie *http.Cookie
+	for _, c := range cookies {
+		if c.Name == "tap_session" {
+			sessionCookie = c
+		}
+	}
+	require.NotNil(t, sessionCookie)
+	require.True(t, sessionCookie.HttpOnly)
+	require.Equal(t, http.SameSiteLaxMode, sessionCookie.SameSite)
+	require.NotEmpty(t, sessionCookie.Value)
+	require.True(t, strings.HasPrefix(sessionCookie.Path, "/"))
+}
+
+func TestLoginFailureModes(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	seedUser(t, d, "ben", "correct horse battery staple", "admin")
+
+	disabledID := seedUser(t, d, "alice", "valid-password", "user")
+	require.NoError(t, db.DisableUser(context.Background(), d, disabledID, time.Now().Unix()))
+
+	deps := authDeps{d: d, sessionIdleTTL: time.Hour, sessionAbsoluteTTL: 24 * time.Hour}
+
+	cases := []struct {
+		name    string
+		body    string
+		wantSt  int
+		wantSub string // substring of response body
+	}{
+		{"unknown user", `{"username":"nobody","password":"x"}`, http.StatusUnauthorized, `"code":"invalid_credentials"`},
+		{"wrong password", `{"username":"ben","password":"x"}`, http.StatusUnauthorized, `"code":"invalid_credentials"`},
+		{"disabled user", `{"username":"alice","password":"valid-password"}`, http.StatusUnauthorized, `"code":"invalid_credentials"`},
+		{"empty username", `{"username":"","password":"x"}`, http.StatusUnauthorized, `"code":"invalid_credentials"`},
+		{"empty password", `{"username":"ben","password":""}`, http.StatusUnauthorized, `"code":"invalid_credentials"`},
+		{"malformed json", `{not json`, http.StatusBadRequest, `"code":"bad_request"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/sessions", strings.NewReader(tc.body))
+			rr := httptest.NewRecorder()
+			loginHandler(deps).ServeHTTP(rr, req)
+			require.Equal(t, tc.wantSt, rr.Code, rr.Body.String())
+			require.Contains(t, rr.Body.String(), tc.wantSub)
+		})
+	}
+}
+
+func TestLoginRejectsOversizedBody(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	deps := authDeps{d: d, sessionIdleTTL: time.Hour, sessionAbsoluteTTL: 24 * time.Hour}
+
+	// Body is valid JSON for the first ~1 MiB, then keeps going to 2 MiB.
+	// A non-JSON 2 MiB blob would trip the decoder's syntax check before
+	// MaxBytesReader gets a chance to error, masking the 413 path.
+	body := `{"username":"` + strings.Repeat("a", 2<<20) + `","password":"x"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/sessions", strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	loginHandler(deps).ServeHTTP(rr, req)
+	// MaxBytesReader -> *http.MaxBytesError -> 413, not a generic 400.
+	// Distinguishing the two is what tells the SPA "you sent too much"
+	// vs "your JSON is broken".
+	require.Equal(t, http.StatusRequestEntityTooLarge, rr.Code, rr.Body.String())
+}
+
+// withFakeAuth injects a session + user into context for handler-level tests
+// that don't go through the full requireSession middleware.
+func withFakeAuth(t *testing.T, u db.User, s db.Session, h http.Handler) http.Handler {
+	t.Helper()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), ctxKeyUser, u)
+		ctx = context.WithValue(ctx, ctxKeySession, s)
+		h.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func TestGetSessionCurrent(t *testing.T) {
+	t.Parallel()
+	u := db.User{ID: 7, Username: "ben", Role: "admin"}
+	s := db.Session{ID: 99, UserID: 7, CSRFToken: "csrf-xyz"}
+
+	h := withFakeAuth(t, u, s, getSessionCurrentHandler())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/sessions/current", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var resp loginResponse
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+	require.Equal(t, "ben", resp.User.Username)
+	require.Equal(t, "csrf-xyz", resp.CSRFToken)
+}
+
+func TestLogoutDeletesSessionAndClearsCookie(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	uid := seedUser(t, d, "ben", "password1", "admin")
+
+	sid, err := db.InsertSession(context.Background(), d, db.NewSession{
+		UserID: uid, TokenHash: "h", CSRFToken: "c",
+		CreatedAt: 0, LastSeenAt: 0, IdleExpiresAt: 1, AbsoluteExpiresAt: 1,
+	})
+	require.NoError(t, err)
+
+	deps := authDeps{d: d, cookieSecure: false}
+	h := withFakeAuth(t,
+		db.User{ID: uid, Username: "ben", Role: "admin"},
+		db.Session{ID: sid, UserID: uid, CSRFToken: "c"},
+		logoutHandler(deps))
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/sessions/current", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusNoContent, rr.Code)
+
+	// Session row should be gone.
+	_, err = db.GetSessionByTokenHash(context.Background(), d, "h")
+	require.Error(t, err)
+
+	// Set-Cookie clears tap_session. MaxAge<0 ensures Max-Age=0 lands on
+	// the wire (Go's net/http omits the attribute entirely when MaxAge==0,
+	// which would leave a browser-session cookie behind instead of deleting).
+	var cleared bool
+	for _, c := range rr.Result().Cookies() {
+		if c.Name == "tap_session" {
+			cleared = true
+			require.Less(t, c.MaxAge, 0)
+		}
+	}
+	require.True(t, cleared, "tap_session should be cleared")
+}
+
+func TestPasswordChangeHappyPath(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	uid := seedUser(t, d, "ben", "old-password-12", "admin")
+
+	currentSID, err := db.InsertSession(context.Background(), d, db.NewSession{
+		UserID: uid, TokenHash: "current", CSRFToken: "old-csrf",
+		CreatedAt: 0, LastSeenAt: 0, IdleExpiresAt: 1, AbsoluteExpiresAt: 1,
+	})
+	require.NoError(t, err)
+	otherSID, err := db.InsertSession(context.Background(), d, db.NewSession{
+		UserID: uid, TokenHash: "other", CSRFToken: "x",
+		CreatedAt: 0, LastSeenAt: 0, IdleExpiresAt: 1, AbsoluteExpiresAt: 1,
+	})
+	require.NoError(t, err)
+
+	deps := authDeps{d: d}
+	currentSession := db.Session{ID: currentSID, UserID: uid, CSRFToken: "old-csrf"}
+	currentUser := db.User{ID: uid, Username: "ben", Role: "admin"}
+	// Pre-load password hash by re-reading the user.
+	full, err := db.GetUserByID(context.Background(), d, uid)
+	require.NoError(t, err)
+	currentUser.PasswordHash = full.PasswordHash
+
+	h := withFakeAuth(t, currentUser, currentSession, passwordChangeHandler(deps, testHashParams))
+
+	body, _ := json.Marshal(passwordChangeRequest{
+		CurrentPassword: "old-password-12",
+		NewPassword:     "new-password-34",
+	})
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/me/password", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+
+	var resp passwordChangeResponse
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+	require.NotEmpty(t, resp.CSRFToken)
+	require.NotEqual(t, "old-csrf", resp.CSRFToken)
+
+	// New password verifies; old password no longer does.
+	updated, err := db.GetUserByID(context.Background(), d, uid)
+	require.NoError(t, err)
+	ok, err := auth.Verify(updated.PasswordHash, "new-password-34")
+	require.NoError(t, err)
+	require.True(t, ok)
+	ok, err = auth.Verify(updated.PasswordHash, "old-password-12")
+	require.NoError(t, err)
+	require.False(t, ok)
+
+	// Current session retained; other session deleted.
+	_, err = db.GetSessionByTokenHash(context.Background(), d, "current")
+	require.NoError(t, err)
+	_, err = db.GetSessionByTokenHash(context.Background(), d, "other")
+	require.Error(t, err)
+	_ = otherSID
+}
+
+func TestPasswordChangeWrongCurrent(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	uid := seedUser(t, d, "ben", "old-password-12", "admin")
+	full, _ := db.GetUserByID(context.Background(), d, uid)
+
+	deps := authDeps{d: d}
+	h := withFakeAuth(t,
+		db.User{ID: uid, Username: "ben", Role: "admin", PasswordHash: full.PasswordHash},
+		db.Session{ID: 1, UserID: uid, CSRFToken: "c"},
+		passwordChangeHandler(deps, testHashParams))
+
+	body, _ := json.Marshal(passwordChangeRequest{
+		CurrentPassword: "wrong",
+		NewPassword:     "new-password-34",
+	})
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/me/password", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusUnauthorized, rr.Code)
+	require.Contains(t, rr.Body.String(), `"code":"invalid_credentials"`)
+}
+
+func TestPasswordChangeRejectsOversizedBody(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	uid := seedUser(t, d, "ben", "old-password-12", "admin")
+	full, _ := db.GetUserByID(context.Background(), d, uid)
+
+	deps := authDeps{d: d}
+	h := withFakeAuth(t,
+		db.User{ID: uid, Username: "ben", Role: "admin", PasswordHash: full.PasswordHash},
+		db.Session{ID: 1, UserID: uid, CSRFToken: "c"},
+		passwordChangeHandler(deps, testHashParams))
+
+	// Valid JSON for the first ~1 MiB, then keeps going to 2 MiB. A
+	// non-JSON blob would trip the decoder's syntax check before
+	// MaxBytesReader can error, masking the 413 path.
+	body := `{"current_password":"` + strings.Repeat("a", 2<<20) + `","new_password":"x"}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/me/password", strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	// MaxBytesReader -> *http.MaxBytesError -> 413, not a generic 400.
+	require.Equal(t, http.StatusRequestEntityTooLarge, rr.Code, rr.Body.String())
+}
+
+func TestPasswordChangeTooShortNew(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	uid := seedUser(t, d, "ben", "old-password-12", "admin")
+	full, _ := db.GetUserByID(context.Background(), d, uid)
+
+	deps := authDeps{d: d}
+	h := withFakeAuth(t,
+		db.User{ID: uid, Username: "ben", Role: "admin", PasswordHash: full.PasswordHash},
+		db.Session{ID: 1, UserID: uid, CSRFToken: "c"},
+		passwordChangeHandler(deps, testHashParams))
+
+	body, _ := json.Marshal(passwordChangeRequest{
+		CurrentPassword: "old-password-12",
+		NewPassword:     "short",
+	})
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/me/password", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusBadRequest, rr.Code)
+	require.Contains(t, rr.Body.String(), `"code":"password_too_short"`)
+}

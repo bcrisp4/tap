@@ -15,8 +15,9 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/andybalholm/cascadia"
 	readability "codeberg.org/readeck/go-readability/v2"
+	"github.com/andybalholm/cascadia"
+	"github.com/bcrisp4/tap/internal/httpx"
 	"golang.org/x/net/html"
 )
 
@@ -30,8 +31,9 @@ import (
 //
 // The fetch uses the caller-supplied client so the M4 SSRF guard,
 // per-host limiter, and timeout apply uniformly with feed and proxy
-// fetches.
-func Extract(ctx context.Context, client *http.Client, articleURL, selector string, bodyCap int64) (string, error) {
+// fetches. Per-feed credentials (cookie + basic auth) layer onto the
+// outbound request via httpx.ApplyFeedCreds; the zero value is a no-op.
+func Extract(ctx context.Context, client *http.Client, articleURL, selector string, bodyCap int64, creds httpx.FeedCreds) (string, error) {
 	// Compile the selector first so a malformed one fails before any HTTP
 	// round-trip. The PATCH endpoint also validates at write time, but Extract
 	// is a public function so the fast-fail belongs here too.
@@ -49,6 +51,7 @@ func Extract(ctx context.Context, client *http.Client, articleURL, selector stri
 		return "", fmt.Errorf("new request: %w", err)
 	}
 	req.Header.Set("Accept", "text/html, application/xhtml+xml;q=0.9, */*;q=0.5")
+	httpx.ApplyFeedCreds(req, creds)
 
 	resp, err := client.Do(req)
 	if err != nil {

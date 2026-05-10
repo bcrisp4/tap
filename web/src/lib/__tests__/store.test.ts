@@ -21,6 +21,7 @@ function makeEntry(overrides: Partial<EntryListItem> = {}): EntryListItem {
     fetched_at: 1700000001,
     read: false,
     saved: false,
+    extract_failed: false,
     ...overrides,
   };
 }
@@ -177,7 +178,7 @@ describe('subscriptionsStore', () => {
     const { subscriptions: store } = await import('../store');
     await store.add('https://example.com/feed');
 
-    expect(api.addSubscription).toHaveBeenCalledWith('https://example.com/feed');
+    expect(api.addSubscription).toHaveBeenCalledWith({ feed_url: 'https://example.com/feed' });
     expect(api.listSubscriptions).toHaveBeenCalled();
   });
 });

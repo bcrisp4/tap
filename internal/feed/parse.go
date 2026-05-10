@@ -8,12 +8,14 @@ import (
 	"time"
 
 	"github.com/bcrisp4/tap/internal/cadence"
+	"github.com/bcrisp4/tap/internal/httpx"
 	"github.com/mmcdole/gofeed"
 )
 
 type FetchOpts struct {
 	PriorETag         string
 	PriorLastModified string
+	Creds             httpx.FeedCreds
 }
 
 type FetchResult struct {
@@ -45,6 +47,7 @@ func Fetch(ctx context.Context, client *http.Client, feedURL string, opts FetchO
 		req.Header.Set("If-Modified-Since", opts.PriorLastModified)
 	}
 	req.Header.Set("Accept", "application/atom+xml, application/rss+xml, application/json, application/xml;q=0.9, */*;q=0.5")
+	httpx.ApplyFeedCreds(req, opts.Creds)
 
 	resp, err := client.Do(req)
 	if err != nil {

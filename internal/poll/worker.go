@@ -12,6 +12,7 @@ import (
 	"github.com/bcrisp4/tap/internal/db"
 	"github.com/bcrisp4/tap/internal/extract"
 	"github.com/bcrisp4/tap/internal/feed"
+	"github.com/bcrisp4/tap/internal/httpx"
 	"github.com/bcrisp4/tap/internal/processor"
 	"github.com/mmcdole/gofeed"
 	"golang.org/x/sync/errgroup"
@@ -21,7 +22,8 @@ import (
 // inject deterministic in-memory extractors without spinning up an
 // httptest origin. Same shape of test seam as Now func() time.Time.
 type ExtractFunc func(ctx context.Context, client *http.Client,
-	articleURL, selector string, bodyCap int64) (string, error)
+	articleURL, selector string, bodyCap int64,
+	creds httpx.FeedCreds) (string, error)
 
 type WorkerOpts struct {
 	Processor          *processor.Processor // applied to every entry's HTML body. Required (panics on nil).
@@ -86,9 +88,16 @@ func (w *Worker) Run(ctx context.Context, sub db.DueSubscription) {
 
 	now := w.opts.Now()
 
+	creds := httpx.FeedCreds{
+		Cookie:        sub.Cookie,
+		BasicAuthUser: sub.BasicAuthUser,
+		BasicAuthPass: sub.BasicAuthPass,
+	}
+
 	res, fetchErr := feed.Fetch(ctx, w.client, sub.FeedURL, feed.FetchOpts{
 		PriorETag:         sub.ETag.String,
 		PriorLastModified: sub.LastModified.String,
+		Creds:             creds,
 	})
 	if fetchErr != nil {
 		delay := cadence.BackoffFromErrorCount(sub.ErrorCount+1, w.opts.ErrorBase, w.opts.Ceiling, 0.25)
@@ -147,7 +156,8 @@ func (w *Worker) Run(ctx context.Context, sub db.DueSubscription) {
 			}
 			g.Go(func() error {
 				extracted, eerr := w.opts.Extract(ctx, w.client,
-					pendings[i].item.Link, sub.ExtractSelector, w.opts.ExtractBodyCap)
+					pendings[i].item.Link, sub.ExtractSelector, w.opts.ExtractBodyCap,
+					creds)
 				if eerr != nil {
 					slog.WarnContext(ctx, "extract failed",
 						"feed_id", sub.ID,

@@ -26,6 +26,8 @@ type subscriptionDTO struct {
 	CreatedAt       int64  `json:"created_at"`
 	Extract         bool   `json:"extract"`
 	ExtractSelector string `json:"extract_selector"`
+	HasCookie       bool   `json:"has_cookie"`
+	HasBasicAuth    bool   `json:"has_basic_auth"`
 }
 
 func toDTO(s db.Subscription) subscriptionDTO {
@@ -38,6 +40,8 @@ func toDTO(s db.Subscription) subscriptionDTO {
 		CreatedAt:       s.CreatedAt,
 		Extract:         s.Extract,
 		ExtractSelector: s.ExtractSelector,
+		HasCookie:       s.Cookie != "",
+		HasBasicAuth:    s.BasicAuthUser != "",
 	}
 	if s.SiteURL.Valid {
 		d.SiteURL = s.SiteURL.String
@@ -68,9 +72,12 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 	m.HandleFunc("POST /api/v1/subscriptions", func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MiB cap on request body
 		var body struct {
-			FeedURL string `json:"feed_url"`
-			Title   string `json:"title"`
-			Extract bool   `json:"extract"`
+			FeedURL       string `json:"feed_url"`
+			Title         string `json:"title"`
+			Extract       bool   `json:"extract"`
+			Cookie        string `json:"cookie"`
+			BasicAuthUser string `json:"basic_auth_user"`
+			BasicAuthPass string `json:"basic_auth_pass"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "invalid JSON body")
@@ -90,11 +97,14 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 			title = body.FeedURL
 		}
 		id, err := db.InsertSubscription(r.Context(), d, db.NewSubscription{
-			Title:    title,
-			FeedURL:  body.FeedURL,
-			NextPoll: 0,
-			Created:  time.Now().Unix(),
-			Extract:  body.Extract,
+			Title:         title,
+			FeedURL:       body.FeedURL,
+			NextPoll:      0,
+			Created:       time.Now().Unix(),
+			Extract:       body.Extract,
+			Cookie:        body.Cookie,
+			BasicAuthUser: body.BasicAuthUser,
+			BasicAuthPass: body.BasicAuthPass,
 		})
 		if err != nil {
 			if errors.Is(err, db.ErrSubscriptionExists) {
@@ -129,6 +139,9 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 		var body struct {
 			Extract         *bool   `json:"extract"`
 			ExtractSelector *string `json:"extract_selector"`
+			Cookie          *string `json:"cookie"`
+			BasicAuthUser   *string `json:"basic_auth_user"`
+			BasicAuthPass   *string `json:"basic_auth_pass"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "invalid JSON body")
@@ -136,9 +149,10 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 		}
 
 		// Pre-read the row so omitted PATCH fields keep their current values:
-		// UpdateSubscriptionExtraction writes both columns unconditionally,
+		// UpdateSubscriptionPatch writes every editable column unconditionally,
 		// so without this step a PATCH of {"extract":true} alone would zero
-		// out an existing extract_selector.
+		// out an existing extract_selector — and a PATCH of {"cookie":"x"}
+		// would zero out basic_auth_user/basic_auth_pass.
 		s, err := db.GetSubscription(r.Context(), d, id)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
@@ -151,6 +165,10 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 
 		extract := s.Extract
 		selector := s.ExtractSelector
+		cookie := s.Cookie
+		basicUser := s.BasicAuthUser
+		basicPass := s.BasicAuthPass
+
 		if body.Extract != nil {
 			extract = *body.Extract
 		}
@@ -165,8 +183,20 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 			}
 			selector = candidate
 		}
+		if body.Cookie != nil {
+			cookie = *body.Cookie
+		}
+		if body.BasicAuthUser != nil {
+			basicUser = *body.BasicAuthUser
+		}
+		if body.BasicAuthPass != nil {
+			basicPass = *body.BasicAuthPass
+		}
 
-		if err := db.UpdateSubscriptionExtraction(r.Context(), d, id, extract, selector); err != nil {
+		// Single atomic UPDATE — a partial failure can't leave the row
+		// half-updated (predecessor used two sequential UPDATEs).
+		if err := db.UpdateSubscriptionPatch(r.Context(), d, id,
+			extract, selector, cookie, basicUser, basicPass); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				writeError(w, http.StatusNotFound, ErrCodeNotFound, "subscription not found")
 				return
@@ -175,10 +205,13 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 			return
 		}
 
-		// No second SELECT — we just wrote the only two columns this endpoint
-		// can change, and no other column auto-mutates on update.
+		// No second SELECT — we just wrote every column this endpoint can
+		// change, and no other column auto-mutates on update.
 		s.Extract = extract
 		s.ExtractSelector = selector
+		s.Cookie = cookie
+		s.BasicAuthUser = basicUser
+		s.BasicAuthPass = basicPass
 		writeJSON(w, http.StatusOK, toDTO(s))
 	})
 

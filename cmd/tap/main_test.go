@@ -52,7 +52,7 @@ func TestEndToEnd_SubscribePollServeEntries(t *testing.T) {
 	t.Cleanup(func() { _ = d.Close() })
 	require.NoError(t, db.Migrate(context.Background(), d))
 
-	mux := api.NewMux(d, api.MuxOpts{})
+	mux := api.NewTestMux(d, api.MuxOpts{})
 
 	// POST /api/v1/subscriptions
 	body := strings.NewReader(`{"feed_url":"` + feedSrv.URL + `"}`)
@@ -152,7 +152,7 @@ func TestEndToEnd_ProxyURLsRewriteAndServe(t *testing.T) {
 	cache := proxy.NewCache(t.TempDir(), 1<<20)
 	proxyHandler := proxy.NewHandler(signer, cache, http.DefaultClient, 10<<20)
 
-	mux := api.NewMux(d, api.MuxOpts{ProxyHandler: proxyHandler})
+	mux := api.NewTestMux(d, api.MuxOpts{ProxyHandler: proxyHandler})
 
 	// Subscribe.
 	body := strings.NewReader(`{"feed_url":"` + feedSrv.URL + `"}`)
@@ -434,7 +434,7 @@ three real paragraphs to score the article subtree as the winner.</p>
 	noSSRFClient, err := buildTestClient(t)
 	require.NoError(t, err)
 
-	mux := api.NewMux(d, api.MuxOpts{})
+	mux := api.NewTestMux(d, api.MuxOpts{})
 
 	// Subscribe with extract=true.
 	subID := postSubscription(t, mux, fmt.Sprintf(`{"feed_url":"%s/feed","extract":true}`, origin.URL))
@@ -540,7 +540,7 @@ func TestEndToEnd_ExtractFailure_FallsBackToSummary(t *testing.T) {
 	noSSRFClient, err := buildTestClient(t)
 	require.NoError(t, err)
 
-	mux := api.NewMux(d, api.MuxOpts{})
+	mux := api.NewTestMux(d, api.MuxOpts{})
 	postSubscription(t, mux, fmt.Sprintf(`{"feed_url":"%s/feed","extract":true}`, origin.URL))
 
 	sched := poll.NewScheduler(context.Background(), d, noSSRFClient, poll.SchedulerOpts{

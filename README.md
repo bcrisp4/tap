@@ -9,11 +9,11 @@ embedded SPA, no external dependencies.
 
 ## Status
 
-M5 in review — article extraction (per-subscription opt-in Readability
-or per-feed CSS selector mode, bounded-parallel inside the worker,
-fail-soft to feed summary on per-entry error). M4 polling discipline
-merged. M3 media proxy + FS cache merged. M2 sanitisation pipeline merged.
-See [`docs/specs/`](docs/specs/) for milestone specs.
+M6 in progress — auth foundations (password login, sessions, CSRF, admin
+bootstrap, per-feed credential redaction). M5 article extraction merged.
+M4 polling discipline merged. M3 media proxy + FS cache merged. M2
+sanitisation pipeline merged. See [`docs/specs/`](docs/specs/) for
+milestone specs.
 
 ## Development
 
@@ -69,9 +69,36 @@ poll or count against the subscription's error budget. Toggling
 extract from off→on affects future polls only — existing entries are
 not re-fetched.
 
+**Authentication (M6).** Tap is multi-user. Users have password-based
+accounts (argon2id at OWASP 2026 defaults); sessions are `HttpOnly`
+cookies hashed at rest with idle (`--session-idle-ttl`, default 7d) and
+absolute (`--session-absolute-ttl`, default 90d) expiries. State-changing
+requests need a matching `X-CSRF-Token` header issued at login. The
+first admin is created either by setting `TAP_ADMIN_USERNAME` and
+`TAP_ADMIN_PASSWORD` on first launch, or by running `tap admin create`
+from the host. Subsequent admins use the same `tap admin create`
+subcommand. `tap admin passwd <username>` resets a forgotten password
+and force-logs-out that user's active sessions. Per-feed credentials
+(`cookie`, `basic_auth_user`, `basic_auth_pass`) are accepted on POST/PATCH
+`/api/v1/subscriptions` but never returned by the read endpoints —
+the GET shape exposes only `has_cookie` / `has_basic_auth` booleans.
+Per-feed credentials apply to feed polling and article extraction (when
+`extract=true`); they do **not** apply to the media-proxy origin fetch
+path, matching Miniflux's posture. Same-origin authenticated images
+consequently render as broken — a known cross-ecosystem limitation.
+
 The binary still defaults to `-addr 127.0.0.1:8080` as defence in depth
 (concept §6.11). The container variant binds `0.0.0.0:8080` because
 Docker port mapping requires it.
+
+**Multi-user note:** M6 establishes the user-account schema but does
+NOT yet enforce per-user data isolation on subscriptions and entries.
+With the M6 default deployment (one admin via env-var bootstrap), this
+gap is theoretical. **Do not create non-admin users via
+`tap admin create --role user` until M7 lands** — they will currently
+see the admin's subscriptions. M7 adds `user_id` columns + per-user
+query filters with the documented posture: every user, including admins,
+sees only their own feeds.
 
 ## Configuration knobs added by M4
 
@@ -99,6 +126,16 @@ Docker port mapping requires it.
 - `--extract-body-cap-bytes` (env `TAP_EXTRACT_BODY_CAP_BYTES`,
   default `5242880` (5 MiB)) — per-article HTTP body cap before the
   extractor parses it.
+
+## Configuration knobs added by M6
+
+| Flag | Env | Default | Notes |
+|---|---|---|---|
+| `--session-idle-ttl` | `TAP_SESSION_IDLE_TTL` | `168h` (7d) | Refreshed on each authenticated request. |
+| `--session-absolute-ttl` | `TAP_SESSION_ABSOLUTE_TTL` | `2160h` (90d) | Hard cap; cookie Max-Age. |
+| `--cookie-secure` | `TAP_COOKIE_SECURE` | `auto` | `auto`/`true`/`false`. `auto` resolves to `true` when `--addr` binds non-loopback. |
+| (env-only) | `TAP_ADMIN_USERNAME` | (unset) | First-launch admin bootstrap. Both must be set; partial → fatal. |
+| (env-only) | `TAP_ADMIN_PASSWORD` | (unset) | First-launch admin bootstrap. Min 8 chars; failure → fatal. |
 
 ## Data layout
 
@@ -142,3 +179,10 @@ No destructive change required. Migration 0004 adds three columns:
 `subscriptions.extract`, `subscriptions.extract_selector`, and
 `entries.extract_failed`. All default to off/empty; existing
 subscriptions stay non-extract until opted in via PATCH.
+
+## Upgrading from M5
+
+M6 is breaking. Auth tables and credential columns are additive, but
+existing databases have no users — login is unusable until either
+`TAP_ADMIN_USERNAME`/`TAP_ADMIN_PASSWORD` are set on next boot, or
+`tap admin create` is run from the host.
