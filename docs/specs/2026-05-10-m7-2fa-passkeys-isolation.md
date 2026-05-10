@@ -46,14 +46,59 @@ Two migrations shipped together as one logical change.
 **`internal/db/migrations/0006_user_data_isolation.sql`:**
 
 ```sql
-ALTER TABLE subscriptions ADD COLUMN user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE;
-ALTER TABLE entries       ADD COLUMN user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE;
+-- subscriptions: add user_id AND widen the unique constraint from
+-- UNIQUE(feed_url) to UNIQUE(user_id, feed_url) so multiple users can
+-- subscribe to the same feed. SQLite cannot drop a constraint with
+-- ALTER TABLE, so we recreate the table using the standard
+-- rename→create→copy→drop pattern. The migration runs inside the
+-- implicit migration transaction and rolls back cleanly on failure.
 
-CREATE INDEX idx_subscriptions_user ON subscriptions(user_id);
-CREATE INDEX idx_entries_user       ON entries(user_id, published_at DESC);
+ALTER TABLE subscriptions RENAME TO subscriptions_old;
+
+CREATE TABLE subscriptions (
+    id               INTEGER PRIMARY KEY,
+    user_id          INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title            TEXT    NOT NULL,
+    feed_url         TEXT    NOT NULL,
+    site_url         TEXT,
+    last_poll_at     INTEGER,
+    next_poll_at     INTEGER NOT NULL,
+    etag             TEXT,
+    last_modified    TEXT,
+    error_count      INTEGER NOT NULL DEFAULT 0,
+    last_error       TEXT,
+    created_at       INTEGER NOT NULL,
+    velocity_24h_x100 INTEGER NOT NULL DEFAULT 0,
+    extract          INTEGER NOT NULL DEFAULT 0,
+    extract_selector TEXT    NOT NULL DEFAULT '',
+    cookie           TEXT    NOT NULL DEFAULT '',
+    basic_auth_user  TEXT    NOT NULL DEFAULT '',
+    basic_auth_pass  TEXT    NOT NULL DEFAULT '',
+    UNIQUE (user_id, feed_url)
+);
+CREATE INDEX idx_subscriptions_next_poll ON subscriptions(next_poll_at);
+CREATE INDEX idx_subscriptions_user      ON subscriptions(user_id);
+
+-- Fresh install: subscriptions_old is empty, so this copies nothing.
+-- Preserved for correctness if the migration ever runs against a
+-- populated database.
+INSERT INTO subscriptions
+    SELECT id, 0, title, feed_url, site_url, last_poll_at, next_poll_at,
+           etag, last_modified, error_count, last_error, created_at,
+           velocity_24h_x100, extract, extract_selector, cookie,
+           basic_auth_user, basic_auth_pass
+    FROM subscriptions_old;
+
+DROP TABLE subscriptions_old;
+
+-- entries: add user_id NOT NULL.
+ALTER TABLE entries ADD COLUMN user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE;
+CREATE INDEX idx_entries_user ON entries(user_id, published_at DESC);
 ```
 
-Since Tap is pre-production, no back-fill is performed. Operators start with a fresh database. The columns are `NOT NULL` with a foreign key constraint from day one.
+Since Tap is pre-production, no back-fill is performed. Operators start with a fresh database. The `subscriptions` table recreation is the only place migration 0006 requires a multi-step DDL; entries can use a plain `ALTER TABLE` because adding a new column (even `NOT NULL`) without a default is valid for an empty table.
+
+The global `UNIQUE(feed_url)` constraint from M1 is intentionally replaced by `UNIQUE(user_id, feed_url)`. The sentinel error in `internal/db/subscriptions.go` (`ErrSubscriptionExists`) and its UNIQUE-constraint string match (`"UNIQUE constraint failed: subscriptions.feed_url"`) must be updated to match the new constraint name (`"UNIQUE constraint failed: subscriptions.user_id, subscriptions.feed_url"`).
 
 **`internal/db/migrations/0007_2fa_passkeys_sessions_meta.sql`:**
 

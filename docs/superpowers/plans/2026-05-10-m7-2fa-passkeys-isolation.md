@@ -39,7 +39,7 @@ MCP tools:
 
 | Path | Action | Responsibility |
 |---|---|---|
-| `internal/db/migrations/0006_user_data_isolation.sql` | **create** | `user_id NOT NULL` + FK + indexes on `subscriptions` and `entries`. |
+| `internal/db/migrations/0006_user_data_isolation.sql` | **create** | Recreate `subscriptions` with `user_id NOT NULL` + widen `UNIQUE(feed_url)` → `UNIQUE(user_id, feed_url)`. Add `user_id NOT NULL` to `entries`. |
 | `internal/db/migrations/0007_2fa_passkeys_sessions_meta.sql` | **create** | `sessions` table recreation (nullable `user_id`, new cols); `pending_logins`, `totp_secrets`, `recovery_codes`, `passkeys` tables. |
 | `internal/db/subscriptions.go` | modify | All query functions gain `userID int64` param + `WHERE user_id = ?` filter. `NewSubscription` gains `UserID`. |
 | `internal/db/subscriptions_test.go` | modify | Per-user isolation: userA's subs invisible to userB. |
@@ -138,52 +138,142 @@ git commit -m "M7: add go-webauthn/webauthn dependency"
 
 ---
 
-### Task A2: Migration 0006 — per-user data isolation columns
+### Task A2: Migration 0006 — per-user data isolation columns + widen unique constraint
 
 **Files:**
 - Create: `internal/db/migrations/0006_user_data_isolation.sql`
+- Modify: `internal/db/subscriptions.go` (error string for ErrSubscriptionExists)
+
+**Why table recreation is needed:** M1's `subscriptions` table has `feed_url TEXT NOT NULL UNIQUE` — a global uniqueness constraint. In a multi-user deployment this prevents two users from subscribing to the same feed. M7 must widen it to `UNIQUE(user_id, feed_url)`. SQLite cannot drop a constraint via `ALTER TABLE`, so `subscriptions` must be recreated. `entries` can use a plain `ALTER TABLE` (just adds a column to what will be an empty table on fresh install).
 
 - [ ] **Step 1: Write the migration**
 
 ```sql
 -- internal/db/migrations/0006_user_data_isolation.sql
-ALTER TABLE subscriptions ADD COLUMN user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE;
-ALTER TABLE entries       ADD COLUMN user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE;
 
-CREATE INDEX idx_subscriptions_user ON subscriptions(user_id);
-CREATE INDEX idx_entries_user       ON entries(user_id, published_at DESC);
+-- Recreate subscriptions with user_id and UNIQUE(user_id, feed_url).
+-- The global UNIQUE(feed_url) from M1 would prevent two users from
+-- subscribing to the same feed URL.
+ALTER TABLE subscriptions RENAME TO subscriptions_old;
+
+CREATE TABLE subscriptions (
+    id                INTEGER PRIMARY KEY,
+    user_id           INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title             TEXT    NOT NULL,
+    feed_url          TEXT    NOT NULL,
+    site_url          TEXT,
+    last_poll_at      INTEGER,
+    next_poll_at      INTEGER NOT NULL,
+    etag              TEXT,
+    last_modified     TEXT,
+    error_count       INTEGER NOT NULL DEFAULT 0,
+    last_error        TEXT,
+    created_at        INTEGER NOT NULL,
+    velocity_24h_x100 INTEGER NOT NULL DEFAULT 0,
+    extract           INTEGER NOT NULL DEFAULT 0,
+    extract_selector  TEXT    NOT NULL DEFAULT '',
+    cookie            TEXT    NOT NULL DEFAULT '',
+    basic_auth_user   TEXT    NOT NULL DEFAULT '',
+    basic_auth_pass   TEXT    NOT NULL DEFAULT '',
+    UNIQUE (user_id, feed_url)
+);
+CREATE INDEX idx_subscriptions_next_poll ON subscriptions(next_poll_at);
+CREATE INDEX idx_subscriptions_user      ON subscriptions(user_id);
+
+INSERT INTO subscriptions
+    SELECT id, 0, title, feed_url, site_url, last_poll_at, next_poll_at,
+           etag, last_modified, error_count, last_error, created_at,
+           velocity_24h_x100, extract, extract_selector, cookie,
+           basic_auth_user, basic_auth_pass
+    FROM subscriptions_old;
+
+DROP TABLE subscriptions_old;
+
+-- entries: just add the column (table is empty on fresh install).
+ALTER TABLE entries ADD COLUMN user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE;
+CREATE INDEX idx_entries_user ON entries(user_id, published_at DESC);
 ```
 
-- [ ] **Step 2: Write a failing migration test**
+- [ ] **Step 2: Update `ErrSubscriptionExists` string match in `internal/db/subscriptions.go`**
+
+The UNIQUE constraint name changes from `subscriptions.feed_url` to `subscriptions.user_id, subscriptions.feed_url`. Update the detection string:
+
+```go
+// Before:
+if strings.Contains(err.Error(), "UNIQUE constraint failed: subscriptions.feed_url") {
+
+// After:
+if strings.Contains(err.Error(), "UNIQUE constraint failed: subscriptions.user_id, subscriptions.feed_url") {
+```
+
+Also update the `ErrSubscriptionExists` comment to say "on `(user_id, feed_url)`" instead of "on `feed_url`".
+
+Run: `go test ./internal/db/... -run TestInsertSubscription -v`
+Expected: existing duplicate-feed-url test still passes (same user, same URL → still rejected).
+
+- [ ] **Step 3: Write a failing migration test**
 
 Add to `internal/db/migrate_test.go`:
 
 ```go
 func TestMigrate_0006_UserDataIsolation(t *testing.T) {
     d := newTestDB(t)
-    // newTestDB runs all migrations. Verify user_id column exists and FK is enforced:
-    // an insert with a non-existent user_id must fail with FOREIGN KEY, not "no such column".
-    _, err := d.ExecContext(context.Background(),
-        `INSERT INTO subscriptions (title, feed_url, next_poll_at, created_at, user_id)
-         VALUES ('t', 'http://x.com/feed', 0, 0, 999)`) // user_id=999 doesn't exist
+    ctx := context.Background()
+
+    // Verify user_id FK is enforced: insert with non-existent user_id must fail.
+    _, err := d.ExecContext(ctx,
+        `INSERT INTO subscriptions (user_id, title, feed_url, next_poll_at, created_at)
+         VALUES (999, 't', 'http://x.com/feed', 0, 0)`)
     require.Error(t, err)
     require.Contains(t, err.Error(), "FOREIGN KEY")
+
+    // Verify UNIQUE is now (user_id, feed_url): two different users can subscribe
+    // to the same URL. Create two users first.
+    res1, err := d.ExecContext(ctx,
+        `INSERT INTO users (username, password_hash, role, created_at) VALUES ('u1','h','admin',0)`)
+    require.NoError(t, err)
+    uid1, _ := res1.LastInsertId()
+    res2, err := d.ExecContext(ctx,
+        `INSERT INTO users (username, password_hash, role, created_at) VALUES ('u2','h','admin',0)`)
+    require.NoError(t, err)
+    uid2, _ := res2.LastInsertId()
+
+    _, err = d.ExecContext(ctx,
+        `INSERT INTO subscriptions (user_id, title, feed_url, next_poll_at, created_at)
+         VALUES (?, 'Feed', 'http://shared.example/feed', 0, 0)`, uid1)
+    require.NoError(t, err, "first user should be able to subscribe")
+
+    _, err = d.ExecContext(ctx,
+        `INSERT INTO subscriptions (user_id, title, feed_url, next_poll_at, created_at)
+         VALUES (?, 'Feed', 'http://shared.example/feed', 0, 0)`, uid2)
+    require.NoError(t, err, "second user must be able to subscribe to the same URL")
+
+    _, err = d.ExecContext(ctx,
+        `INSERT INTO subscriptions (user_id, title, feed_url, next_poll_at, created_at)
+         VALUES (?, 'Feed', 'http://shared.example/feed', 0, 0)`, uid1)
+    require.Error(t, err, "same user subscribing to the same URL twice must fail")
+    require.Contains(t, err.Error(), "UNIQUE constraint failed")
 }
 ```
 
 Run: `go test ./internal/db/... -run TestMigrate_0006 -v`
-Expected: PASS (migration is applied by newTestDB; the FK rejects the bogus user_id).
+Expected: PASS.
 
-- [ ] **Step 3: Verify migration applies clean and test passes**
-
-Run: `make test`
-Expected: all db tests pass including the new one.
-
-- [ ] **Step 4: Commit**
+- [ ] **Step 4: Verify full test suite**
 
 ```bash
-git add internal/db/migrations/0006_user_data_isolation.sql internal/db/migrate_test.go
-git commit -m "M7: migration 0006 — user_id on subscriptions and entries"
+make test
+```
+
+Expected: all db tests pass including the new one.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add internal/db/migrations/0006_user_data_isolation.sql \
+        internal/db/subscriptions.go \
+        internal/db/migrate_test.go
+git commit -m "M7: migration 0006 — user_id + widen feed_url UNIQUE to (user_id, feed_url)"
 ```
 
 ---
