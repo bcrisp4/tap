@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/bcrisp4/tap/internal/api"
+	"github.com/bcrisp4/tap/internal/auth"
 	"github.com/bcrisp4/tap/internal/db"
 	"github.com/bcrisp4/tap/internal/httpx"
 	"github.com/bcrisp4/tap/internal/poll"
@@ -35,9 +36,19 @@ import (
 // pinned to testHashParams so the suite stays under a second.
 type testServer struct {
 	*httptest.Server
-	d         *sql.DB //nolint:unused // retained for future test extensions
+	d         *sql.DB
 	signer    *proxy.Signer
 	scheduler *poll.Scheduler
+	dataDir   string
+}
+
+// shutdown stops the scheduler, closes the http server, and closes the DB.
+// Used by tests that need to re-launch a server against the same data dir
+// (verifying the bootstrap path is silent on a populated DB).
+func (ts *testServer) shutdown() {
+	ts.Server.Close()
+	ts.scheduler.Stop()
+	_ = ts.d.Close()
 }
 
 // startTestServer mirrors cmd/tap/main.go's runServer in-process:
@@ -57,7 +68,15 @@ type testServer struct {
 // the test stands up via httptest are reachable.
 func startTestServer(t *testing.T) *testServer {
 	t.Helper()
-	dir := t.TempDir()
+	return startTestServerInDir(t, t.TempDir())
+}
+
+// startTestServerInDir is like startTestServer but uses the supplied data
+// directory rather than a fresh one — used by tests that need to re-launch
+// the server against a DB populated by an earlier launch (e.g. the
+// "silent on populated DB" bootstrap regression).
+func startTestServerInDir(t *testing.T, dir string) *testServer {
+	t.Helper()
 	dbPath := filepath.Join(dir, "tap.db")
 	ctx := context.Background()
 
@@ -132,6 +151,7 @@ func startTestServer(t *testing.T) *testServer {
 		d:         d,
 		signer:    signer,
 		scheduler: sched,
+		dataDir:   dir,
 	}
 }
 
@@ -381,4 +401,87 @@ func TestEndToEnd_LoginRequiresKnownCredentials(t *testing.T) {
 		require.NotEqualf(t, "tap_session", c.Name, "no session cookie on login failure")
 	}
 }
+
+// TestEndToEnd_BootstrapFromEnvVarsCreatesAdmin pins the happy path of the
+// env-var first-launch shortcut: empty DB + TAP_ADMIN_USERNAME +
+// TAP_ADMIN_PASSWORD => admin row created, login works.
+func TestEndToEnd_BootstrapFromEnvVarsCreatesAdmin(t *testing.T) {
+	t.Setenv("TAP_ADMIN_USERNAME", "ben")
+	t.Setenv("TAP_ADMIN_PASSWORD", "supersecret")
+
+	srv := startTestServer(t)
+
+	resp := postJSON(t, srv, "/api/v1/sessions",
+		`{"username":"ben","password":"supersecret"}`, "")
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// Confirm exactly one user landed.
+	n, err := db.CountUsers(context.Background(), srv.d)
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+}
+
+// TestEndToEnd_NoUsersNoEnvVarsRejectsLogin pins concept §7.1: empty DB
+// without any env-var bootstrap means there is no SPA-visible bootstrap
+// path. The server starts cleanly; login rejects everything.
+func TestEndToEnd_NoUsersNoEnvVarsRejectsLogin(t *testing.T) {
+	t.Setenv("TAP_ADMIN_USERNAME", "")
+	t.Setenv("TAP_ADMIN_PASSWORD", "")
+
+	srv := startTestServer(t)
+
+	resp := postJSON(t, srv, "/api/v1/sessions",
+		`{"username":"anyone","password":"anything"}`, "")
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+
+	n, err := db.CountUsers(context.Background(), srv.d)
+	require.NoError(t, err)
+	require.Equal(t, 0, n, "no user should be created")
+}
+
+// TestEndToEnd_BootstrapSilentOnPopulatedDB pins the "containers can keep
+// the env vars set" contract: when users already exist, the bootstrap path
+// is a silent no-op even if TAP_ADMIN_USERNAME / TAP_ADMIN_PASSWORD are
+// still in the environment.
+func TestEndToEnd_BootstrapSilentOnPopulatedDB(t *testing.T) {
+	t.Setenv("TAP_ADMIN_USERNAME", "ben")
+	t.Setenv("TAP_ADMIN_PASSWORD", "supersecret")
+
+	dir := t.TempDir()
+
+	// First launch bootstraps "ben". Tear it down so its DB handle is
+	// released before the second launch reopens the same on-disk file.
+	srv1 := startTestServerInDir(t, dir)
+	srv1.shutdown()
+
+	// Hand-add another user via the DB directly. This simulates `tap admin
+	// create` having added a non-admin between launches.
+	d, err := db.Open(context.Background(), filepath.Join(dir, "tap.db"))
+	require.NoError(t, err)
+	hash, err := auth.Hash("anotherpw", testHashParams)
+	require.NoError(t, err)
+	_, err = db.InsertUser(context.Background(), d, db.NewUser{
+		Username: "alice", PasswordHash: hash, Role: "user", CreatedAt: 0,
+	})
+	require.NoError(t, err)
+	require.NoError(t, d.Close())
+
+	// Re-launch with env vars STILL set. Expect: silent no-op (no error,
+	// no new admin row). User count must stay at 2.
+	srv2 := startTestServerInDir(t, dir)
+
+	n, err := db.CountUsers(context.Background(), srv2.d)
+	require.NoError(t, err)
+	require.Equal(t, 2, n, "no extra users should be created on the second launch")
+
+	// Sanity: "ben" still works as the env-bootstrapped admin from the
+	// first launch.
+	resp := postJSON(t, srv2, "/api/v1/sessions",
+		`{"username":"ben","password":"supersecret"}`, "")
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
 
