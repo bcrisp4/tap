@@ -43,4 +43,83 @@ func TestExtract_ReadabilityHappyPath(t *testing.T) {
 	require.NotContains(t, got, `href="/"`, "nav links must be dropped by Readability")
 }
 
-var _ = strings.TrimSpace // used in later tasks
+func TestExtract_HTTPNon2xx(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+
+	_, err := Extract(context.Background(), srv.Client(), srv.URL, "", 5<<20)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "500")
+}
+
+func TestExtract_BodyCapExceeded(t *testing.T) {
+	t.Parallel()
+	big := strings.Repeat("a", 1024)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(big))
+	}))
+	t.Cleanup(srv.Close)
+
+	_, err := Extract(context.Background(), srv.Client(), srv.URL, "", 256)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "cap")
+}
+
+func TestExtract_NonHTMLContentType(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"k":"v"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	_, err := Extract(context.Background(), srv.Client(), srv.URL, "", 5<<20)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "non-HTML")
+}
+
+func TestExtract_AcceptsXHTML(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xhtml+xml")
+		_, _ = w.Write([]byte(articleHTML))
+	}))
+	t.Cleanup(srv.Close)
+
+	_, err := Extract(context.Background(), srv.Client(), srv.URL, "", 5<<20)
+	require.NoError(t, err)
+}
+
+func TestExtract_MissingContentType(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// httptest auto-sets Content-Type to text/plain when body is non-empty
+		// and no header is set; explicitly clear it to test the empty case.
+		w.Header()["Content-Type"] = nil
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	_, err := Extract(context.Background(), srv.Client(), srv.URL, "", 5<<20)
+	require.Error(t, err)
+}
+
+func TestExtract_ReadabilityEmptyContent(t *testing.T) {
+	t.Parallel()
+	// A completely empty body causes Readability to return node==nil or
+	// render an empty string; both paths return an error from Extract.
+	const empty = `<!doctype html><html><head><title>Empty</title></head><body></body></html>`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(empty))
+	}))
+	t.Cleanup(srv.Close)
+
+	_, err := Extract(context.Background(), srv.Client(), srv.URL, "", 5<<20)
+	require.Error(t, err, "Readability should error on a page with empty body")
+}
