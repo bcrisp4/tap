@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -16,6 +17,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/go-webauthn/webauthn/webauthn"
 
 	"github.com/bcrisp4/tap/internal/api"
 	"github.com/bcrisp4/tap/internal/auth"
@@ -76,6 +79,9 @@ func runServer() {
 		cookieSecureMode = flag.String("cookie-secure",
 			envOr("TAP_COOKIE_SECURE", "auto"),
 			"set Secure attribute on session cookie: auto|true|false")
+
+		webAuthnRPID   = flag.String("webauthn-rp-id", envOr("TAP_WEBAUTHN_RP_ID", ""), "WebAuthn relying party ID (hostname); derived from --addr if empty")
+		webAuthnOrigin = flag.String("webauthn-origin", envOr("TAP_WEBAUTHN_ORIGIN", ""), "WebAuthn origin URL; derived from --addr if empty")
 
 		ssrfAllow stringSlice
 	)
@@ -213,10 +219,48 @@ func runServer() {
 	}
 	cookieSecure := api.ResolveCookieSecure(cookieSecureEnum, *addr)
 
+	// Derive WebAuthn RPID and origin from --addr if not set explicitly.
+	waRPID := *webAuthnRPID
+	waOrigin := *webAuthnOrigin
+	if waRPID == "" || waOrigin == "" {
+		host, port, _ := net.SplitHostPort(*addr)
+		if host == "" {
+			host = "localhost"
+		}
+		// Normalise any loopback IP (127.x.x.x, ::1) to "localhost" so that
+		// the WebAuthn RP ID matches the browser's origin when the user opens
+		// the app at http://localhost:<port>. Without this, rpID would be
+		// "127.0.0.1" but the browser presents the origin as "localhost".
+		if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+			host = "localhost"
+		}
+		if waRPID == "" {
+			waRPID = host
+		}
+		if waOrigin == "" {
+			scheme := "http"
+			if cookieSecure {
+				scheme = "https"
+			}
+			// Use waRPID (already normalised) rather than the raw addr so that
+			// the origin and RPID are consistent (both "localhost", not a mix
+			// of "localhost" and "127.0.0.1").
+			waOrigin = scheme + "://" + waRPID + ":" + port
+		}
+	}
+	var waInstance *webauthn.WebAuthn
+	if wai, err := webauthn.New(&webauthn.Config{
+		RPDisplayName: "Tap",
+		RPID:          waRPID,
+		RPOrigins:     []string{waOrigin},
+	}); err != nil {
+		slog.Error("webauthn init", "err", err)
+		os.Exit(1)
+	} else {
+		waInstance = wai
+	}
+
 	mux := http.NewServeMux()
-	// /api/ and /healthz both go through the same factory; sched.Poke is wired
-	// into POST /api/v1/subscriptions so a freshly added feed polls immediately
-	// rather than waiting up to TickInterval (60s).
 	apiMux := api.NewMux(d, api.MuxOpts{
 		Poke:               sched.Poke,
 		ProxyHandler:       proxyHandler,
@@ -224,6 +268,7 @@ func runServer() {
 		SessionAbsoluteTTL: *sessionAbsoluteTTL,
 		CookieSecure:       cookieSecure,
 		HashParams:         auth.DefaultParams,
+		WebAuthnInstance:   waInstance,
 	})
 	mux.Handle("/api/", apiMux)
 	mux.Handle("/healthz", apiMux)

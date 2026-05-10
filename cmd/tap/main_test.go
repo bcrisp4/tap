@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/bcrisp4/tap/internal/api"
+	"github.com/bcrisp4/tap/internal/auth"
 	"github.com/bcrisp4/tap/internal/db"
 	"github.com/bcrisp4/tap/internal/httpx"
 	"github.com/bcrisp4/tap/internal/poll"
@@ -25,6 +26,55 @@ import (
 	"github.com/bcrisp4/tap/internal/sanitise"
 	"github.com/stretchr/testify/require"
 )
+
+
+// testUserAndMux creates a test user in the DB and returns a TestMuxOpts with
+// that user injected as the request context user. This allows handler tests
+// that use NewTestMux to satisfy userFromContext without going through requireSession.
+func testUserAndMux(t *testing.T, d *sql.DB, opts api.MuxOpts) (*api.TestMuxOpts, db.User) {
+	t.Helper()
+	hash, err := auth.Hash("testpass", auth.Params{Time: 1, Memory: 8 * 1024, Threads: 1, SaltLen: 8, KeyLen: 16})
+	if err != nil {
+		t.Fatalf("hash: %v", err)
+	}
+	uid, err := db.InsertUser(context.Background(), d, db.NewUser{
+		Username: "e2etest", PasswordHash: hash, Role: "admin", CreatedAt: 0,
+	})
+	if err != nil {
+		// User might already exist — look it up
+		u, uerr := db.GetUserByUsername(context.Background(), d, "e2etest")
+		if uerr != nil {
+			t.Fatalf("InsertUser: %v", err)
+		}
+		uid = u.ID
+	}
+	u, err := db.GetUserByID(context.Background(), d, uid)
+	if err != nil {
+		t.Fatalf("GetUserByID: %v", err)
+	}
+	return &api.TestMuxOpts{
+		MuxOpts:     opts,
+		TestUser:    u,
+		TestSession: db.Session{ID: 1, UserID: uid, CSRFToken: "test-csrf"},
+	}, u
+}
+
+// insertE2EUser creates a test user for direct DB tests that don't use NewTestMux.
+func insertE2EUser(t *testing.T, d *sql.DB) int64 {
+	t.Helper()
+	id, err := db.InsertUser(context.Background(), d, db.NewUser{
+		Username: "e2etest", PasswordHash: "x", Role: "admin", CreatedAt: 0,
+	})
+	if err != nil {
+		u, uerr := db.GetUserByUsername(context.Background(), d, "e2etest")
+		if uerr != nil {
+			t.Fatalf("insertE2EUser: %v", err)
+		}
+		return u.ID
+	}
+	return id
+}
+
 
 func TestEndToEnd_SubscribePollServeEntries(t *testing.T) {
 	t.Parallel()
@@ -52,7 +102,8 @@ func TestEndToEnd_SubscribePollServeEntries(t *testing.T) {
 	t.Cleanup(func() { _ = d.Close() })
 	require.NoError(t, db.Migrate(context.Background(), d))
 
-	mux := api.NewTestMux(d, api.MuxOpts{})
+	tmOpts, _ := testUserAndMux(t, d, api.MuxOpts{})
+	mux := api.NewTestMux(d, *tmOpts)
 
 	// POST /api/v1/subscriptions
 	body := strings.NewReader(`{"feed_url":"` + feedSrv.URL + `"}`)
@@ -152,7 +203,8 @@ func TestEndToEnd_ProxyURLsRewriteAndServe(t *testing.T) {
 	cache := proxy.NewCache(t.TempDir(), 1<<20)
 	proxyHandler := proxy.NewHandler(signer, cache, http.DefaultClient, 10<<20)
 
-	mux := api.NewTestMux(d, api.MuxOpts{ProxyHandler: proxyHandler})
+	tmOpts, _ := testUserAndMux(t, d, api.MuxOpts{ProxyHandler: proxyHandler})
+	mux := api.NewTestMux(d, *tmOpts)
 
 	// Subscribe.
 	body := strings.NewReader(`{"feed_url":"` + feedSrv.URL + `"}`)
@@ -238,6 +290,7 @@ func TestE2E_SSRFRejectsLoopbackByDefault(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = d.Close() })
 	require.NoError(t, db.Migrate(ctx, d))
+	uid := insertE2EUser(t, d)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`<rss version="2.0"><channel><title>t</title></channel></rss>`))
@@ -255,7 +308,7 @@ func TestE2E_SSRFRejectsLoopbackByDefault(t *testing.T) {
 	t.Cleanup(sched.Stop)
 
 	subID, err := db.InsertSubscription(ctx, d, db.NewSubscription{
-		Title: "Loopback", FeedURL: srv.URL, NextPoll: 0, Created: time.Now().Unix(),
+		UserID: uid, Title: "Loopback", FeedURL: srv.URL, NextPoll: 0, Created: time.Now().Unix(),
 	})
 	require.NoError(t, err)
 	sched.Tick(ctx)
@@ -275,6 +328,7 @@ func TestE2E_SSRFAllowlistAcceptsLoopback(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = d.Close() })
 	require.NoError(t, db.Migrate(ctx, d))
+	uid := insertE2EUser(t, d)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`<rss version="2.0"><channel><title>t</title></channel></rss>`))
@@ -294,7 +348,7 @@ func TestE2E_SSRFAllowlistAcceptsLoopback(t *testing.T) {
 	t.Cleanup(sched.Stop)
 
 	subID, err := db.InsertSubscription(ctx, d, db.NewSubscription{
-		Title: "Allowed", FeedURL: srv.URL, NextPoll: 0, Created: time.Now().Unix(),
+		UserID: uid, Title: "Allowed", FeedURL: srv.URL, NextPoll: 0, Created: time.Now().Unix(),
 	})
 	require.NoError(t, err)
 	sched.Tick(ctx)
@@ -313,6 +367,7 @@ func TestE2E_RetryAfterFloorOnSuccess(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = d.Close() })
 	require.NoError(t, db.Migrate(ctx, d))
+	uid := insertE2EUser(t, d)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Retry-After", "3600")
@@ -334,7 +389,7 @@ func TestE2E_RetryAfterFloorOnSuccess(t *testing.T) {
 
 	pollStart := time.Now().Unix()
 	subID, err := db.InsertSubscription(ctx, d, db.NewSubscription{
-		Title: "Slow", FeedURL: srv.URL, NextPoll: 0, Created: pollStart,
+		UserID: uid, Title: "Slow", FeedURL: srv.URL, NextPoll: 0, Created: pollStart,
 	})
 	require.NoError(t, err)
 	sched.Tick(ctx)
@@ -434,7 +489,8 @@ three real paragraphs to score the article subtree as the winner.</p>
 	noSSRFClient, err := buildTestClient(t)
 	require.NoError(t, err)
 
-	mux := api.NewTestMux(d, api.MuxOpts{})
+	tmOpts, _ := testUserAndMux(t, d, api.MuxOpts{})
+	mux := api.NewTestMux(d, *tmOpts)
 
 	// Subscribe with extract=true.
 	subID := postSubscription(t, mux, fmt.Sprintf(`{"feed_url":"%s/feed","extract":true}`, origin.URL))
@@ -540,7 +596,8 @@ func TestEndToEnd_ExtractFailure_FallsBackToSummary(t *testing.T) {
 	noSSRFClient, err := buildTestClient(t)
 	require.NoError(t, err)
 
-	mux := api.NewTestMux(d, api.MuxOpts{})
+	tmOpts, _ := testUserAndMux(t, d, api.MuxOpts{})
+	mux := api.NewTestMux(d, *tmOpts)
 	postSubscription(t, mux, fmt.Sprintf(`{"feed_url":"%s/feed","extract":true}`, origin.URL))
 
 	sched := poll.NewScheduler(context.Background(), d, noSSRFClient, poll.SchedulerOpts{

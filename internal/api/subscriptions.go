@@ -57,7 +57,12 @@ func toDTO(s db.Subscription) subscriptionDTO {
 
 func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 	m.HandleFunc("GET /api/v1/subscriptions", func(w http.ResponseWriter, r *http.Request) {
-		subs, err := db.ListSubscriptions(r.Context(), d)
+		u, ok := userFromContext(r.Context())
+		if !ok {
+			writeError(w, http.StatusUnauthorized, ErrCodeInvalidSession, "no session")
+			return
+		}
+		subs, err := db.ListSubscriptions(r.Context(), d, u.ID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())
 			return
@@ -70,6 +75,11 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 	})
 
 	m.HandleFunc("POST /api/v1/subscriptions", func(w http.ResponseWriter, r *http.Request) {
+		u, ok := userFromContext(r.Context())
+		if !ok {
+			writeError(w, http.StatusUnauthorized, ErrCodeInvalidSession, "no session")
+			return
+		}
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MiB cap on request body
 		var body struct {
 			FeedURL       string `json:"feed_url"`
@@ -80,15 +90,20 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 			BasicAuthPass string `json:"basic_auth_pass"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			var mbe *http.MaxBytesError
+			if errors.As(err, &mbe) {
+				writeError(w, http.StatusRequestEntityTooLarge, ErrCodeBadRequest, "request body too large")
+				return
+			}
 			writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "invalid JSON body")
 			return
 		}
-		u, err := url.Parse(body.FeedURL)
-		if err != nil || !u.IsAbs() {
+		feedURL, err := url.Parse(body.FeedURL)
+		if err != nil || !feedURL.IsAbs() {
 			writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "feed_url must be an absolute URL")
 			return
 		}
-		if u.Scheme != "http" && u.Scheme != "https" {
+		if feedURL.Scheme != "http" && feedURL.Scheme != "https" {
 			writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "feed_url must use http or https")
 			return
 		}
@@ -97,6 +112,7 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 			title = body.FeedURL
 		}
 		id, err := db.InsertSubscription(r.Context(), d, db.NewSubscription{
+			UserID:        u.ID,
 			Title:         title,
 			FeedURL:       body.FeedURL,
 			NextPoll:      0,
@@ -115,7 +131,7 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 			writeError(w, http.StatusInternalServerError, ErrCodeInternal, "could not create subscription")
 			return
 		}
-		s, err := db.GetSubscription(r.Context(), d, id)
+		s, err := db.GetSubscription(r.Context(), d, id, u.ID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())
 			return
@@ -130,6 +146,11 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 	})
 
 	m.HandleFunc("PATCH /api/v1/subscriptions/{id}", func(w http.ResponseWriter, r *http.Request) {
+		u, ok := userFromContext(r.Context())
+		if !ok {
+			writeError(w, http.StatusUnauthorized, ErrCodeInvalidSession, "no session")
+			return
+		}
 		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "invalid id")
@@ -144,16 +165,17 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 			BasicAuthPass   *string `json:"basic_auth_pass"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			var mbe *http.MaxBytesError
+			if errors.As(err, &mbe) {
+				writeError(w, http.StatusRequestEntityTooLarge, ErrCodeBadRequest, "request body too large")
+				return
+			}
 			writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "invalid JSON body")
 			return
 		}
 
-		// Pre-read the row so omitted PATCH fields keep their current values:
-		// UpdateSubscriptionPatch writes every editable column unconditionally,
-		// so without this step a PATCH of {"extract":true} alone would zero
-		// out an existing extract_selector — and a PATCH of {"cookie":"x"}
-		// would zero out basic_auth_user/basic_auth_pass.
-		s, err := db.GetSubscription(r.Context(), d, id)
+		// Pre-read the row so omitted PATCH fields keep their current values.
+		s, err := db.GetSubscription(r.Context(), d, id, u.ID)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				writeError(w, http.StatusNotFound, ErrCodeNotFound, "subscription not found")
@@ -193,9 +215,7 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 			basicPass = *body.BasicAuthPass
 		}
 
-		// Single atomic UPDATE — a partial failure can't leave the row
-		// half-updated (predecessor used two sequential UPDATEs).
-		if err := db.UpdateSubscriptionPatch(r.Context(), d, id,
+		if err := db.UpdateSubscriptionPatch(r.Context(), d, id, u.ID,
 			extract, selector, cookie, basicUser, basicPass); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				writeError(w, http.StatusNotFound, ErrCodeNotFound, "subscription not found")
@@ -205,8 +225,6 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 			return
 		}
 
-		// No second SELECT — we just wrote every column this endpoint can
-		// change, and no other column auto-mutates on update.
 		s.Extract = extract
 		s.ExtractSelector = selector
 		s.Cookie = cookie
@@ -216,14 +234,21 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 	})
 
 	m.HandleFunc("DELETE /api/v1/subscriptions/{id}", func(w http.ResponseWriter, r *http.Request) {
+		u, ok := userFromContext(r.Context())
+		if !ok {
+			writeError(w, http.StatusUnauthorized, ErrCodeInvalidSession, "no session")
+			return
+		}
 		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "invalid id")
 			return
 		}
-		// Idempotent: deleting a non-existent ID is a 204, not a 404.
-		// Matches the SPA's optimistic-delete model (the client may retry).
-		if err := db.DeleteSubscription(r.Context(), d, id); err != nil {
+		if err := db.DeleteSubscription(r.Context(), d, id, u.ID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				writeError(w, http.StatusNotFound, ErrCodeNotFound, "subscription not found")
+				return
+			}
 			writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())
 			return
 		}

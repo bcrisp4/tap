@@ -30,7 +30,7 @@ const (
 // tests can call it directly without spawning a subprocess.
 func runAdmin(args []string, stdin io.Reader, stdout, stderr io.Writer, hashParams auth.Params) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: tap admin <create|passwd> ...")
+		fmt.Fprintln(stderr, "usage: tap admin <create|passwd|disable-totp> ...")
 		return adminExitGeneric
 	}
 	switch args[0] {
@@ -38,6 +38,8 @@ func runAdmin(args []string, stdin io.Reader, stdout, stderr io.Writer, hashPara
 		return runAdminCreate(args[1:], stdin, stdout, stderr, hashParams)
 	case "passwd":
 		return runAdminPasswd(args[1:], stdin, stdout, stderr, hashParams)
+	case "disable-totp":
+		return runAdminDisableTOTP(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown admin subcommand %q\n", args[0])
 		return adminExitGeneric
@@ -292,4 +294,50 @@ func bootstrapAdmin(ctx context.Context, d *sql.DB, username, password string, h
 		return fmt.Errorf("insert bootstrap admin: %w", err)
 	}
 	return nil
+}
+
+// runAdminDisableTOTP implements `tap admin disable-totp <username>`.
+// Removes the user's TOTP secret and recovery codes. Subsequent logins will
+// not prompt for a second factor.
+func runAdminDisableTOTP(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("admin disable-totp", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	dataDir := fs.String("data", envOr("TAP_DATA_DIR", "./data"), "data directory containing tap.db")
+	if err := fs.Parse(args); err != nil {
+		return adminExitGeneric
+	}
+	if fs.NArg() != 1 {
+		fmt.Fprintln(stderr, "usage: tap admin disable-totp <username>")
+		return adminExitGeneric
+	}
+	username := fs.Arg(0)
+
+	ctx := context.Background()
+	d, err := openAdminDB(ctx, *dataDir)
+	if err != nil {
+		fmt.Fprintf(stderr, "open db: %v\n", err)
+		return adminExitGeneric
+	}
+	defer d.Close()
+
+	u, err := db.GetUserByUsername(ctx, d, username)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			fmt.Fprintf(stderr, "user '%s' not found\n", username)
+			return adminExitUserExistsOrGone
+		}
+		fmt.Fprintf(stderr, "lookup user: %v\n", err)
+		return adminExitGeneric
+	}
+
+	if err := db.DeleteTOTPSecret(ctx, d, u.ID); err != nil {
+		fmt.Fprintf(stderr, "delete totp secret: %v\n", err)
+		return adminExitGeneric
+	}
+	if err := db.DeleteRecoveryCodes(ctx, d, u.ID); err != nil {
+		fmt.Fprintf(stderr, "delete recovery codes: %v\n", err)
+		return adminExitGeneric
+	}
+	fmt.Fprintf(stdout, "2FA disabled for '%s'\n", username)
+	return adminExitOK
 }

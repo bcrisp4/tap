@@ -57,6 +57,29 @@ func newDB(t *testing.T) *sql.DB {
 	return d
 }
 
+func insertTestUser(t *testing.T, d *sql.DB) int64 {
+	t.Helper()
+	id, err := db.InsertUser(context.Background(), d, db.NewUser{
+		Username: "polltest", PasswordHash: "x", Role: "admin", CreatedAt: 0,
+	})
+	if err != nil {
+		// If user already exists (reused DB), get its ID
+		u, uerr := db.GetUserByUsername(context.Background(), d, "polltest")
+		if uerr != nil {
+			t.Fatalf("insertTestUser: %v", err)
+		}
+		return u.ID
+	}
+	return id
+}
+
+func newDBUser(t *testing.T) (*sql.DB, int64) {
+	t.Helper()
+	d := newDB(t)
+	uid := insertTestUser(t, d)
+	return d, uid
+}
+
 func TestWorker_SuccessfulPoll(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -65,8 +88,9 @@ func TestWorker_SuccessfulPoll(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	d := newDB(t)
+	d, uid := newDBUser(t)
 	subID, err := db.InsertSubscription(context.Background(), d, db.NewSubscription{
+		UserID: uid,
 		Title: "x", FeedURL: srv.URL, NextPoll: 0, Created: 0,
 	})
 	require.NoError(t, err)
@@ -74,15 +98,15 @@ func TestWorker_SuccessfulPoll(t *testing.T) {
 	w := NewWorker(d, http.DefaultClient, WorkerOpts{
 		Processor: processor.New(sanitise.DefaultPolicy(), nil),
 	})
-	w.Run(context.Background(), db.DueSubscription{ID: subID, FeedURL: srv.URL})
+	w.Run(context.Background(), db.DueSubscription{UserID: uid, ID: subID, FeedURL: srv.URL})
 
-	got, err := db.GetSubscription(context.Background(), d, subID)
+	got, err := db.GetSubscription(context.Background(), d, subID, uid)
 	require.NoError(t, err)
 	require.True(t, got.LastPollAt.Valid)
 	require.True(t, got.ETag.Valid)
 	require.Equal(t, `"abc"`, got.ETag.String)
 
-	entries, _, _, err := db.ListEntries(context.Background(), d, db.ListEntriesParams{Limit: 100})
+	entries, _, _, err := db.ListEntries(context.Background(), d, db.ListEntriesParams{UserID: uid, Limit: 100})
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 }
@@ -94,17 +118,18 @@ func TestWorker_ErrorIncrementsCount(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	d := newDB(t)
+	d, uid := newDBUser(t)
 	subID, _ := db.InsertSubscription(context.Background(), d, db.NewSubscription{
+		UserID: uid,
 		Title: "x", FeedURL: srv.URL, NextPoll: 0, Created: 0,
 	})
 
 	w := NewWorker(d, http.DefaultClient, WorkerOpts{
 		Processor: processor.New(sanitise.DefaultPolicy(), nil),
 	})
-	w.Run(context.Background(), db.DueSubscription{ID: subID, FeedURL: srv.URL})
+	w.Run(context.Background(), db.DueSubscription{UserID: uid, ID: subID, FeedURL: srv.URL})
 
-	got, _ := db.GetSubscription(context.Background(), d, subID)
+	got, _ := db.GetSubscription(context.Background(), d, subID, uid)
 	require.Equal(t, 1, got.ErrorCount)
 	require.True(t, got.LastError.Valid)
 }
@@ -116,8 +141,9 @@ func TestWorker_SanitisesContent(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	d := newDB(t)
+	d, uid := newDBUser(t)
 	subID, err := db.InsertSubscription(context.Background(), d, db.NewSubscription{
+		UserID: uid,
 		Title: "x", FeedURL: srv.URL, NextPoll: 0, Created: 0,
 	})
 	require.NoError(t, err)
@@ -125,14 +151,14 @@ func TestWorker_SanitisesContent(t *testing.T) {
 	w := NewWorker(d, http.DefaultClient, WorkerOpts{
 		Processor: processor.New(sanitise.DefaultPolicy(), nil),
 	})
-	w.Run(context.Background(), db.DueSubscription{ID: subID, FeedURL: srv.URL})
+	w.Run(context.Background(), db.DueSubscription{UserID: uid, ID: subID, FeedURL: srv.URL})
 
-	entries, _, _, err := db.ListEntries(context.Background(), d, db.ListEntriesParams{Limit: 100})
+	entries, _, _, err := db.ListEntries(context.Background(), d, db.ListEntriesParams{UserID: uid, Limit: 100})
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 
 	// Fetch full entry (list response strips body).
-	full, err := db.GetEntry(context.Background(), d, entries[0].ID)
+	full, err := db.GetEntry(context.Background(), d, entries[0].ID, uid)
 	require.NoError(t, err)
 	body := full.Content
 	require.NotContains(t, body, "<script>", "script tag survived sanitise: %s", body)
@@ -148,6 +174,7 @@ func TestWorker_ErrorPath_ExponentialBackoff(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = d.Close() })
 	require.NoError(t, db.Migrate(ctx, d))
+	uid := insertTestUser(t, d)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
@@ -163,10 +190,11 @@ func TestWorker_ErrorPath_ExponentialBackoff(t *testing.T) {
 		Now:       func() time.Time { return fixedNow },
 	})
 	subID, err := db.InsertSubscription(ctx, d, db.NewSubscription{
+		UserID: uid,
 		Title: "Bad", FeedURL: srv.URL, NextPoll: 0, Created: fixedNow.Unix(),
 	})
 	require.NoError(t, err)
-	sub := db.DueSubscription{ID: subID, FeedURL: srv.URL, ErrorCount: 0}
+	sub := db.DueSubscription{UserID: uid, ID: subID, FeedURL: srv.URL, ErrorCount: 0}
 
 	w.Run(ctx, sub)
 
@@ -189,6 +217,7 @@ func TestWorker_RetryAfterOverridesBackoff(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = d.Close() })
 	require.NoError(t, db.Migrate(ctx, d))
+	uid := insertTestUser(t, d)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Retry-After", "3600")
@@ -208,10 +237,11 @@ func TestWorker_RetryAfterOverridesBackoff(t *testing.T) {
 		Now:       func() time.Time { return fixedNow },
 	})
 	subID, err := db.InsertSubscription(ctx, d, db.NewSubscription{
+		UserID: uid,
 		Title: "Slow", FeedURL: srv.URL, NextPoll: 0, Created: fixedNow.Unix(),
 	})
 	require.NoError(t, err)
-	sub := db.DueSubscription{ID: subID, FeedURL: srv.URL, ErrorCount: 0}
+	sub := db.DueSubscription{UserID: uid, ID: subID, FeedURL: srv.URL, ErrorCount: 0}
 
 	w.Run(ctx, sub)
 
@@ -231,10 +261,12 @@ func TestWorker_NotModified_RecomputesVelocityAndCadence(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = d.Close() })
 	require.NoError(t, db.Migrate(ctx, d))
+	uid := insertTestUser(t, d)
 
 	fixedNow := time.Date(2026, 5, 9, 12, 0, 0, 0, time.UTC)
 
 	subID, err := db.InsertSubscription(ctx, d, db.NewSubscription{
+		UserID: uid,
 		Title: "Active", FeedURL: "", NextPoll: 0, Created: fixedNow.Unix(),
 	})
 	require.NoError(t, err)
@@ -242,9 +274,9 @@ func TestWorker_NotModified_RecomputesVelocityAndCadence(t *testing.T) {
 	require.NoError(t, err)
 	for i := 0; i < 14; i++ {
 		_, err := d.ExecContext(ctx, `INSERT INTO entries
-			(subscription_id, hash, title, url, content, published_at, fetched_at)
-			VALUES (?, ?, '', '', '', ?, ?)`,
-			subID, fmt.Sprintf("h%d", i),
+			(user_id, subscription_id, hash, title, url, content, published_at, fetched_at)
+			VALUES (?, ?, ?, '', '', '', ?, ?)`,
+			uid, subID, fmt.Sprintf("h%d", i),
 			fixedNow.Add(-time.Duration(i)*12*time.Hour).Unix(), fixedNow.Unix())
 		require.NoError(t, err)
 	}
@@ -263,7 +295,7 @@ func TestWorker_NotModified_RecomputesVelocityAndCadence(t *testing.T) {
 		Ceiling:   24 * time.Hour,
 		Now:       func() time.Time { return fixedNow },
 	})
-	sub := db.DueSubscription{
+	sub := db.DueSubscription{UserID: uid, 
 		ID: subID, FeedURL: srv.URL,
 		ETag: sql.NullString{String: "abc", Valid: true},
 	}
@@ -286,6 +318,7 @@ func TestWorker_Success_RetryAfterAdvisoryFloor(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = d.Close() })
 	require.NoError(t, db.Migrate(ctx, d))
+	uid := insertTestUser(t, d)
 
 	// fixedNow must align with the wall clock because feed.Fetch parses
 	// Retry-After against time.Now(); the success branch then floors
@@ -300,6 +333,7 @@ func TestWorker_Success_RetryAfterAdvisoryFloor(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	subID, err := db.InsertSubscription(ctx, d, db.NewSubscription{
+		UserID: uid,
 		Title: "X", FeedURL: srv.URL, NextPoll: 0, Created: fixedNow.Unix(),
 	})
 	require.NoError(t, err)
@@ -310,9 +344,9 @@ func TestWorker_Success_RetryAfterAdvisoryFloor(t *testing.T) {
 	// would mask the Retry-After test.
 	for i := 0; i < 700; i++ {
 		_, err := d.ExecContext(ctx, `INSERT INTO entries
-			(subscription_id, hash, title, url, content, published_at, fetched_at)
-			VALUES (?, ?, '', '', '', ?, ?)`,
-			subID, fmt.Sprintf("seed%d", i),
+			(user_id, subscription_id, hash, title, url, content, published_at, fetched_at)
+			VALUES (?, ?, ?, '', '', '', ?, ?)`,
+			uid, subID, fmt.Sprintf("seed%d", i),
 			fixedNow.Add(-time.Duration(i)*time.Minute).Unix(), fixedNow.Unix())
 		require.NoError(t, err)
 	}
@@ -323,7 +357,7 @@ func TestWorker_Success_RetryAfterAdvisoryFloor(t *testing.T) {
 		Ceiling:   24 * time.Hour,
 		Now:       func() time.Time { return fixedNow },
 	})
-	w.Run(ctx, db.DueSubscription{ID: subID, FeedURL: srv.URL})
+	w.Run(ctx, db.DueSubscription{UserID: uid, ID: subID, FeedURL: srv.URL})
 
 	var nextPoll int64
 	require.NoError(t, d.QueryRowContext(ctx,
@@ -339,6 +373,7 @@ func TestWorker_NotModified_VelocityQueryFailure_AdvancesNextPoll(t *testing.T) 
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = d.Close() })
 	require.NoError(t, db.Migrate(ctx, d))
+	uid := insertTestUser(t, d)
 
 	// Origin always 304s; that's the path that calls QueryVelocity.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -347,6 +382,7 @@ func TestWorker_NotModified_VelocityQueryFailure_AdvancesNextPoll(t *testing.T) 
 	t.Cleanup(srv.Close)
 
 	subID, err := db.InsertSubscription(ctx, d, db.NewSubscription{
+		UserID: uid,
 		Title: "X", FeedURL: srv.URL, NextPoll: 0, Created: 0,
 	})
 	require.NoError(t, err)
@@ -363,7 +399,7 @@ func TestWorker_NotModified_VelocityQueryFailure_AdvancesNextPoll(t *testing.T) 
 		ErrorBase: 5 * time.Minute,
 		Now:       func() time.Time { return fixedNow },
 	})
-	w.Run(ctx, db.DueSubscription{ID: subID, FeedURL: srv.URL, ErrorCount: 0})
+	w.Run(ctx, db.DueSubscription{UserID: uid, ID: subID, FeedURL: srv.URL, ErrorCount: 0})
 
 	// next_poll_at must move forward — otherwise the scheduler picks this
 	// subscription on every tick (tight loop). Apply exponential backoff
@@ -384,7 +420,7 @@ func TestWorker_NotModified_VelocityQueryFailure_AdvancesNextPoll(t *testing.T) 
 
 func TestNewWorker_DefaultsExtractFunc(t *testing.T) {
 	t.Parallel()
-	d := newDB(t)
+	d, _ := newDBUser(t)
 	w := NewWorker(d, http.DefaultClient, WorkerOpts{
 		Processor: processor.New(sanitise.DefaultPolicy(), nil),
 	})
@@ -402,6 +438,7 @@ func TestWorker_CommitFailure_UsesExponentialBackoff(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = d.Close() })
 	require.NoError(t, db.Migrate(ctx, d))
+	uid := insertTestUser(t, d)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(sampleAtom))
@@ -409,6 +446,7 @@ func TestWorker_CommitFailure_UsesExponentialBackoff(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	subID, err := db.InsertSubscription(ctx, d, db.NewSubscription{
+		UserID: uid,
 		Title: "X", FeedURL: srv.URL, NextPoll: 0, Created: 0,
 	})
 	require.NoError(t, err)
@@ -429,7 +467,7 @@ func TestWorker_CommitFailure_UsesExponentialBackoff(t *testing.T) {
 		ErrorBase: 5 * time.Minute,
 		Now:       func() time.Time { return fixedNow },
 	})
-	w.Run(ctx, db.DueSubscription{ID: subID, FeedURL: srv.URL, ErrorCount: 1})
+	w.Run(ctx, db.DueSubscription{UserID: uid, ID: subID, FeedURL: srv.URL, ErrorCount: 1})
 
 	var nextPoll int64
 	require.NoError(t, d.QueryRowContext(ctx,
@@ -460,8 +498,9 @@ func TestWorker_Extract_ReplacesContentOnSuccess(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	d := newDB(t)
+	d, uid := newDBUser(t)
 	subID, err := db.InsertSubscription(context.Background(), d, db.NewSubscription{
+		UserID: uid,
 		Title: "x", FeedURL: srv.URL, NextPoll: 0, Created: 0,
 	})
 	require.NoError(t, err)
@@ -478,15 +517,15 @@ func TestWorker_Extract_ReplacesContentOnSuccess(t *testing.T) {
 		Processor: processor.New(sanitise.DefaultPolicy(), nil),
 		Extract:   fakeExtract,
 	})
-	w.Run(context.Background(), db.DueSubscription{
+	w.Run(context.Background(), db.DueSubscription{UserID: uid, 
 		ID: subID, FeedURL: srv.URL, Extract: true,
 	})
 
 	require.Equal(t, 1, calls)
-	entries, _, _, err := db.ListEntries(context.Background(), d, db.ListEntriesParams{Limit: 10})
+	entries, _, _, err := db.ListEntries(context.Background(), d, db.ListEntriesParams{UserID: uid, Limit: 10})
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
-	full, err := db.GetEntry(context.Background(), d, entries[0].ID)
+	full, err := db.GetEntry(context.Background(), d, entries[0].ID, uid)
 	require.NoError(t, err)
 	require.Contains(t, full.Content, "extracted body")
 	require.NotContains(t, full.Content, "teaser")
@@ -508,8 +547,9 @@ func TestWorker_Extract_FalseSkipsExtraction(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	d := newDB(t)
+	d, uid := newDBUser(t)
 	subID, _ := db.InsertSubscription(context.Background(), d, db.NewSubscription{
+		UserID: uid,
 		Title: "x", FeedURL: srv.URL, NextPoll: 0, Created: 0,
 	})
 
@@ -523,13 +563,13 @@ func TestWorker_Extract_FalseSkipsExtraction(t *testing.T) {
 		Processor: processor.New(sanitise.DefaultPolicy(), nil),
 		Extract:   fakeExtract,
 	})
-	w.Run(context.Background(), db.DueSubscription{
+	w.Run(context.Background(), db.DueSubscription{UserID: uid, 
 		ID: subID, FeedURL: srv.URL, Extract: false,
 	})
 
 	require.Equal(t, 0, calls, "Extract must not be called when sub.Extract is false")
-	entries, _, _, _ := db.ListEntries(context.Background(), d, db.ListEntriesParams{Limit: 10})
-	full, _ := db.GetEntry(context.Background(), d, entries[0].ID)
+	entries, _, _, _ := db.ListEntries(context.Background(), d, db.ListEntriesParams{UserID: uid, Limit: 10})
+	full, _ := db.GetEntry(context.Background(), d, entries[0].ID, uid)
 	require.Contains(t, full.Content, "teaser")
 }
 
@@ -552,8 +592,9 @@ func TestWorker_Extract_OneFailureFallsBackToSummary(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	d := newDB(t)
+	d, uid := newDBUser(t)
 	subID, _ := db.InsertSubscription(context.Background(), d, db.NewSubscription{
+		UserID: uid,
 		Title: "x", FeedURL: srv.URL, NextPoll: 0, Created: 0,
 	})
 
@@ -568,12 +609,12 @@ func TestWorker_Extract_OneFailureFallsBackToSummary(t *testing.T) {
 		Processor: processor.New(sanitise.DefaultPolicy(), nil),
 		Extract:   fakeExtract,
 	})
-	w.Run(context.Background(), db.DueSubscription{
+	w.Run(context.Background(), db.DueSubscription{UserID: uid, 
 		ID: subID, FeedURL: srv.URL, Extract: true,
 	})
 
 	// Subscription error_count must NOT bump — extract failure is per-entry.
-	got, err := db.GetSubscription(context.Background(), d, subID)
+	got, err := db.GetSubscription(context.Background(), d, subID, uid)
 	require.NoError(t, err)
 	require.Equal(t, 0, got.ErrorCount, "extract failure must not bump subscription error_count")
 	require.False(t, got.LastError.Valid, "extract failure must not write last_error")
@@ -621,8 +662,9 @@ func TestWorker_Extract_AllFailuresPollStillSucceeds(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	d := newDB(t)
+	d, uid := newDBUser(t)
 	subID, _ := db.InsertSubscription(context.Background(), d, db.NewSubscription{
+		UserID: uid,
 		Title: "x", FeedURL: srv.URL, NextPoll: 0, Created: 0,
 	})
 
@@ -634,11 +676,11 @@ func TestWorker_Extract_AllFailuresPollStillSucceeds(t *testing.T) {
 		Processor: processor.New(sanitise.DefaultPolicy(), nil),
 		Extract:   failExtract,
 	})
-	w.Run(context.Background(), db.DueSubscription{
+	w.Run(context.Background(), db.DueSubscription{UserID: uid, 
 		ID: subID, FeedURL: srv.URL, Extract: true,
 	})
 
-	got, err := db.GetSubscription(context.Background(), d, subID)
+	got, err := db.GetSubscription(context.Background(), d, subID, uid)
 	require.NoError(t, err)
 	require.Equal(t, 0, got.ErrorCount)
 
@@ -669,8 +711,9 @@ func TestWorker_Extract_ConcurrencyLimit(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	d := newDB(t)
+	d, uid := newDBUser(t)
 	subID, _ := db.InsertSubscription(context.Background(), d, db.NewSubscription{
+		UserID: uid,
 		Title: "x", FeedURL: srv.URL, NextPoll: 0, Created: 0,
 	})
 
@@ -703,7 +746,7 @@ func TestWorker_Extract_ConcurrencyLimit(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		w.Run(context.Background(), db.DueSubscription{
+		w.Run(context.Background(), db.DueSubscription{UserID: uid, 
 			ID: subID, FeedURL: srv.URL, Extract: true,
 		})
 	}()
@@ -734,8 +777,9 @@ func TestWorker_Extract_NoLinkSkipsSilently(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	d := newDB(t)
+	d, uid := newDBUser(t)
 	subID, _ := db.InsertSubscription(context.Background(), d, db.NewSubscription{
+		UserID: uid,
 		Title: "x", FeedURL: srv.URL, NextPoll: 0, Created: 0,
 	})
 
@@ -749,7 +793,7 @@ func TestWorker_Extract_NoLinkSkipsSilently(t *testing.T) {
 		Processor: processor.New(sanitise.DefaultPolicy(), nil),
 		Extract:   fakeExtract,
 	})
-	w.Run(context.Background(), db.DueSubscription{
+	w.Run(context.Background(), db.DueSubscription{UserID: uid, 
 		ID: subID, FeedURL: srv.URL, Extract: true,
 	})
 
@@ -775,8 +819,9 @@ func TestWorker_Extract_OutputStillSanitised(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	d := newDB(t)
+	d, uid := newDBUser(t)
 	subID, _ := db.InsertSubscription(context.Background(), d, db.NewSubscription{
+		UserID: uid,
 		Title: "x", FeedURL: srv.URL, NextPoll: 0, Created: 0,
 	})
 
@@ -788,12 +833,12 @@ func TestWorker_Extract_OutputStillSanitised(t *testing.T) {
 		Processor: processor.New(sanitise.DefaultPolicy(), nil),
 		Extract:   hostileExtract,
 	})
-	w.Run(context.Background(), db.DueSubscription{
+	w.Run(context.Background(), db.DueSubscription{UserID: uid, 
 		ID: subID, FeedURL: srv.URL, Extract: true,
 	})
 
-	entries, _, _, _ := db.ListEntries(context.Background(), d, db.ListEntriesParams{Limit: 10})
-	full, _ := db.GetEntry(context.Background(), d, entries[0].ID)
+	entries, _, _, _ := db.ListEntries(context.Background(), d, db.ListEntriesParams{UserID: uid, Limit: 10})
+	full, _ := db.GetEntry(context.Background(), d, entries[0].ID, uid)
 	require.Contains(t, full.Content, "real article")
 	require.NotContains(t, full.Content, "<script>", "extracted output must run through processor.Process")
 	require.NotContains(t, full.Content, "alert", "extracted output must run through processor.Process")
@@ -811,8 +856,9 @@ func TestWorkerAppliesFeedCredsToFeedFetch(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	d := newDB(t)
+	d, uid := newDBUser(t)
 	subID, err := db.InsertSubscription(context.Background(), d, db.NewSubscription{
+		UserID: uid,
 		Title: "x", FeedURL: srv.URL, NextPoll: 0, Created: 0,
 	})
 	require.NoError(t, err)
@@ -821,7 +867,7 @@ func TestWorkerAppliesFeedCredsToFeedFetch(t *testing.T) {
 		Processor: processor.New(sanitise.DefaultPolicy(), nil),
 	})
 
-	w.Run(context.Background(), db.DueSubscription{
+	w.Run(context.Background(), db.DueSubscription{UserID: uid, 
 		ID: subID, FeedURL: srv.URL,
 		Cookie: "c", BasicAuthUser: "u", BasicAuthPass: "p",
 	})
@@ -862,8 +908,9 @@ func TestWorkerAppliesFeedCredsToExtract(t *testing.T) {
 	defer srv.Close()
 	articleURL = srv.URL + "/article"
 
-	d := newDB(t)
+	d, uid := newDBUser(t)
 	subID, err := db.InsertSubscription(context.Background(), d, db.NewSubscription{
+		UserID: uid,
 		Title: "x", FeedURL: srv.URL + "/feed", NextPoll: 0, Created: 0,
 	})
 	require.NoError(t, err)
@@ -871,7 +918,7 @@ func TestWorkerAppliesFeedCredsToExtract(t *testing.T) {
 	w := NewWorker(d, srv.Client(), WorkerOpts{
 		Processor: processor.New(sanitise.DefaultPolicy(), nil),
 	})
-	w.Run(context.Background(), db.DueSubscription{
+	w.Run(context.Background(), db.DueSubscription{UserID: uid, 
 		ID: subID, FeedURL: srv.URL + "/feed",
 		Extract: true,
 		Cookie:  "c", BasicAuthUser: "u", BasicAuthPass: "p",

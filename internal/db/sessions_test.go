@@ -161,3 +161,79 @@ func TestDeleteOtherSessionsForUser(t *testing.T) {
 		require.ErrorIs(t, err, sql.ErrNoRows, "hash %s should be gone", h)
 	}
 }
+
+func TestListSessionsByUserID(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	ctx := context.Background()
+	uid1 := insertTestUser(t, d, "ken")
+	uid2 := insertTestUser(t, d, "lou")
+
+	_, err := InsertSession(ctx, d, NewSession{
+		UserID: uid1, TokenHash: "h1", CSRFToken: "c",
+		CreatedAt: 1, LastSeenAt: 1, IdleExpiresAt: 1, AbsoluteExpiresAt: 9999999999,
+	})
+	require.NoError(t, err)
+	_, err = InsertSession(ctx, d, NewSession{
+		UserID: uid1, TokenHash: "h2", CSRFToken: "c",
+		CreatedAt: 2, LastSeenAt: 2, IdleExpiresAt: 2, AbsoluteExpiresAt: 9999999999,
+	})
+	require.NoError(t, err)
+	_, err = InsertSession(ctx, d, NewSession{
+		UserID: uid2, TokenHash: "h3", CSRFToken: "c",
+		CreatedAt: 1, LastSeenAt: 1, IdleExpiresAt: 1, AbsoluteExpiresAt: 9999999999,
+	})
+	require.NoError(t, err)
+
+	sessions, err := ListSessionsByUserID(ctx, d, uid1)
+	require.NoError(t, err)
+	require.Len(t, sessions, 2, "should return only uid1 sessions")
+
+	sessions2, err := ListSessionsByUserID(ctx, d, uid2)
+	require.NoError(t, err)
+	require.Len(t, sessions2, 1)
+}
+
+func TestSession_UserAgentAndAddress(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	ctx := context.Background()
+	uid := insertTestUser(t, d, "mia")
+
+	_, err := InsertSession(ctx, d, NewSession{
+		UserID: uid, TokenHash: "h1ua", CSRFToken: "c",
+		CreatedAt: 0, LastSeenAt: 0, IdleExpiresAt: 1, AbsoluteExpiresAt: 9999999999,
+		UserAgent: "Mozilla/5.0", Address: "1.2.3.4",
+	})
+	require.NoError(t, err)
+
+	s, err := GetSessionByTokenHash(ctx, d, "h1ua")
+	require.NoError(t, err)
+	require.Equal(t, "Mozilla/5.0", s.UserAgent)
+	require.Equal(t, "1.2.3.4", s.Address)
+}
+
+func TestWebAuthnChallenge_SetAndClear(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	ctx := context.Background()
+	uid := insertTestUser(t, d, "ned")
+
+	sid, err := InsertSession(ctx, d, NewSession{
+		UserID: uid, TokenHash: "hwac", CSRFToken: "c",
+		CreatedAt: 0, LastSeenAt: 0, IdleExpiresAt: 1, AbsoluteExpiresAt: 9999999999,
+	})
+	require.NoError(t, err)
+
+	challenge := []byte(`{"challenge":"abc123"}`)
+	require.NoError(t, SetWebAuthnChallenge(ctx, d, sid, challenge))
+
+	s, err := GetSessionByTokenHash(ctx, d, "hwac")
+	require.NoError(t, err)
+	require.Equal(t, challenge, s.WebAuthnChallenge)
+
+	require.NoError(t, ClearWebAuthnChallenge(ctx, d, sid))
+	s2, err := GetSessionByTokenHash(ctx, d, "hwac")
+	require.NoError(t, err)
+	require.Nil(t, s2.WebAuthnChallenge)
+}

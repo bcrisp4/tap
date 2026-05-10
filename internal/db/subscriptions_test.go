@@ -19,13 +19,22 @@ func newTestDB(t *testing.T) *sql.DB {
 	return d
 }
 
+// newTestUserAndDB creates a DB with a single admin user and returns both.
+func newTestUserAndDB(t *testing.T) (*sql.DB, int64) {
+	t.Helper()
+	d := newTestDB(t)
+	uid := insertTestUser(t, d, "testuser")
+	return d, uid
+}
+
 func TestSubscription_InsertAndGet(t *testing.T) {
 	t.Parallel()
-	d := newTestDB(t)
+	d, uid := newTestUserAndDB(t)
 	ctx := context.Background()
 
 	now := time.Now().Unix()
 	id, err := InsertSubscription(ctx, d, NewSubscription{
+		UserID:   uid,
 		Title:    "Example",
 		FeedURL:  "https://example.com/feed",
 		SiteURL:  "https://example.com",
@@ -35,7 +44,7 @@ func TestSubscription_InsertAndGet(t *testing.T) {
 	require.NoError(t, err)
 	require.Greater(t, id, int64(0))
 
-	got, err := GetSubscription(ctx, d, id)
+	got, err := GetSubscription(ctx, d, id, uid)
 	require.NoError(t, err)
 	require.Equal(t, "Example", got.Title)
 	require.Equal(t, "https://example.com/feed", got.FeedURL)
@@ -44,22 +53,86 @@ func TestSubscription_InsertAndGet(t *testing.T) {
 
 func TestSubscription_Insert_RejectsDuplicateURL(t *testing.T) {
 	t.Parallel()
-	d := newTestDB(t)
+	d, uid := newTestUserAndDB(t)
 	ctx := context.Background()
 
-	_, err := InsertSubscription(ctx, d, NewSubscription{Title: "a", FeedURL: "https://example.com/x", NextPoll: 0, Created: 0})
+	_, err := InsertSubscription(ctx, d, NewSubscription{UserID: uid, Title: "a", FeedURL: "https://example.com/x", NextPoll: 0, Created: 0})
 	require.NoError(t, err)
-	_, err = InsertSubscription(ctx, d, NewSubscription{Title: "b", FeedURL: "https://example.com/x", NextPoll: 0, Created: 0})
+	_, err = InsertSubscription(ctx, d, NewSubscription{UserID: uid, Title: "b", FeedURL: "https://example.com/x", NextPoll: 0, Created: 0})
+	require.ErrorIs(t, err, ErrSubscriptionExists)
+}
+
+func TestSubscription_TwoUsersSameURL(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	ctx := context.Background()
+	uid1 := insertTestUser(t, d, "alice")
+	uid2 := insertTestUser(t, d, "bob")
+
+	_, err := InsertSubscription(ctx, d, NewSubscription{UserID: uid1, Title: "x", FeedURL: "https://shared.example/feed", NextPoll: 0, Created: 0})
+	require.NoError(t, err, "first user should be able to subscribe")
+	_, err = InsertSubscription(ctx, d, NewSubscription{UserID: uid2, Title: "x", FeedURL: "https://shared.example/feed", NextPoll: 0, Created: 0})
+	require.NoError(t, err, "second user must also be able to subscribe to the same URL")
+}
+
+func TestSubscription_GetIsolation(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	ctx := context.Background()
+	uid1 := insertTestUser(t, d, "alice")
+	uid2 := insertTestUser(t, d, "bob")
+
+	id, err := InsertSubscription(ctx, d, NewSubscription{UserID: uid1, Title: "a", FeedURL: "https://a.example/feed", NextPoll: 0, Created: 0})
+	require.NoError(t, err)
+
+	// userID 2 cannot see userID 1's subscription
+	_, err = GetSubscription(ctx, d, id, uid2)
 	require.Error(t, err)
+}
+
+func TestSubscription_ListIsolation(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	ctx := context.Background()
+	uid1 := insertTestUser(t, d, "alice")
+	uid2 := insertTestUser(t, d, "bob")
+
+	_, err := InsertSubscription(ctx, d, NewSubscription{UserID: uid1, Title: "a", FeedURL: "https://a.example/feed", NextPoll: 0, Created: 0})
+	require.NoError(t, err)
+
+	subs, err := ListSubscriptions(ctx, d, uid1)
+	require.NoError(t, err)
+	require.Len(t, subs, 1)
+
+	subs2, err := ListSubscriptions(ctx, d, uid2)
+	require.NoError(t, err)
+	require.Empty(t, subs2, "user 2 should see no subscriptions")
+}
+
+func TestSubscription_DeleteIsolation(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	ctx := context.Background()
+	uid1 := insertTestUser(t, d, "alice")
+	uid2 := insertTestUser(t, d, "bob")
+
+	id, err := InsertSubscription(ctx, d, NewSubscription{UserID: uid1, Title: "a", FeedURL: "https://a.example/feed", NextPoll: 0, Created: 0})
+	require.NoError(t, err)
+
+	err = DeleteSubscription(ctx, d, id, uid2)
+	require.ErrorIs(t, err, sql.ErrNoRows, "user2 cannot delete user1's subscription")
+
+	err = DeleteSubscription(ctx, d, id, uid1)
+	require.NoError(t, err)
 }
 
 func TestSubscription_ListDuePolls(t *testing.T) {
 	t.Parallel()
-	d := newTestDB(t)
+	d, uid := newTestUserAndDB(t)
 	ctx := context.Background()
 
-	due, _ := InsertSubscription(ctx, d, NewSubscription{Title: "due", FeedURL: "https://example.com/a", NextPoll: 0, Created: 0})
-	_, _ = InsertSubscription(ctx, d, NewSubscription{Title: "future", FeedURL: "https://example.com/b", NextPoll: time.Now().Unix() + 86400, Created: 0})
+	due, _ := InsertSubscription(ctx, d, NewSubscription{UserID: uid, Title: "due", FeedURL: "https://example.com/a", NextPoll: 0, Created: 0})
+	_, _ = InsertSubscription(ctx, d, NewSubscription{UserID: uid, Title: "future", FeedURL: "https://example.com/b", NextPoll: time.Now().Unix() + 86400, Created: 0})
 
 	rows, err := ListDuePolls(ctx, d, time.Now().Unix(), 100)
 	require.NoError(t, err)
@@ -69,11 +142,11 @@ func TestSubscription_ListDuePolls(t *testing.T) {
 
 func TestListDuePolls_IncludesErrorCount(t *testing.T) {
 	t.Parallel()
-	d := newTestDB(t)
+	d, uid := newTestUserAndDB(t)
 	ctx := context.Background()
 
 	subID, err := InsertSubscription(ctx, d, NewSubscription{
-		Title: "T", FeedURL: "http://x/", NextPoll: 0, Created: 0,
+		UserID: uid, Title: "T", FeedURL: "http://x/", NextPoll: 0, Created: 0,
 	})
 	require.NoError(t, err)
 
@@ -88,27 +161,27 @@ func TestListDuePolls_IncludesErrorCount(t *testing.T) {
 
 func TestQueryVelocity_RollingWindow(t *testing.T) {
 	t.Parallel()
-	d := newTestDB(t)
+	d, uid := newTestUserAndDB(t)
 	ctx := context.Background()
 
 	now := time.Date(2026, 5, 9, 12, 0, 0, 0, time.UTC)
 	subID, err := InsertSubscription(ctx, d, NewSubscription{
-		Title: "Test", FeedURL: "http://x/feed", NextPoll: 0, Created: now.Unix(),
+		UserID: uid, Title: "Test", FeedURL: "http://x/feed", NextPoll: 0, Created: now.Unix(),
 	})
 	require.NoError(t, err)
 
 	// 14 entries within last 7 days, 1 entry from 8 days ago (out of window).
 	for i := 0; i < 14; i++ {
 		_, err := d.ExecContext(ctx, `
-			INSERT INTO entries (subscription_id, hash, title, url, content, published_at, fetched_at)
-			VALUES (?, ?, '', '', '', ?, ?)
-		`, subID, fmt.Sprintf("h%d", i), now.Add(-time.Duration(i)*time.Hour).Unix(), now.Unix())
+			INSERT INTO entries (user_id, subscription_id, hash, title, url, content, published_at, fetched_at)
+			VALUES (?, ?, ?, '', '', '', ?, ?)
+		`, uid, subID, fmt.Sprintf("h%d", i), now.Add(-time.Duration(i)*time.Hour).Unix(), now.Unix())
 		require.NoError(t, err)
 	}
 	_, err = d.ExecContext(ctx, `
-		INSERT INTO entries (subscription_id, hash, title, url, content, published_at, fetched_at)
-		VALUES (?, 'old', '', '', '', ?, ?)
-	`, subID, now.Add(-8*24*time.Hour).Unix(), now.Unix())
+		INSERT INTO entries (user_id, subscription_id, hash, title, url, content, published_at, fetched_at)
+		VALUES (?, ?, 'old', '', '', '', ?, ?)
+	`, uid, subID, now.Add(-8*24*time.Hour).Unix(), now.Unix())
 	require.NoError(t, err)
 
 	velocity, err := QueryVelocity(ctx, d, subID, now)
@@ -118,11 +191,11 @@ func TestQueryVelocity_RollingWindow(t *testing.T) {
 
 func TestQueryVelocity_NoEntries(t *testing.T) {
 	t.Parallel()
-	d := newTestDB(t)
+	d, uid := newTestUserAndDB(t)
 	ctx := context.Background()
 
 	subID, err := InsertSubscription(ctx, d, NewSubscription{
-		Title: "Empty", FeedURL: "http://e/feed", NextPoll: 0, Created: 0,
+		UserID: uid, Title: "Empty", FeedURL: "http://e/feed", NextPoll: 0, Created: 0,
 	})
 	require.NoError(t, err)
 
@@ -133,11 +206,11 @@ func TestQueryVelocity_NoEntries(t *testing.T) {
 
 func TestListDuePolls_ReturnsExtractionFields(t *testing.T) {
 	t.Parallel()
-	d := newTestDB(t)
+	d, uid := newTestUserAndDB(t)
 	ctx := context.Background()
 
 	id, err := InsertSubscription(ctx, d, NewSubscription{
-		Title: "x", FeedURL: "https://x.example/feed", NextPoll: 0, Created: 0,
+		UserID: uid, Title: "x", FeedURL: "https://x.example/feed", NextPoll: 0, Created: 0,
 	})
 	require.NoError(t, err)
 	_, err = d.ExecContext(ctx,
@@ -153,17 +226,17 @@ func TestListDuePolls_ReturnsExtractionFields(t *testing.T) {
 
 func TestUpdateSubscriptionPatch_AllFieldsAtomic(t *testing.T) {
 	t.Parallel()
-	d := newTestDB(t)
+	d, uid := newTestUserAndDB(t)
 	ctx := context.Background()
 
 	id, err := InsertSubscription(ctx, d, NewSubscription{
-		Title: "x", FeedURL: "https://x.example/feed", NextPoll: 0, Created: 0,
+		UserID: uid, Title: "x", FeedURL: "https://x.example/feed", NextPoll: 0, Created: 0,
 	})
 	require.NoError(t, err)
 
 	// Happy path: writes all five columns in one statement.
-	require.NoError(t, UpdateSubscriptionPatch(ctx, d, id, true, ".body", "c", "u", "p"))
-	s, err := GetSubscription(ctx, d, id)
+	require.NoError(t, UpdateSubscriptionPatch(ctx, d, id, uid, true, ".body", "c", "u", "p"))
+	s, err := GetSubscription(ctx, d, id, uid)
 	require.NoError(t, err)
 	require.True(t, s.Extract)
 	require.Equal(t, ".body", s.ExtractSelector)
@@ -172,8 +245,8 @@ func TestUpdateSubscriptionPatch_AllFieldsAtomic(t *testing.T) {
 	require.Equal(t, "p", s.BasicAuthPass)
 
 	// Empty strings clear the selector and credentials atomically.
-	require.NoError(t, UpdateSubscriptionPatch(ctx, d, id, false, "", "", "", ""))
-	s, err = GetSubscription(ctx, d, id)
+	require.NoError(t, UpdateSubscriptionPatch(ctx, d, id, uid, false, "", "", "", ""))
+	s, err = GetSubscription(ctx, d, id, uid)
 	require.NoError(t, err)
 	require.False(t, s.Extract)
 	require.Empty(t, s.ExtractSelector)
@@ -182,17 +255,17 @@ func TestUpdateSubscriptionPatch_AllFieldsAtomic(t *testing.T) {
 	require.Empty(t, s.BasicAuthPass)
 
 	// Missing id → sql.ErrNoRows.
-	err = UpdateSubscriptionPatch(ctx, d, id+999, false, "", "", "", "")
+	err = UpdateSubscriptionPatch(ctx, d, id+999, uid, false, "", "", "", "")
 	require.ErrorIs(t, err, sql.ErrNoRows)
 }
 
 func TestUpdateAfterNotModified_WritesVelocity(t *testing.T) {
 	t.Parallel()
-	d := newTestDB(t)
+	d, uid := newTestUserAndDB(t)
 	ctx := context.Background()
 
 	subID, err := InsertSubscription(ctx, d, NewSubscription{
-		Title: "T", FeedURL: "http://x/", NextPoll: 0, Created: 0,
+		UserID: uid, Title: "T", FeedURL: "http://x/", NextPoll: 0, Created: 0,
 	})
 	require.NoError(t, err)
 
@@ -210,16 +283,16 @@ func TestUpdateAfterNotModified_WritesVelocity(t *testing.T) {
 
 func TestInsertAndGetSubscriptionWithCreds(t *testing.T) {
 	t.Parallel()
-	d := newTestDB(t)
+	d, uid := newTestUserAndDB(t)
 	ctx := context.Background()
 
 	id, err := InsertSubscription(ctx, d, NewSubscription{
-		Title: "x", FeedURL: "https://x.example/feed", NextPoll: 0, Created: 0,
+		UserID: uid, Title: "x", FeedURL: "https://x.example/feed", NextPoll: 0, Created: 0,
 		Cookie: "session=abc", BasicAuthUser: "ben", BasicAuthPass: "secret",
 	})
 	require.NoError(t, err)
 
-	s, err := GetSubscription(ctx, d, id)
+	s, err := GetSubscription(ctx, d, id, uid)
 	require.NoError(t, err)
 	require.Equal(t, "session=abc", s.Cookie)
 	require.Equal(t, "ben", s.BasicAuthUser)
@@ -228,11 +301,11 @@ func TestInsertAndGetSubscriptionWithCreds(t *testing.T) {
 
 func TestListDuePollsCarriesCreds(t *testing.T) {
 	t.Parallel()
-	d := newTestDB(t)
+	d, uid := newTestUserAndDB(t)
 	ctx := context.Background()
 
 	_, err := InsertSubscription(ctx, d, NewSubscription{
-		Title: "x", FeedURL: "https://x.example/feed", NextPoll: 0, Created: 0,
+		UserID: uid, Title: "x", FeedURL: "https://x.example/feed", NextPoll: 0, Created: 0,
 		Cookie: "c", BasicAuthUser: "u", BasicAuthPass: "p",
 	})
 	require.NoError(t, err)
@@ -244,4 +317,3 @@ func TestListDuePollsCarriesCreds(t *testing.T) {
 	require.Equal(t, "u", due[0].BasicAuthUser)
 	require.Equal(t, "p", due[0].BasicAuthPass)
 }
-

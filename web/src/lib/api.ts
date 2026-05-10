@@ -6,6 +6,11 @@ import type {
   ListResponse,
   ApiError,
   PasswordChangeResponse,
+  Session,
+  TOTPEnrolmentBegin,
+  TOTPConfirmResponse,
+  Passkey,
+  AdminUser,
 } from './types';
 import { auth, ERR_UNAUTHORIZED } from './auth';
 
@@ -18,7 +23,6 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     ...((init.headers ?? {}) as Record<string, string>),
   };
 
-  // Attach CSRF on state-changing methods. Read non-reactively from the store.
   if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
     const csrf = get(auth).csrfToken;
     if (csrf) {
@@ -28,14 +32,6 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
   const res = await fetch(BASE + path, { ...init, headers });
 
-  // 401 has two flavours:
-  //   - error.code === 'invalid_session': session genuinely expired or
-  //     was revoked → wipe in-memory auth state so the SPA falls back to
-  //     the login screen.
-  //   - error.code === 'invalid_credentials': the user entered the wrong
-  //     CURRENT password during PATCH /me/password. The session is fine;
-  //     forcing a re-login here would be terrible UX.
-  // Anything else is treated as session-loss to fail safe.
   if (res.status === 401) {
     let detail: ApiError | null = null;
     try { detail = await res.json(); } catch { /* swallow */ }
@@ -54,6 +50,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
+  // --- Subscriptions ---
   listSubscriptions: () =>
     request<ListResponse<Subscription>>('/subscriptions').then(r => r.data),
 
@@ -88,6 +85,7 @@ export const api = {
   deleteSubscription: (id: number) =>
     request<void>(`/subscriptions/${id}`, { method: 'DELETE' }),
 
+  // --- Entries ---
   listEntries: (params: {
     unread?: boolean;
     feed?: number;
@@ -112,6 +110,7 @@ export const api = {
       body: JSON.stringify(patch),
     }),
 
+  // --- Password ---
   changePassword: async (currentPassword: string, newPassword: string) => {
     const resp = await request<PasswordChangeResponse>('/me/password', {
       method: 'PATCH',
@@ -123,4 +122,94 @@ export const api = {
     auth.setCSRFToken(resp.csrf_token);
     return resp;
   },
+
+  // --- Sessions (M7) ---
+  listSessions: () =>
+    request<Session[]>('/sessions'),
+
+  revokeSession: (id: number) =>
+    request<void>(`/sessions/${id}`, { method: 'DELETE' }),
+
+  revokeAllOtherSessions: () =>
+    request<void>('/sessions', { method: 'DELETE' }),
+
+  // --- TOTP (M7) ---
+  beginTOTPEnrolment: () =>
+    request<TOTPEnrolmentBegin>('/me/totp', { method: 'POST', body: '{}' }),
+
+  confirmTOTPEnrolment: (code: string) =>
+    request<TOTPConfirmResponse>('/me/totp/confirm', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    }),
+
+  disableTOTP: (body: { code?: string; recovery_code?: string }) =>
+    request<void>('/me/totp', {
+      method: 'DELETE',
+      body: JSON.stringify(body),
+    }),
+
+  regenerateRecoveryCodes: (code: string) =>
+    request<TOTPConfirmResponse>('/me/totp/recovery-codes', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    }),
+
+  // --- Passkeys (M7) ---
+  beginPasskeyRegistration: () =>
+    request<unknown>('/me/passkeys/registration/begin', { method: 'POST', body: '{}' }),
+
+  finishPasskeyRegistration: (attestation: unknown, label: string) =>
+    request<Passkey>(`/me/passkeys/registration/finish?label=${encodeURIComponent(label)}`, {
+      method: 'POST',
+      body: JSON.stringify(attestation),
+    }),
+
+  listPasskeys: () =>
+    request<Passkey[]>('/me/passkeys'),
+
+  deletePasskey: (id: number) =>
+    request<void>(`/me/passkeys/${id}`, { method: 'DELETE' }),
+
+  // --- Passkey login (M7) ---
+  beginPasskeyLogin: () =>
+    request<{ session_id: number; options: unknown }>('/passkey-sessions/begin', {
+      method: 'POST',
+      body: '{}',
+    }),
+
+  finishPasskeyLogin: (sessionId: number, assertion: unknown) =>
+    fetch(BASE + '/passkey-sessions/finish', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: sessionId, assertion }),
+    }),
+
+  // --- Admin (M7) ---
+  listUsers: () =>
+    request<AdminUser[]>('/admin/users'),
+
+  createUser: (username: string, password: string, role: 'admin' | 'user') =>
+    request<AdminUser>('/admin/users', {
+      method: 'POST',
+      body: JSON.stringify({ username, password, role }),
+    }),
+
+  patchUser: (id: number, patch: { role?: string; disabled?: boolean }) =>
+    request<AdminUser>(`/admin/users/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
+
+  resetUserPassword: (id: number) =>
+    request<{ temporary_password: string }>(`/admin/users/${id}/password-reset`, {
+      method: 'POST',
+      body: '{}',
+    }),
+
+  disableUserTOTP: (id: number) =>
+    request<void>(`/admin/users/${id}/disable-totp`, { method: 'POST', body: '{}' }),
+
+  deleteUser: (id: number) =>
+    request<void>(`/admin/users/${id}`, { method: 'DELETE' }),
 };

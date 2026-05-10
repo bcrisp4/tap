@@ -10,10 +10,10 @@ import (
 )
 
 // ErrSubscriptionExists wraps the underlying SQLite UNIQUE-constraint failure
-// on subscriptions.feed_url. Use errors.Is(err, ErrSubscriptionExists) in
+// on (user_id, feed_url). Use errors.Is(err, ErrSubscriptionExists) in
 // callers to map the duplicate case to a 409 without coupling them to the
 // SQLite driver.
-var ErrSubscriptionExists = errors.New("subscription with this feed_url already exists")
+var ErrSubscriptionExists = errors.New("subscription with this feed_url already exists for this user")
 
 // velocityWindow is the rolling window over which entries/day is computed.
 // Used by QueryVelocity (time form) and UpdateAfterPoll's inline cutoff
@@ -22,6 +22,7 @@ const velocityWindow = 7 * 24 * time.Hour
 
 type Subscription struct {
 	ID              int64
+	UserID          int64
 	Title           string
 	FeedURL         string
 	SiteURL         sql.NullString
@@ -40,6 +41,7 @@ type Subscription struct {
 }
 
 type NewSubscription struct {
+	UserID        int64
 	Title         string
 	FeedURL       string
 	SiteURL       string
@@ -53,6 +55,7 @@ type NewSubscription struct {
 
 type DueSubscription struct {
 	ID              int64
+	UserID          int64
 	FeedURL         string
 	ETag            sql.NullString
 	LastModified    sql.NullString
@@ -69,16 +72,16 @@ type DueSubscription struct {
 func InsertSubscription(ctx context.Context, d *sql.DB, s NewSubscription) (int64, error) {
 	res, err := d.ExecContext(ctx, `
 		INSERT INTO subscriptions
-		    (title, feed_url, site_url, next_poll_at, created_at, extract,
+		    (user_id, title, feed_url, site_url, next_poll_at, created_at, extract,
 		     cookie, basic_auth_user, basic_auth_pass)
-		VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?)
-	`, s.Title, s.FeedURL, s.SiteURL, s.NextPoll, s.Created, boolToInt(s.Extract),
+		VALUES (?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?)
+	`, s.UserID, s.Title, s.FeedURL, s.SiteURL, s.NextPoll, s.Created, boolToInt(s.Extract),
 		s.Cookie, s.BasicAuthUser, s.BasicAuthPass)
 	if err != nil {
 		// modernc.org/sqlite reports unique violations through the standard
 		// SQLite error text. We match on substring rather than the typed
 		// driver error so the api package stays driver-agnostic.
-		if strings.Contains(err.Error(), "UNIQUE constraint failed: subscriptions.feed_url") {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed: subscriptions.user_id, subscriptions.feed_url") {
 			return 0, ErrSubscriptionExists
 		}
 		return 0, fmt.Errorf("insert subscription: %w", err)
@@ -86,15 +89,15 @@ func InsertSubscription(ctx context.Context, d *sql.DB, s NewSubscription) (int6
 	return res.LastInsertId()
 }
 
-func GetSubscription(ctx context.Context, d *sql.DB, id int64) (Subscription, error) {
+func GetSubscription(ctx context.Context, d *sql.DB, id, userID int64) (Subscription, error) {
 	var s Subscription
 	err := d.QueryRowContext(ctx, `
-		SELECT id, title, feed_url, site_url, last_poll_at, next_poll_at,
+		SELECT id, user_id, title, feed_url, site_url, last_poll_at, next_poll_at,
 		       etag, last_modified, error_count, last_error, created_at,
 		       extract, extract_selector,
 		       cookie, basic_auth_user, basic_auth_pass
-		FROM subscriptions WHERE id = ?
-	`, id).Scan(&s.ID, &s.Title, &s.FeedURL, &s.SiteURL, &s.LastPollAt, &s.NextPollAt,
+		FROM subscriptions WHERE id = ? AND user_id = ?
+	`, id, userID).Scan(&s.ID, &s.UserID, &s.Title, &s.FeedURL, &s.SiteURL, &s.LastPollAt, &s.NextPollAt,
 		&s.ETag, &s.LastModified, &s.ErrorCount, &s.LastError, &s.CreatedAt,
 		&s.Extract, &s.ExtractSelector,
 		&s.Cookie, &s.BasicAuthUser, &s.BasicAuthPass)
@@ -104,14 +107,14 @@ func GetSubscription(ctx context.Context, d *sql.DB, id int64) (Subscription, er
 	return s, nil
 }
 
-func ListSubscriptions(ctx context.Context, d *sql.DB) ([]Subscription, error) {
+func ListSubscriptions(ctx context.Context, d *sql.DB, userID int64) ([]Subscription, error) {
 	rows, err := d.QueryContext(ctx, `
-		SELECT id, title, feed_url, site_url, last_poll_at, next_poll_at,
+		SELECT id, user_id, title, feed_url, site_url, last_poll_at, next_poll_at,
 		       etag, last_modified, error_count, last_error, created_at,
 		       extract, extract_selector,
 		       cookie, basic_auth_user, basic_auth_pass
-		FROM subscriptions ORDER BY title COLLATE NOCASE
-	`)
+		FROM subscriptions WHERE user_id = ? ORDER BY title COLLATE NOCASE
+	`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("list subscriptions: %w", err)
 	}
@@ -120,7 +123,7 @@ func ListSubscriptions(ctx context.Context, d *sql.DB) ([]Subscription, error) {
 	var out []Subscription
 	for rows.Next() {
 		var s Subscription
-		if err := rows.Scan(&s.ID, &s.Title, &s.FeedURL, &s.SiteURL, &s.LastPollAt, &s.NextPollAt,
+		if err := rows.Scan(&s.ID, &s.UserID, &s.Title, &s.FeedURL, &s.SiteURL, &s.LastPollAt, &s.NextPollAt,
 			&s.ETag, &s.LastModified, &s.ErrorCount, &s.LastError, &s.CreatedAt,
 			&s.Extract, &s.ExtractSelector,
 			&s.Cookie, &s.BasicAuthUser, &s.BasicAuthPass); err != nil {
@@ -131,10 +134,17 @@ func ListSubscriptions(ctx context.Context, d *sql.DB) ([]Subscription, error) {
 	return out, rows.Err()
 }
 
-func DeleteSubscription(ctx context.Context, d *sql.DB, id int64) error {
-	_, err := d.ExecContext(ctx, "DELETE FROM subscriptions WHERE id = ?", id)
+func DeleteSubscription(ctx context.Context, d *sql.DB, id, userID int64) error {
+	res, err := d.ExecContext(ctx, "DELETE FROM subscriptions WHERE id = ? AND user_id = ?", id, userID)
 	if err != nil {
 		return fmt.Errorf("delete subscription %d: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if n == 0 {
+		return sql.ErrNoRows
 	}
 	return nil
 }
@@ -143,7 +153,7 @@ func DeleteSubscription(ctx context.Context, d *sql.DB, id int64) error {
 // The caller is responsible for excluding currently in-flight subscriptions.
 func ListDuePolls(ctx context.Context, d *sql.DB, now int64, limit int) ([]DueSubscription, error) {
 	rows, err := d.QueryContext(ctx, `
-		SELECT id, feed_url, etag, last_modified, error_count,
+		SELECT id, user_id, feed_url, etag, last_modified, error_count,
 		       extract, extract_selector,
 		       cookie, basic_auth_user, basic_auth_pass
 		FROM subscriptions
@@ -159,7 +169,7 @@ func ListDuePolls(ctx context.Context, d *sql.DB, now int64, limit int) ([]DueSu
 	var out []DueSubscription
 	for rows.Next() {
 		var s DueSubscription
-		if err := rows.Scan(&s.ID, &s.FeedURL, &s.ETag, &s.LastModified,
+		if err := rows.Scan(&s.ID, &s.UserID, &s.FeedURL, &s.ETag, &s.LastModified,
 			&s.ErrorCount, &s.Extract, &s.ExtractSelector,
 			&s.Cookie, &s.BasicAuthUser, &s.BasicAuthPass); err != nil {
 			return nil, fmt.Errorf("scan due poll: %w", err)
@@ -222,24 +232,15 @@ func QueryVelocity(ctx context.Context, d *sql.DB, subID int64, now time.Time) (
 
 // UpdateSubscriptionPatch sets extract + extract_selector + cookie +
 // basic_auth_user + basic_auth_pass on one row in a single atomic UPDATE.
-// Returns sql.ErrNoRows if no subscription with that id exists.
-//
-// All five columns are written unconditionally — the API layer is responsible
-// for layering merge-patch semantics over this (omitted = no change, empty =
-// clear) by reading the row first and substituting current values for any
-// fields the request did not specify.
-//
-// One UPDATE means a partial failure cannot leave the row half-updated, which
-// the predecessor pair (UpdateSubscriptionExtraction + UpdateSubscriptionCredentials)
-// could in principle do under SQLite I/O failure between the two writes.
-func UpdateSubscriptionPatch(ctx context.Context, d *sql.DB, id int64,
+// Returns sql.ErrNoRows if no subscription with that id and userID exists.
+func UpdateSubscriptionPatch(ctx context.Context, d *sql.DB, id, userID int64,
 	extract bool, selector, cookie, basicAuthUser, basicAuthPass string) error {
 	res, err := d.ExecContext(ctx, `
 		UPDATE subscriptions
 		SET extract = ?, extract_selector = ?, cookie = ?,
 		    basic_auth_user = ?, basic_auth_pass = ?
-		WHERE id = ?
-	`, boolToInt(extract), selector, cookie, basicAuthUser, basicAuthPass, id)
+		WHERE id = ? AND user_id = ?
+	`, boolToInt(extract), selector, cookie, basicAuthUser, basicAuthPass, id, userID)
 	if err != nil {
 		return fmt.Errorf("update subscription patch %d: %w", id, err)
 	}

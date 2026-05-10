@@ -91,14 +91,25 @@ The binary still defaults to `-addr 127.0.0.1:8080` as defence in depth
 (concept §6.11). The container variant binds `0.0.0.0:8080` because
 Docker port mapping requires it.
 
-**Multi-user note:** M6 establishes the user-account schema but does
-NOT yet enforce per-user data isolation on subscriptions and entries.
-With the M6 default deployment (one admin via env-var bootstrap), this
-gap is theoretical. **Do not create non-admin users via
-`tap admin create --role user` until M7 lands** — they will currently
-see the admin's subscriptions. M7 adds `user_id` columns + per-user
-query filters with the documented posture: every user, including admins,
-sees only their own feeds.
+**Authentication (M7).** TOTP (RFC 6238) is available as an optional
+second factor; users enrol from Settings → Security. Recovery codes
+(8 single-use codes, shown once at enrolment) allow disabling TOTP
+without admin involvement. Passkeys (WebAuthn discoverable credentials)
+are an alternative login method; a passkey login does not additionally
+prompt for TOTP. Active sessions are listed in Settings → Security with
+device and IP information; any session can be revoked individually or
+all at once. Admins can create users, reset passwords, and disable 2FA
+from the SPA user-management view (or from the CLI:
+`tap admin disable-totp <username>`). Each user's subscriptions and
+entries are isolated — no user (including admins) can see another
+user's feeds. TOTP secrets are AES-256-GCM encrypted at rest using a
+server key stored in the `configuration` table. The WebAuthn relying
+party ID and origin must be configured explicitly for non-loopback
+deployments (`--webauthn-rp-id`, `--webauthn-origin`).
+
+> **M7 is a breaking migration.** The schema migration adds `user_id NOT NULL`
+> to subscriptions and entries. Start with a fresh database when upgrading
+> from M6.
 
 ## Configuration knobs added by M4
 

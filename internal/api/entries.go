@@ -50,7 +50,13 @@ func toListItem(e db.Entry) entryListItemDTO {
 
 func registerEntryRoutes(m *http.ServeMux, d *sql.DB) {
 	m.HandleFunc("GET /api/v1/entries", func(w http.ResponseWriter, r *http.Request) {
+		u, ok := userFromContext(r.Context())
+		if !ok {
+			writeError(w, http.StatusUnauthorized, ErrCodeInvalidSession, "no session")
+			return
+		}
 		p := db.ListEntriesParams{
+			UserID:     u.ID,
 			UnreadOnly: r.URL.Query().Get("unread") == "1",
 		}
 		if v := r.URL.Query().Get("feed"); v != "" {
@@ -70,8 +76,6 @@ func registerEntryRoutes(m *http.ServeMux, d *sql.DB) {
 			p.Limit = n
 		}
 		if v := r.URL.Query().Get("cursor"); v != "" {
-			// Cursor format: "<published_at>_<id>". Opaque to callers — they
-			// just round-trip whatever next_cursor came back from the prior page.
 			parts := strings.SplitN(v, "_", 2)
 			if len(parts) != 2 {
 				writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "invalid cursor")
@@ -104,12 +108,17 @@ func registerEntryRoutes(m *http.ServeMux, d *sql.DB) {
 	})
 
 	m.HandleFunc("GET /api/v1/entries/{id}", func(w http.ResponseWriter, r *http.Request) {
+		u, ok := userFromContext(r.Context())
+		if !ok {
+			writeError(w, http.StatusUnauthorized, ErrCodeInvalidSession, "no session")
+			return
+		}
 		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "invalid id")
 			return
 		}
-		e, err := db.GetEntry(r.Context(), d, id)
+		e, err := db.GetEntry(r.Context(), d, id, u.ID)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				writeError(w, http.StatusNotFound, ErrCodeNotFound, "entry not found")
@@ -122,6 +131,11 @@ func registerEntryRoutes(m *http.ServeMux, d *sql.DB) {
 	})
 
 	m.HandleFunc("PATCH /api/v1/entries/{id}", func(w http.ResponseWriter, r *http.Request) {
+		u, ok := userFromContext(r.Context())
+		if !ok {
+			writeError(w, http.StatusUnauthorized, ErrCodeInvalidSession, "no session")
+			return
+		}
 		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "invalid id")
@@ -133,14 +147,19 @@ func registerEntryRoutes(m *http.ServeMux, d *sql.DB) {
 			Saved *bool `json:"saved"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			var mbe *http.MaxBytesError
+			if errors.As(err, &mbe) {
+				writeError(w, http.StatusRequestEntityTooLarge, ErrCodeBadRequest, "request body too large")
+				return
+			}
 			writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "invalid JSON body")
 			return
 		}
-		if err := db.UpdateEntry(r.Context(), d, id, db.EntryUpdate{Read: body.Read, Saved: body.Saved}); err != nil {
+		if err := db.UpdateEntry(r.Context(), d, id, u.ID, db.EntryUpdate{Read: body.Read, Saved: body.Saved}); err != nil {
 			writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())
 			return
 		}
-		e, err := db.GetEntry(r.Context(), d, id)
+		e, err := db.GetEntry(r.Context(), d, id, u.ID)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				writeError(w, http.StatusNotFound, ErrCodeNotFound, "entry not found")

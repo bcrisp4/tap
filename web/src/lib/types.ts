@@ -8,10 +8,8 @@ export type Subscription = {
   error_count: number;
   last_error?: string;
   created_at: number;
-  // M5 backfill — present on the wire since M5; the type was missing them.
   extract: boolean;
   extract_selector: string;
-  // M6.
   has_cookie: boolean;
   has_basic_auth: boolean;
 };
@@ -26,7 +24,6 @@ export type EntryListItem = {
   fetched_at: number;
   read: boolean;
   saved: boolean;
-  // M5 backfill.
   extract_failed: boolean;
 };
 
@@ -36,8 +33,6 @@ export type EntryDetail = EntryListItem & {
 
 export type ListResponse<T> = {
   data: T[];
-  // Opaque cursor string ("<published_at>_<id>"). Pass back to the next request
-  // as ?cursor=. Absent when there are no more pages.
   next_cursor?: string;
 };
 
@@ -45,11 +40,12 @@ export type ApiError = {
   error: { code: string; message: string };
 };
 
-// M6: auth types.
 export type User = {
   id: number;
   username: string;
   role: 'admin' | 'user';
+  has_totp: boolean;
+  passkey_count: number;
 };
 
 export type SessionResponse = {
@@ -60,3 +56,50 @@ export type SessionResponse = {
 export type PasswordChangeResponse = {
   csrf_token: string;
 };
+
+// M7: session listing
+export type Session = {
+  id: number;
+  created_at: number;
+  last_seen_at: number;
+  idle_expires_at: number;
+  user_agent: string;
+  address: string;
+  current: boolean;
+};
+
+// M7: TOTP enrolment
+export type TOTPEnrolmentBegin = {
+  secret_uri: string;
+  secret: string;
+};
+
+export type TOTPConfirmResponse = {
+  recovery_codes: string[];
+};
+
+// M7: passkeys
+export type Passkey = {
+  id: number;
+  label: string;
+  created_at: number;
+};
+
+// M7: admin user management
+export type AdminUser = {
+  id: number;
+  username: string;
+  role: 'admin' | 'user';
+  created_at: number;
+  disabled_at: number | null;
+  has_totp: boolean;
+  passkey_count: number;
+};
+
+// M7: TOTP login
+export type TOTPRequiredResponse = {
+  totp_required: true;
+  pending_token: string;
+};
+
+export type LoginResponse = SessionResponse | TOTPRequiredResponse;

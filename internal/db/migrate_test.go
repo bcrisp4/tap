@@ -17,22 +17,25 @@ func TestMigrate_AppliesAllMigrationsExactlyOnce(t *testing.T) {
 
 	require.NoError(t, Migrate(context.Background(), d))
 
-	// schema_migrations should have version 5 recorded
-	// (0001_initial + 0002_configuration + 0003_polling_discipline +
-	// 0004_extraction + 0005_auth_and_credentials).
+	// schema_migrations should have version 7 recorded (0001 through 0007).
 	var version int
 	require.NoError(t, d.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version))
-	require.Equal(t, 5, version)
+	require.Equal(t, 7, version)
 
 	// subscriptions table should exist (introduced in 0001).
-	_, err = d.Exec("INSERT INTO subscriptions (title, feed_url, next_poll_at, created_at) VALUES (?, ?, ?, ?)",
-		"x", "https://example.com/feed", 0, 0)
+	// user_id is NOT NULL after 0006, so we need a user first.
+	res, err := d.Exec("INSERT INTO users (username, password_hash, role, created_at) VALUES (?, ?, ?, ?)",
+		"testmig", "x", "admin", 0)
+	require.NoError(t, err)
+	uid, _ := res.LastInsertId()
+	_, err = d.Exec("INSERT INTO subscriptions (user_id, title, feed_url, next_poll_at, created_at) VALUES (?, ?, ?, ?, ?)",
+		uid, "x", "https://example.com/feed", 0, 0)
 	require.NoError(t, err)
 
 	// Re-running Migrate must be a no-op.
 	require.NoError(t, Migrate(context.Background(), d))
 	require.NoError(t, d.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version))
-	require.Equal(t, 5, version)
+	require.Equal(t, 7, version)
 }
 
 func TestMigrate_AddsAuthTables(t *testing.T) {
@@ -133,8 +136,67 @@ func TestMigrate_AddsExtractionColumns(t *testing.T) {
 		require.Equal(t, c.def, defaultVal.String, "%s.%s default", c.table, c.column)
 	}
 
-	// schema_migrations should be at the latest version (M6 added 0005).
+	// schema_migrations should be at the latest version (M7 added 0006 and 0007).
 	var version int
 	require.NoError(t, d.QueryRowContext(ctx, `SELECT MAX(version) FROM schema_migrations`).Scan(&version))
-	require.Equal(t, 5, version)
+	require.Equal(t, 7, version)
+}
+
+func TestMigrate_0006_UserDataIsolation(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	ctx := context.Background()
+
+	// Verify user_id FK is enforced: insert with non-existent user_id must fail.
+	_, err := d.ExecContext(ctx,
+		`INSERT INTO subscriptions (user_id, title, feed_url, next_poll_at, created_at)
+		 VALUES (999, 't', 'http://x.com/feed', 0, 0)`)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "FOREIGN KEY")
+
+	// Verify UNIQUE is now (user_id, feed_url).
+	res1, err := d.ExecContext(ctx,
+		`INSERT INTO users (username, password_hash, role, created_at) VALUES ('u1','h','admin',0)`)
+	require.NoError(t, err)
+	uid1, _ := res1.LastInsertId()
+	res2, err := d.ExecContext(ctx,
+		`INSERT INTO users (username, password_hash, role, created_at) VALUES ('u2','h','admin',0)`)
+	require.NoError(t, err)
+	uid2, _ := res2.LastInsertId()
+
+	_, err = d.ExecContext(ctx,
+		`INSERT INTO subscriptions (user_id, title, feed_url, next_poll_at, created_at)
+		 VALUES (?, 'Feed', 'http://shared.example/feed', 0, 0)`, uid1)
+	require.NoError(t, err, "first user should be able to subscribe")
+
+	_, err = d.ExecContext(ctx,
+		`INSERT INTO subscriptions (user_id, title, feed_url, next_poll_at, created_at)
+		 VALUES (?, 'Feed', 'http://shared.example/feed', 0, 0)`, uid2)
+	require.NoError(t, err, "second user must be able to subscribe to the same URL")
+
+	_, err = d.ExecContext(ctx,
+		`INSERT INTO subscriptions (user_id, title, feed_url, next_poll_at, created_at)
+		 VALUES (?, 'Feed', 'http://shared.example/feed', 0, 0)`, uid1)
+	require.Error(t, err, "same user subscribing to the same URL twice must fail")
+	require.Contains(t, err.Error(), "UNIQUE constraint failed")
+}
+
+func TestMigrate_0007_2FAAndPasskeys(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	ctx := context.Background()
+	// Verify sessions table has new columns
+	_, err := d.ExecContext(ctx,
+		`SELECT user_agent, address, webauthn_challenge FROM sessions LIMIT 1`)
+	require.NoError(t, err)
+	// Verify new tables exist
+	for _, tbl := range []string{"pending_logins", "totp_secrets", "recovery_codes", "passkeys"} {
+		_, err = d.ExecContext(ctx, `SELECT 1 FROM `+tbl+` LIMIT 1`)
+		require.NoError(t, err, "table %s should exist", tbl)
+	}
+	// sessions.user_id should be nullable
+	_, err = d.ExecContext(ctx,
+		`INSERT INTO sessions (user_id, token_hash, csrf_token, created_at, last_seen_at, idle_expires_at, absolute_expires_at)
+		 VALUES (NULL, 'testhash0007', 'csrf', 0, 0, 9999999999, 9999999999)`)
+	require.NoError(t, err, "sessions.user_id should be nullable for anonymous challenge sessions")
 }
