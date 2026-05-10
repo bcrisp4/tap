@@ -1,8 +1,6 @@
 import { writable } from 'svelte/store';
 import type { User, SessionResponse } from './types';
 
-/** ERR_UNAUTHORIZED is thrown when an API request returns 401, so callers can
- * distinguish credential failures from generic network or server errors. */
 export const ERR_UNAUTHORIZED = 'unauthorized';
 
 type State = {
@@ -51,18 +49,55 @@ export const auth = {
     }
   },
 
-  async login(username: string, password: string): Promise<void> {
+  async login(username: string, password: string): Promise<unknown> {
     const res = await fetch(BASE + '/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password }),
+    });
+    const body = await jsonOr401<SessionResponse & { totp_required?: boolean; pending_token?: string }>(res);
+    if (body.totp_required) {
+      // Return the TOTP-required shape without setting user state.
+      return body;
+    }
+    internal.set({ user: (body as SessionResponse).user, csrfToken: (body as SessionResponse).csrf_token, bootstrapped: true });
+    return body;
+  },
+
+  async loginWithTOTP(pendingToken: string, totpCode?: string, recoveryCode?: string): Promise<void> {
+    const res = await fetch(BASE + '/sessions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        pending_token: pendingToken,
+        ...(totpCode ? { totp_code: totpCode } : {}),
+        ...(recoveryCode ? { recovery_code: recoveryCode } : {}),
+      }),
+    });
+    const body: SessionResponse = await jsonOr401(res);
+    internal.set({ user: body.user, csrfToken: body.csrf_token, bootstrapped: true });
+  },
+
+  async beginPasskeyLogin(): Promise<{ session_id: number; options: unknown }> {
+    const res = await fetch(BASE + '/passkey-sessions/begin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    return jsonOr401(res);
+  },
+
+  async finishPasskeyLogin(sessionId: number, assertion: unknown): Promise<void> {
+    const res = await fetch(BASE + '/passkey-sessions/finish', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: sessionId, assertion }),
     });
     const body: SessionResponse = await jsonOr401(res);
     internal.set({ user: body.user, csrfToken: body.csrf_token, bootstrapped: true });
   },
 
   async logout(): Promise<void> {
-    // Pull the current csrf token without subscribing.
     let csrfToken: string | null = null;
     internal.update(s => { csrfToken = s.csrfToken; return s; });
     try {
@@ -71,24 +106,19 @@ export const auth = {
         headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : {},
       });
     } catch {
-      /* network errors during logout don't matter — clear local state regardless */
+      /* network errors during logout don't matter */
     }
     internal.set({ user: null, csrfToken: null, bootstrapped: true });
   },
 
-  /**
-   * setCSRFToken updates the in-memory CSRF token. Called by the API client
-   * after PATCH /me/password returns a freshly rotated token.
-   */
   setCSRFToken(token: string): void {
     internal.update(s => ({ ...s, csrfToken: token }));
   },
 
-  /**
-   * clearOn401 wipes auth state without making a network call. Used by the
-   * API client when any request returns 401 (e.g. session expired) so the
-   * SPA reactively renders the login screen.
-   */
+  setUser(user: User): void {
+    internal.update(s => ({ ...s, user }));
+  },
+
   clearOn401(): void {
     internal.set({ user: null, csrfToken: null, bootstrapped: true });
   },

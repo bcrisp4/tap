@@ -2,9 +2,13 @@ import { writable, type Readable } from 'svelte/store';
 
 type RouteState =
   | { name: 'unread' }
-  | { name: 'reader'; params: { id: number } };
+  | { name: 'reader'; params: { id: number } }
+  | { name: 'settings' }
+  | { name: 'admin' };
 
 function parse(pathname: string): RouteState {
+  if (pathname === '/settings') return { name: 'settings' };
+  if (pathname === '/admin') return { name: 'admin' };
   const m = pathname.match(/^\/entry\/(\d+)$/);
   if (m) return { name: 'reader', params: { id: Number(m[1]) } };
   return { name: 'unread' };
