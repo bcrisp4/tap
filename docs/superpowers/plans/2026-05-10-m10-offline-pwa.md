@@ -475,6 +475,8 @@ const pendingKey = (uid: number) => `tap:queue-pending:${uid}`;
 beforeEach(() => localStorage.clear());
 
 // Defer the real import until after we define the mocks.
+// vi.resetModules() on every beforeEach gives each test a fresh module instance,
+// which also resets the module-level `draining` flag — no separate reset helper needed.
 let offlineQueue: typeof import('../offlineQueue').offlineQueue;
 beforeEach(async () => {
   vi.resetModules();
@@ -1355,12 +1357,93 @@ git commit -m "M10: api.ts enqueues write mutations when offline or on network e
 
 ### Task 8: Update App.svelte — SW update banner, boot drain, online listener
 
+**Invoke:** `superpowers:test-driven-development` skill at start of this task.
+
 **Files:**
 - Modify: `web/src/App.svelte`
+- Modify: `web/src/views/__tests__/App.test.ts` (create if absent)
 
-This task has no unit tests (pure wiring / template). Verify with `pnpm --dir web run check` and manual inspection.
+- [ ] **Step 1: Write failing tests for App.svelte changes**
 
-- [ ] **Step 1: Replace App.svelte**
+Create `web/src/views/__tests__/App.test.ts`:
+
+```ts
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, fireEvent } from '@testing-library/svelte';
+import App from '../../App.svelte';
+import { auth } from '../../lib/auth';
+import { offlineQueue } from '../../lib/offlineQueue';
+import { warmCache } from '../../lib/warmCache';
+
+vi.mock('../../lib/auth', () => ({
+  auth: {
+    subscribe: vi.fn((cb: (s: unknown) => void) => {
+      cb({ user: null, csrfToken: null, bootstrapped: true });
+      return () => {};
+    }),
+    bootstrap: vi.fn().mockResolvedValue(undefined),
+  },
+}));
+vi.mock('../../lib/offlineQueue', () => ({
+  offlineQueue: { drain: vi.fn().mockResolvedValue(undefined) },
+}));
+vi.mock('../../lib/warmCache', () => ({
+  warmCache: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock('virtual:pwa-register/svelte', () => ({
+  useRegisterSW: () => ({
+    needRefresh: { subscribe: (cb: (v: boolean) => void) => { cb(false); return () => {}; } },
+    updateServiceWorker: vi.fn(),
+  }),
+}));
+
+describe('App — SW update banner', () => {
+  it('renders update banner when needRefresh is true', async () => {
+    vi.mock('virtual:pwa-register/svelte', () => ({
+      useRegisterSW: () => ({
+        needRefresh: { subscribe: (cb: (v: boolean) => void) => { cb(true); return () => {}; } },
+        updateServiceWorker: vi.fn(),
+      }),
+    }));
+    vi.resetModules();
+    const AppFresh = (await import('../../App.svelte')).default;
+    const { getByText } = render(AppFresh);
+    expect(getByText(/Update available/i)).toBeTruthy();
+  });
+
+  it('does not render update banner when needRefresh is false', () => {
+    const { queryByText } = render(App);
+    expect(queryByText(/Update available/i)).toBeNull();
+  });
+});
+
+describe('App — online event triggers drain and warmCache', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('calls drain and warmCache when online event fires with authenticated user', async () => {
+    vi.mocked(auth.subscribe).mockImplementation((cb: (s: unknown) => void) => {
+      cb({ user: { id: 5, username: 'ben', role: 'admin' }, csrfToken: 'tok', bootstrapped: true });
+      return () => {};
+    });
+    render(App);
+    // Simulate online event.
+    fireEvent(window, new Event('online'));
+    await vi.runAllTimersAsync();
+    expect(offlineQueue.drain).toHaveBeenCalledWith(5);
+    expect(warmCache).toHaveBeenCalledWith(5);
+  });
+});
+```
+
+- [ ] **Step 2: Run tests to confirm they fail**
+
+```bash
+pnpm --dir web test -- src/views/__tests__/App.test.ts
+```
+
+Expected: FAIL — `App.svelte` does not yet import `useRegisterSW` or render the banner.
+
+- [ ] **Step 3: Replace App.svelte**
 
 ```svelte
 <script lang="ts">
@@ -1458,7 +1541,15 @@ This task has no unit tests (pure wiring / template). Verify with `pnpm --dir we
 </style>
 ```
 
-- [ ] **Step 2: TypeScript check**
+- [ ] **Step 4: Run App.svelte tests to confirm they pass**
+
+```bash
+pnpm --dir web test -- src/views/__tests__/App.test.ts
+```
+
+Expected: both banner tests and the online-event test pass.
+
+- [ ] **Step 5: TypeScript check**
 
 ```bash
 pnpm --dir web run check
@@ -1477,7 +1568,7 @@ declare module 'virtual:pwa-register/svelte' {
 }
 ```
 
-- [ ] **Step 3: Build to confirm no errors**
+- [ ] **Step 6: Build to confirm no errors**
 
 ```bash
 pnpm --dir web build
@@ -1485,11 +1576,11 @@ pnpm --dir web build
 
 Expected: builds successfully; `web/dist` contains `sw.js`, `manifest.webmanifest`, `icons/`.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add web/src/App.svelte web/src/vite-env.d.ts
-git commit -m "M10: App.svelte wires SW update banner, boot drain, online listener"
+git add web/src/App.svelte web/src/vite-env.d.ts web/src/views/__tests__/App.test.ts
+git commit -m "M10: App.svelte wires SW update banner, boot drain, online listener (TDD)"
 ```
 
 ---
