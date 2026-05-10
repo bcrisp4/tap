@@ -25,6 +25,14 @@ const (
 	CookieSecureFalse
 )
 
+// ResolveCookieSecure is the exported wrapper used by cmd/tap to resolve
+// the --cookie-secure flag once at startup. The actual logic lives in
+// resolveCookieSecure (kept lowercase so the package's middleware tests
+// can call it directly without changing).
+func ResolveCookieSecure(mode CookieSecureMode, addr string) bool {
+	return resolveCookieSecure(mode, addr)
+}
+
 // resolveCookieSecure decides whether to set the Secure attribute on the
 // session cookie. In auto mode, it inspects the listen address: bound to
 // 127.0.0.0/8, ::1, or "localhost" → Secure off; anything else → Secure on.
