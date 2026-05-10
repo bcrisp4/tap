@@ -119,3 +119,94 @@ func CountUsers(ctx context.Context, d *sql.DB) (int, error) {
 	}
 	return n, nil
 }
+
+// ListUsers returns all users ordered by username. Used by the admin panel.
+func ListUsers(ctx context.Context, d *sql.DB) ([]User, error) {
+	rows, err := d.QueryContext(ctx, `
+		SELECT id, username, password_hash, role, created_at, disabled_at
+		FROM users ORDER BY username COLLATE NOCASE`)
+	if err != nil {
+		return nil, fmt.Errorf("list users: %w", err)
+	}
+	defer rows.Close()
+	var out []User
+	for rows.Next() {
+		var u User
+		if err := rows.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.CreatedAt, &u.DisabledAt); err != nil {
+			return nil, fmt.Errorf("scan user: %w", err)
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// DeleteUser permanently deletes a user and cascades to sessions, subscriptions,
+// entries, passkeys, totp_secrets, recovery_codes.
+func DeleteUser(ctx context.Context, d *sql.DB, id int64) error {
+	res, err := d.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("delete user: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// EnableUser clears disabled_at, re-enabling a previously disabled user.
+func EnableUser(ctx context.Context, d *sql.DB, id int64) error {
+	res, err := d.ExecContext(ctx, `UPDATE users SET disabled_at = NULL WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("enable user: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// UpdateUserRole updates a user's role.
+func UpdateUserRole(ctx context.Context, d *sql.DB, id int64, role string) error {
+	res, err := d.ExecContext(ctx, `UPDATE users SET role = ? WHERE id = ?`, role, id)
+	if err != nil {
+		return fmt.Errorf("update user role: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// GetUserTOTPStatus returns whether the user has a TOTP secret and whether it is confirmed.
+func GetUserTOTPStatus(ctx context.Context, d *sql.DB, userID int64) (hasTOTP, confirmed bool, err error) {
+	err = d.QueryRowContext(ctx,
+		`SELECT confirmed FROM totp_secrets WHERE user_id = ?`, userID).Scan(&confirmed)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, false, nil
+		}
+		return false, false, fmt.Errorf("get user totp status: %w", err)
+	}
+	return true, confirmed, nil
+}
+
+// GetUserPasskeyCount returns the number of passkeys registered for a user.
+func GetUserPasskeyCount(ctx context.Context, d *sql.DB, userID int64) (int, error) {
+	var n int
+	if err := d.QueryRowContext(ctx, `SELECT COUNT(*) FROM passkeys WHERE user_id = ?`, userID).Scan(&n); err != nil {
+		return 0, fmt.Errorf("get user passkey count: %w", err)
+	}
+	return n, nil
+}
