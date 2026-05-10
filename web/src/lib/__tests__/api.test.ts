@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+// Mock offlineQueue so auth.ts (imported transitively) doesn't need a real implementation.
+vi.mock('../offlineQueue', () => ({
+  offlineQueue: { clearForUser: vi.fn(), enqueue: vi.fn(), drain: vi.fn() },
+}));
+
 // We mock globalThis.fetch to avoid real network calls.
 const mockFetch = vi.fn();
 beforeEach(() => {
@@ -286,5 +291,64 @@ describe('api client (M6 auth integration)', () => {
 
     const { get } = await import('svelte/store');
     expect(get(auth).csrfToken).toBe('new');
+  });
+});
+
+describe('api.request — offline enqueue', () => {
+  it('enqueues PATCH mutation when navigator.onLine is false', async () => {
+    const { offlineQueue } = await import('../offlineQueue');
+    const enqueueSpy = vi.spyOn(offlineQueue, 'enqueue');
+
+    // Bootstrap with a user first.
+    mockFetch.mockResolvedValueOnce(new Response(
+      JSON.stringify({ user: { id: 3, username: 'u', role: 'user' }, csrf_token: 'tok' }),
+      { status: 200 },
+    ));
+    vi.resetModules();
+    const { api, auth } = await loadApi();
+    await auth.login('u', 'pw');
+
+    Object.defineProperty(navigator, 'onLine', { value: false, configurable: true });
+    await api.patchEntry(42, { read: true });
+    Object.defineProperty(navigator, 'onLine', { value: true, configurable: true });
+
+    expect(enqueueSpy).toHaveBeenCalledWith(3, expect.objectContaining({
+      method: 'PATCH',
+      path: '/entries/42',
+    }));
+  });
+
+  it('enqueues mutation on network TypeError', async () => {
+    const { offlineQueue } = await import('../offlineQueue');
+    const enqueueSpy = vi.spyOn(offlineQueue, 'enqueue');
+
+    vi.resetModules();
+    const { api, auth } = await loadApi();
+
+    // Login.
+    mockFetch.mockResolvedValueOnce(new Response(
+      JSON.stringify({ user: { id: 3, username: 'u', role: 'user' }, csrf_token: 'tok' }),
+      { status: 200 },
+    ));
+    await auth.login('u', 'pw');
+
+    // Mutation call throws TypeError.
+    mockFetch.mockRejectedValueOnce(new TypeError('network error'));
+    await api.patchEntry(42, { read: true });
+
+    expect(enqueueSpy).toHaveBeenCalled();
+  });
+
+  it('does NOT enqueue GET requests', async () => {
+    const { offlineQueue } = await import('../offlineQueue');
+    const enqueueSpy = vi.spyOn(offlineQueue, 'enqueue');
+
+    Object.defineProperty(navigator, 'onLine', { value: false, configurable: true });
+    mockFetch.mockRejectedValue(new TypeError('network error'));
+    const { api } = await import('../api');
+    await expect(api.getEntry(1)).rejects.toThrow();
+    Object.defineProperty(navigator, 'onLine', { value: true, configurable: true });
+
+    expect(enqueueSpy).not.toHaveBeenCalled();
   });
 });

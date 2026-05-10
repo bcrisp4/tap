@@ -16,24 +16,44 @@ import type {
   OPMLImportResult,
 } from './types';
 import { auth, ERR_UNAUTHORIZED } from './auth';
+import { offlineQueue } from './offlineQueue';
 
 const BASE = '/api/v1';
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const method = (init.method ?? 'GET').toUpperCase();
+  const isWriteMethod = method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS';
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...((init.headers ?? {}) as Record<string, string>),
   };
 
-  if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
-    const csrf = get(auth).csrfToken;
-    if (csrf) {
-      headers['X-CSRF-Token'] = csrf;
-    }
+  const authState = get(auth);
+  if (isWriteMethod && authState.csrfToken) {
+    headers['X-CSRF-Token'] = authState.csrfToken;
   }
 
-  const res = await fetch(BASE + path, { ...init, headers });
+  function queueAndReturn(): T {
+    if (authState.user) {
+      offlineQueue.enqueue(authState.user.id, {
+        method,
+        path,
+        body: init.body ? JSON.parse(init.body as string) : undefined,
+        csrfToken: authState.csrfToken ?? '',
+      });
+    }
+    return undefined as T;
+  }
+
+  if (isWriteMethod && !navigator.onLine) return queueAndReturn();
+
+  let res: Response;
+  try {
+    res = await fetch(BASE + path, { ...init, headers });
+  } catch (err) {
+    if (isWriteMethod && err instanceof TypeError) return queueAndReturn();
+    throw err;
+  }
 
   if (res.status === 401) {
     let detail: ApiError | null = null;

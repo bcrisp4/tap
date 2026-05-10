@@ -1,9 +1,13 @@
 <script lang="ts">
   import { onMount, setContext } from 'svelte';
+  import { get } from 'svelte/store';
   import { route, navigate } from './lib/router';
   import { auth } from './lib/auth';
+  import { offlineQueue } from './lib/offlineQueue';
+  import { warmCache } from './lib/warmCache';
   import { theme, font, density } from './lib/preferences.svelte';
   import { buildHandler } from './lib/keyboard';
+  import { useRegisterSW } from 'virtual:pwa-register/svelte';
   import Login from './views/Login.svelte';
   import Unread from './views/Unread.svelte';
   import Reader from './views/Reader.svelte';
@@ -14,6 +18,8 @@
   import Admin from './views/Admin.svelte';
   import HotkeysModal from './components/HotkeysModal.svelte';
   import TabBar from './components/TabBar.svelte';
+
+  const { needRefresh, updateServiceWorker } = useRegisterSW();
 
   let hotkeysOpen = $state(false);
   let isMobile = $state(
@@ -41,13 +47,31 @@
   });
 
   onMount(() => {
-    void auth.bootstrap();
+    void auth.bootstrap().then(() => {
+      const user = get(auth).user;
+      if (user) {
+        void offlineQueue.drain(user.id);
+        setTimeout(() => { void warmCache(user.id); }, 2000);
+      }
+    });
 
     const mq768 = window.matchMedia('(max-width: 768px)');
     const onResize = (e: MediaQueryListEvent) => { isMobile = e.matches; };
     mq768.addEventListener('change', onResize);
 
-    return () => mq768.removeEventListener('change', onResize);
+    const handleOnline = async () => {
+      const user = get(auth).user;
+      if (user) {
+        await offlineQueue.drain(user.id);
+        void warmCache(user.id);
+      }
+    };
+    window.addEventListener('online', handleOnline);
+
+    return () => {
+      mq768.removeEventListener('change', onResize);
+      window.removeEventListener('online', handleOnline);
+    };
   });
 
   $effect(() => {
@@ -80,6 +104,13 @@
   }
   keyHandler(e);
 }} />
+
+{#if $needRefresh}
+  <div class="sw-update-banner">
+    Update available —
+    <button onclick={() => updateServiceWorker(true)}>Reload</button>
+  </div>
+{/if}
 
 <HotkeysModal open={hotkeysOpen} onClose={() => { hotkeysOpen = false; }} />
 
@@ -114,4 +145,27 @@
 
 <style>
   :global(.app-shell) { display: flex; flex-direction: column; height: 100vh; }
+
+  .sw-update-banner {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 9999;
+    background: var(--accent, #002FA7);
+    color: #fff;
+    padding: 0.5rem 1rem;
+    font-size: 0.875rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+  }
+  .sw-update-banner button {
+    background: rgba(255,255,255,0.2);
+    border: 1px solid rgba(255,255,255,0.5);
+    color: #fff;
+    padding: 0.25rem 0.75rem;
+    border-radius: 4px;
+    cursor: pointer;
+  }
 </style>
