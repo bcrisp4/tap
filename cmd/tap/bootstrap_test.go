@@ -50,3 +50,26 @@ func TestBootstrapAdminRejectsTooShortPassword(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 0, n, "no user should be created on validation failure")
 }
+
+// TestBootstrapAdminRejectsWhitespaceUsername guards against the footgun
+// where TAP_ADMIN_USERNAME=" " would pass main.go's user!="" check and then
+// produce an unloggable account: login trims the input and would never
+// match an all-whitespace stored username. Empty-after-trim must abort.
+func TestBootstrapAdminRejectsWhitespaceUsername(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	d, err := db.Open(context.Background(), filepath.Join(dir, "tap.db"))
+	require.NoError(t, err)
+	require.NoError(t, db.Migrate(context.Background(), d))
+	defer d.Close()
+
+	cases := []string{"", "   ", "\t\n"}
+	for _, u := range cases {
+		err := bootstrapAdmin(context.Background(), d, u, "validpassword", testHashParams)
+		require.Error(t, err, "username=%q should be rejected", u)
+	}
+
+	n, err := db.CountUsers(context.Background(), d)
+	require.NoError(t, err)
+	require.Equal(t, 0, n, "no user should be created when username is empty after trim")
+}

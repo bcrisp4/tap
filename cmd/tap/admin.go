@@ -267,11 +267,18 @@ func runAdminPasswd(args []string, stdin io.Reader, stdout, stderr io.Writer, ha
 }
 
 // bootstrapAdmin creates an admin user from the supplied credentials. Used
-// by the env-var first-launch shortcut after migrations. Validates the
-// password (so a too-short bootstrap password aborts loudly rather than
-// producing an unusable account) and inserts the user atomically. The
-// caller already emits an INFO log on success, so this helper stays quiet.
+// by the env-var first-launch shortcut after migrations. Trims the username
+// and rejects empty-after-trim (TAP_ADMIN_USERNAME=" " would otherwise
+// produce an unloggable account: login trims the input and would fail to
+// match an empty stored username). Validates the password so a too-short
+// bootstrap password aborts loudly rather than producing an unusable
+// account. The caller already emits an INFO log on success, so this helper
+// stays quiet.
 func bootstrapAdmin(ctx context.Context, d *sql.DB, username, password string, hashParams auth.Params) error {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return errors.New("bootstrap username is empty after trimming whitespace")
+	}
 	if err := auth.ValidatePassword(password); err != nil {
 		return err
 	}
