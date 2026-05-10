@@ -58,3 +58,64 @@ func GetUserByUsername(ctx context.Context, d *sql.DB, username string) (User, e
 	}
 	return u, nil
 }
+
+// GetUserByID returns the user with the given primary-key id. Returns
+// sql.ErrNoRows if no such user.
+func GetUserByID(ctx context.Context, d *sql.DB, id int64) (User, error) {
+	var u User
+	err := d.QueryRowContext(ctx, `
+		SELECT id, username, password_hash, role, created_at, disabled_at
+		FROM users WHERE id = ?
+	`, id).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.CreatedAt, &u.DisabledAt)
+	if err != nil {
+		return User{}, err
+	}
+	return u, nil
+}
+
+// UpdatePasswordHash overwrites the password_hash on a user. The caller is
+// responsible for any session-invalidation policy (PATCH /me/password
+// keeps the current session and deletes others; tap admin passwd deletes
+// every session for the user).
+func UpdatePasswordHash(ctx context.Context, d *sql.DB, id int64, hash string) error {
+	res, err := d.ExecContext(ctx, `UPDATE users SET password_hash = ? WHERE id = ?`, hash, id)
+	if err != nil {
+		return fmt.Errorf("update password hash: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// DisableUser sets disabled_at on a user. The login path checks this column
+// and rejects login for disabled accounts; existing sessions remain valid
+// until they expire (M7 closes that gap with the admin-reset path).
+func DisableUser(ctx context.Context, d *sql.DB, id, disabledAt int64) error {
+	res, err := d.ExecContext(ctx, `UPDATE users SET disabled_at = ? WHERE id = ?`, disabledAt, id)
+	if err != nil {
+		return fmt.Errorf("disable user: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// CountUsers returns the number of rows in the users table. Used by the
+// env-var bootstrap path to decide whether to create the first admin.
+func CountUsers(ctx context.Context, d *sql.DB) (int, error) {
+	var n int
+	if err := d.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count users: %w", err)
+	}
+	return n, nil
+}
