@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -386,4 +387,123 @@ func TestE2E_PerHostInflightSerialises(t *testing.T) {
 	wg.Wait()
 
 	require.Equal(t, int32(1), maxObserved.Load(), "PerHostInflight=1 should serialise")
+}
+
+func TestEndToEnd_ExtractRoundtrip(t *testing.T) {
+	t.Parallel()
+
+	// Origin serves both the feed and the article HTML on different paths.
+	const article = `<!doctype html><html><head><title>Hi</title></head>
+<body><header>NAV</header><main><article>
+<h1>Real headline</h1>
+<p>Substantial article body that Readability can pick out as the
+dominant content tree. Enough text here to trip the heuristic.</p>
+<p>Second paragraph for ballast — Readability needs roughly two or
+three real paragraphs to score the article subtree as the winner.</p>
+<p>Third paragraph because the scorer is conservative.</p>
+</article></main><footer>FOOT</footer></body></html>`
+
+	var origin *httptest.Server
+	originHandler := func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/feed" {
+			w.Header().Set("Content-Type", "application/atom+xml")
+			fmt.Fprintf(w, `<?xml version="1.0"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+<title>e2e</title><id>urn:e2e</id>
+<entry><title>One</title><id>urn:e2e:1</id>
+<link href="%s/article/1"/>
+<updated>2026-05-01T00:00:00Z</updated>
+<content type="html">&lt;p&gt;teaser&lt;/p&gt;</content>
+</entry></feed>`, origin.URL)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(article))
+	}
+	origin = httptest.NewServer(http.HandlerFunc(originHandler))
+	t.Cleanup(origin.Close)
+
+	d, err := db.Open(context.Background(), ":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = d.Close() })
+	require.NoError(t, db.Migrate(context.Background(), d))
+
+	// Default httpx client is fine for the test origin (httptest binds to
+	// 127.0.0.1, which the SSRF guard rejects by default — so build a no-SSRF
+	// client for the test).
+	noSSRFClient, err := buildTestClient(t)
+	require.NoError(t, err)
+
+	mux := api.NewMux(d, api.MuxOpts{})
+
+	// Subscribe with extract=true.
+	subID := postSubE2E(t, mux, fmt.Sprintf(`{"feed_url":"%s/feed","extract":true}`, origin.URL))
+
+	// Drive the scheduler with the no-SSRF client.
+	sched := poll.NewScheduler(context.Background(), d, noSSRFClient, poll.SchedulerOpts{
+		Workers:   1,
+		Processor: processor.New(sanitise.DefaultPolicy(), nil),
+	})
+	defer sched.Stop()
+	sched.Tick(context.Background())
+	require.NoError(t, sched.Wait(10*time.Second))
+
+	// GET the entry and assert the extracted body, not the teaser, is stored.
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/v1/entries", nil))
+	require.Equal(t, http.StatusOK, rr.Code)
+	var resp struct {
+		Data []map[string]any `json:"data"`
+	}
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+	require.Len(t, resp.Data, 1)
+	require.Equal(t, "One", resp.Data[0]["title"])
+
+	entryID := int64(resp.Data[0]["id"].(float64))
+	rr2 := httptest.NewRecorder()
+	mux.ServeHTTP(rr2, httptest.NewRequest(http.MethodGet,
+		"/api/v1/entries/"+strconv.FormatInt(entryID, 10), nil))
+	require.Equal(t, http.StatusOK, rr2.Code)
+	var detail struct {
+		Content       string `json:"content"`
+		ExtractFailed bool   `json:"extract_failed"`
+	}
+	require.NoError(t, json.NewDecoder(rr2.Body).Decode(&detail))
+	require.False(t, detail.ExtractFailed)
+	require.Contains(t, detail.Content, "Substantial article body", "extracted content must reach storage")
+	require.NotContains(t, detail.Content, "teaser", "feed-provided summary must be replaced")
+	require.NotContains(t, detail.Content, "FOOT", "footer must be dropped by Readability")
+
+	_ = subID
+}
+
+// buildTestClient returns a client whose SSRF policy allows localhost so the
+// test origin (bound to 127.0.0.1 by httptest) is reachable.
+func buildTestClient(t *testing.T) (*http.Client, error) {
+	t.Helper()
+	pol, err := httpx.ParseSSRFPolicy(false, []string{"127.0.0.1/32"})
+	if err != nil {
+		return nil, err
+	}
+	return httpx.NewClient(httpx.Opts{
+		Timeout:         10 * time.Second,
+		PerHostInflight: 4,
+		SSRF:            pol,
+		UserAgent:       "tap-test/0.1",
+	}), nil
+}
+
+// postSubE2E creates a subscription via POST and returns its id.
+func postSubE2E(t *testing.T, mux http.Handler, body string) int64 {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/subscriptions", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusCreated, rr.Code, rr.Body.String())
+	var got struct {
+		ID int64 `json:"id"`
+	}
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&got))
+	return got.ID
 }
