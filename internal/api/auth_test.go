@@ -187,3 +187,107 @@ func TestLogoutDeletesSessionAndClearsCookie(t *testing.T) {
 	}
 	require.True(t, cleared, "tap_session should be cleared")
 }
+
+func TestPasswordChangeHappyPath(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	uid := seedUser(t, d, "ben", "old-password-12", "admin")
+
+	currentSID, err := db.InsertSession(context.Background(), d, db.NewSession{
+		UserID: uid, TokenHash: "current", CSRFToken: "old-csrf",
+		CreatedAt: 0, LastSeenAt: 0, IdleExpiresAt: 1, AbsoluteExpiresAt: 1,
+	})
+	require.NoError(t, err)
+	otherSID, err := db.InsertSession(context.Background(), d, db.NewSession{
+		UserID: uid, TokenHash: "other", CSRFToken: "x",
+		CreatedAt: 0, LastSeenAt: 0, IdleExpiresAt: 1, AbsoluteExpiresAt: 1,
+	})
+	require.NoError(t, err)
+
+	deps := authDeps{d: d}
+	currentSession := db.Session{ID: currentSID, UserID: uid, CSRFToken: "old-csrf"}
+	currentUser := db.User{ID: uid, Username: "ben", Role: "admin"}
+	// Pre-load password hash by re-reading the user.
+	full, err := db.GetUserByID(context.Background(), d, uid)
+	require.NoError(t, err)
+	currentUser.PasswordHash = full.PasswordHash
+
+	h := withFakeAuth(t, currentUser, currentSession, passwordChangeHandler(deps, testHashParams))
+
+	body, _ := json.Marshal(passwordChangeRequest{
+		CurrentPassword: "old-password-12",
+		NewPassword:     "new-password-34",
+	})
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/me/password", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+
+	var resp passwordChangeResponse
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+	require.NotEmpty(t, resp.CSRFToken)
+	require.NotEqual(t, "old-csrf", resp.CSRFToken)
+
+	// New password verifies; old password no longer does.
+	updated, err := db.GetUserByID(context.Background(), d, uid)
+	require.NoError(t, err)
+	ok, err := auth.Verify(updated.PasswordHash, "new-password-34")
+	require.NoError(t, err)
+	require.True(t, ok)
+	ok, err = auth.Verify(updated.PasswordHash, "old-password-12")
+	require.NoError(t, err)
+	require.False(t, ok)
+
+	// Current session retained; other session deleted.
+	_, err = db.GetSessionByTokenHash(context.Background(), d, "current")
+	require.NoError(t, err)
+	_, err = db.GetSessionByTokenHash(context.Background(), d, "other")
+	require.Error(t, err)
+	_ = otherSID
+}
+
+func TestPasswordChangeWrongCurrent(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	uid := seedUser(t, d, "ben", "old-password-12", "admin")
+	full, _ := db.GetUserByID(context.Background(), d, uid)
+
+	deps := authDeps{d: d}
+	h := withFakeAuth(t,
+		db.User{ID: uid, Username: "ben", Role: "admin", PasswordHash: full.PasswordHash},
+		db.Session{ID: 1, UserID: uid, CSRFToken: "c"},
+		passwordChangeHandler(deps, testHashParams))
+
+	body, _ := json.Marshal(passwordChangeRequest{
+		CurrentPassword: "wrong",
+		NewPassword:     "new-password-34",
+	})
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/me/password", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusUnauthorized, rr.Code)
+	require.Contains(t, rr.Body.String(), `"code":"invalid_credentials"`)
+}
+
+func TestPasswordChangeTooShortNew(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	uid := seedUser(t, d, "ben", "old-password-12", "admin")
+	full, _ := db.GetUserByID(context.Background(), d, uid)
+
+	deps := authDeps{d: d}
+	h := withFakeAuth(t,
+		db.User{ID: uid, Username: "ben", Role: "admin", PasswordHash: full.PasswordHash},
+		db.Session{ID: 1, UserID: uid, CSRFToken: "c"},
+		passwordChangeHandler(deps, testHashParams))
+
+	body, _ := json.Marshal(passwordChangeRequest{
+		CurrentPassword: "old-password-12",
+		NewPassword:     "short",
+	})
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/me/password", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusBadRequest, rr.Code)
+	require.Contains(t, rr.Body.String(), `"code":"password_too_short"`)
+}

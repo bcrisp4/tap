@@ -211,3 +211,66 @@ func logoutHandler(dep authDeps) http.Handler {
 		w.WriteHeader(http.StatusNoContent)
 	})
 }
+
+// passwordChangeHandler returns PATCH /api/v1/me/password. Authenticated;
+// CSRF required (middleware enforces). Verifies current_password, validates
+// new_password, hashes + updates, deletes other sessions for the user
+// (keeps current), rotates the current session's CSRF token, returns
+// the new csrf_token.
+//
+// hashParams is exposed so tests can inject testHashParams; production
+// passes auth.DefaultParams.
+func passwordChangeHandler(dep authDeps, hashParams auth.Params) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		u, ok := userFromContext(r.Context())
+		if !ok {
+			writeError(w, http.StatusUnauthorized, ErrCodeInvalidSession, "no session")
+			return
+		}
+		s, ok := sessionFromContext(r.Context())
+		if !ok {
+			writeError(w, http.StatusUnauthorized, ErrCodeInvalidSession, "no session")
+			return
+		}
+
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		var body passwordChangeRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "invalid JSON body")
+			return
+		}
+
+		ok, err := auth.Verify(u.PasswordHash, body.CurrentPassword)
+		if err != nil || !ok {
+			writeError(w, http.StatusUnauthorized, ErrCodeInvalidCredentials, "current password incorrect")
+			return
+		}
+		if err := auth.ValidatePassword(body.NewPassword); err != nil {
+			writeError(w, http.StatusBadRequest, ErrCodePasswordTooShort, "new password too short")
+			return
+		}
+		newHash, err := auth.Hash(body.NewPassword, hashParams)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())
+			return
+		}
+		if err := db.UpdatePasswordHash(r.Context(), dep.d, u.ID, newHash); err != nil {
+			writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())
+			return
+		}
+		if err := db.DeleteOtherSessionsForUser(r.Context(), dep.d, u.ID, s.ID); err != nil {
+			writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())
+			return
+		}
+		newCSRF, err := auth.MintCSRFToken()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())
+			return
+		}
+		if err := db.UpdateSessionCSRFToken(r.Context(), dep.d, s.ID, newCSRF); err != nil {
+			writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, passwordChangeResponse{CSRFToken: newCSRF})
+	})
+}
