@@ -73,13 +73,12 @@ func GetSessionByID(ctx context.Context, d *sql.DB, id int64) (Session, error) {
 		SELECT id, user_id, token_hash, csrf_token, created_at, last_seen_at,
 		       idle_expires_at, absolute_expires_at, user_agent, address, webauthn_challenge
 		FROM sessions WHERE id = ?
-	`, id).Scan(&id, &userID, &s.TokenHash, &s.CSRFToken,
+	`, id).Scan(&s.ID, &userID, &s.TokenHash, &s.CSRFToken,
 		&s.CreatedAt, &s.LastSeenAt, &s.IdleExpiresAt, &s.AbsoluteExpiresAt,
 		&s.UserAgent, &s.Address, &s.WebAuthnChallenge)
 	if err != nil {
 		return Session{}, err
 	}
-	s.ID = id
 	if userID.Valid {
 		s.UserID = userID.Int64
 	}
