@@ -144,3 +144,122 @@ func TestRequireSessionRejectsExpiredAndDeletes(t *testing.T) {
 	require.Error(t, err) // sql.ErrNoRows
 	_ = sid
 }
+
+// withSession builds a handler chain that fakes session injection without
+// going through requireSession (so requireCSRF can be tested in isolation).
+func withSession(t *testing.T, csrfToken string, next http.Handler) http.Handler {
+	t.Helper()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s := db.Session{ID: 1, UserID: 1, CSRFToken: csrfToken}
+		ctx := context.WithValue(r.Context(), ctxKeySession, s)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func TestRequireCSRFPassesGET(t *testing.T) {
+	t.Parallel()
+	called := false
+	h := withSession(t, "tok", requireCSRF()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusNoContent)
+	})))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/", nil))
+	require.Equal(t, http.StatusNoContent, rr.Code)
+	require.True(t, called)
+}
+
+func TestRequireCSRFRejectsMissingToken(t *testing.T) {
+	t.Parallel()
+	h := withSession(t, "tok", requireCSRF()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("handler should not run")
+	})))
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	req.Host = "tap.example"
+	req.Header.Set("Origin", "https://tap.example")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusForbidden, rr.Code)
+	require.Contains(t, rr.Body.String(), `"code":"csrf_invalid"`)
+}
+
+func TestRequireCSRFRejectsWrongToken(t *testing.T) {
+	t.Parallel()
+	h := withSession(t, "tok", requireCSRF()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("handler should not run")
+	})))
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	req.Host = "tap.example"
+	req.Header.Set("Origin", "https://tap.example")
+	req.Header.Set("X-CSRF-Token", "wrong")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusForbidden, rr.Code)
+}
+
+func TestRequireCSRFAcceptsRightToken(t *testing.T) {
+	t.Parallel()
+	called := false
+	h := withSession(t, "tok", requireCSRF()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusNoContent)
+	})))
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	req.Host = "tap.example"
+	req.Header.Set("Origin", "https://tap.example")
+	req.Header.Set("X-CSRF-Token", "tok")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusNoContent, rr.Code)
+	require.True(t, called)
+}
+
+func TestRequireCSRFRejectsMismatchedOrigin(t *testing.T) {
+	t.Parallel()
+	h := withSession(t, "tok", requireCSRF()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("handler should not run")
+	})))
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	req.Host = "tap.example"
+	req.Header.Set("Origin", "https://attacker.example")
+	req.Header.Set("X-CSRF-Token", "tok")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusForbidden, rr.Code)
+}
+
+func TestRequireCSRFAcceptsMatchingReferer(t *testing.T) {
+	t.Parallel()
+	called := false
+	h := withSession(t, "tok", requireCSRF()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusNoContent)
+	})))
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	req.Host = "tap.example"
+	req.Header.Set("Referer", "https://tap.example/some/path")
+	req.Header.Set("X-CSRF-Token", "tok")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusNoContent, rr.Code)
+	require.True(t, called)
+}
+
+func TestRequireCSRFAcceptsBothMissing(t *testing.T) {
+	// Both Origin and Referer missing → SameSite=Lax + an authenticated
+	// session already cover the cross-site case. requireCSRF still needs
+	// the token; absent Origin/Referer is not on its own grounds for 403.
+	t.Parallel()
+	called := false
+	h := withSession(t, "tok", requireCSRF()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusNoContent)
+	})))
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	req.Host = "tap.example"
+	req.Header.Set("X-CSRF-Token", "tok")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusNoContent, rr.Code)
+	require.True(t, called)
+}

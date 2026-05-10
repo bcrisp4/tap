@@ -3,10 +3,12 @@ package api
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/bcrisp4/tap/internal/db"
@@ -97,4 +99,63 @@ func hashCookie(cookieValue string) (string, bool) {
 	}
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:]), true
+}
+
+// requireCSRF passes through GET/HEAD/OPTIONS, otherwise:
+//   - validates Origin or Referer host equals r.Host (when the header is
+//     present; both absent = pass, since SameSite=Lax + an authenticated
+//     session already cover that case);
+//   - reads X-CSRF-Token and constant-time compares to session.CSRFToken;
+//   - 403 csrf_invalid on any failure.
+func requireCSRF() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.Method {
+			case http.MethodGet, http.MethodHead, http.MethodOptions:
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			if !originOK(r) {
+				writeError(w, http.StatusForbidden, ErrCodeCSRFInvalid, "origin mismatch")
+				return
+			}
+
+			s, ok := sessionFromContext(r.Context())
+			if !ok {
+				writeError(w, http.StatusForbidden, ErrCodeCSRFInvalid, "no session in context")
+				return
+			}
+			got := r.Header.Get("X-CSRF-Token")
+			if got == "" || subtle.ConstantTimeCompare([]byte(got), []byte(s.CSRFToken)) != 1 {
+				writeError(w, http.StatusForbidden, ErrCodeCSRFInvalid, "csrf token mismatch")
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// originOK is the Origin/Referer host check. Returns true if both headers
+// are absent (concept §7.8: SameSite=Lax + auth already cover that case),
+// or if at least one of them parses to a host equal to r.Host.
+func originOK(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	referer := r.Header.Get("Referer")
+	if origin == "" && referer == "" {
+		return true
+	}
+	if origin != "" {
+		u, err := url.Parse(origin)
+		if err == nil && u.Host == r.Host {
+			return true
+		}
+	}
+	if referer != "" {
+		u, err := url.Parse(referer)
+		if err == nil && u.Host == r.Host {
+			return true
+		}
+	}
+	return false
 }
