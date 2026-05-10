@@ -79,7 +79,7 @@ func NewMux(db *sql.DB, opts MuxOpts) *http.ServeMux {
 	authed := requireSession(db, opts.SessionIdleTTL)
 	authedCSRF := chain(authed, requireCSRF())
 
-	m.Handle("GET /api/v1/sessions/current", authed(getSessionCurrentHandler(deps)))
+	m.Handle("GET /api/v1/sessions/current", authed(getSessionCurrentHandler()))
 	m.Handle("DELETE /api/v1/sessions/current", authedCSRF(logoutHandler(deps)))
 	m.Handle("PATCH /api/v1/me/password", authedCSRF(passwordChangeHandler(deps, opts.HashParams)))
 

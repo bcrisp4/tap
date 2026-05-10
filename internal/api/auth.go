@@ -190,7 +190,7 @@ func loginHandler(dep authDeps) http.Handler {
 // getSessionCurrentHandler returns GET /api/v1/sessions/current.
 // Authenticated; CSRF not required (GET). The SPA calls this on boot to
 // recover its in-memory CSRF token after a reload.
-func getSessionCurrentHandler(_ authDeps) http.Handler {
+func getSessionCurrentHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u, ok1 := userFromContext(r.Context())
 		s, ok2 := sessionFromContext(r.Context())
