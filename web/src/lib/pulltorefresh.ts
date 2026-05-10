@@ -13,18 +13,20 @@ export interface PullToRefreshOptions {
 export function pullToRefresh(opts: PullToRefreshOptions) {
   return (el: Element) => {
     let startY = 0, inFlight = false;
-    const onStart = (e: TouchEvent) => { startY = e.touches[0].clientY; };
-    const onEnd = async (e: TouchEvent) => {
-      const dy = e.changedTouches[0].clientY - startY;
+    const onStart = (e: Event) => {
+      startY = (e as TouchEvent).touches[0].clientY;
+    };
+    const onEnd = (e: Event) => {
+      const dy = (e as TouchEvent).changedTouches[0].clientY - startY;
       if (!recognisePull(dy, opts.getScrollTop(), inFlight)) return;
       inFlight = true;
-      try { await opts.onRefresh(); } finally { inFlight = false; }
+      opts.onRefresh().finally(() => { inFlight = false; });
     };
-    el.addEventListener('touchstart', onStart as EventListener, { passive: true });
-    el.addEventListener('touchend', onEnd as EventListener, { passive: true });
+    el.addEventListener('touchstart', onStart, { passive: true });
+    el.addEventListener('touchend', onEnd, { passive: true });
     return () => {
-      el.removeEventListener('touchstart', onStart as EventListener);
-      el.removeEventListener('touchend', onEnd as EventListener);
+      el.removeEventListener('touchstart', onStart);
+      el.removeEventListener('touchend', onEnd);
     };
   };
 }

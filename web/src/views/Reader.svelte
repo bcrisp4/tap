@@ -1,9 +1,13 @@
 <script lang="ts">
+  import { getContext, onMount, onDestroy } from 'svelte';
   import { api } from '../lib/api';
   import { navigate } from '../lib/router';
+  import { entries } from '../lib/store';
+  import { swipe } from '../lib/swipe';
   import type { EntryDetail } from '../lib/types';
   import FeedAvatar from '../components/FeedAvatar.svelte';
   import JunctionDot from '../components/JunctionDot.svelte';
+  import Sidebar from '../components/Sidebar.svelte';
 
   type Props = { id: number };
   let { id }: Props = $props();
@@ -11,29 +15,27 @@
   let entry = $state<EntryDetail | null>(null);
   let error = $state<string | null>(null);
 
-  // Refetch whenever the route's entry id changes. Cancellation guards
-  // against late writes from a previous fetch when the user navigates
-  // between entries faster than the network responds.
+  const dispatch = getContext<{
+    onToggleRead: () => void;
+    onToggleSaved: () => void;
+    onViewOriginal: () => void;
+  }>('keyDispatch');
+
   $effect(() => {
     const targetId = id;
-    entry = null;
-    error = null;
+    entry = null; error = null;
     let cancelled = false;
     (async () => {
       try {
         const fetched = await api.getEntry(targetId);
         if (cancelled) return;
         entry = fetched;
-        // Auto-mark-read on open. If the PATCH fails we leave the entry as
-        // unread — the user can retry via the MARK READ button.
-        // NOTE (M1 security): content is rendered unsanitised below via
-        // {@html}. HTML sanitisation is deferred to M2.
         if (fetched && !fetched.read) {
           try {
             await api.patchEntry(targetId, { read: true });
             if (cancelled) return;
             entry = { ...fetched, read: true };
-          } catch { /* swallow; user can manually toggle */ }
+          } catch { /* swallow — reader still shows content */ }
         }
       } catch (e) {
         if (cancelled) return;
@@ -49,118 +51,110 @@
     try {
       await api.patchEntry(entry.id, { read: want });
       entry = { ...entry, read: want };
-    } catch (e) {
-      error = (e as Error).message;
-    }
+    } catch (e) { error = (e as Error).message; }
+  }
+
+  async function toggleSaved() {
+    if (!entry) return;
+    const want = !entry.saved;
+    try {
+      await api.patchEntry(entry.id, { saved: want });
+      entry = { ...entry, saved: want };
+    } catch (e) { error = (e as Error).message; }
+  }
+
+  function viewOriginal() {
+    if (entry) window.open(entry.url, '_blank', 'noopener');
+  }
+
+  function navigateRelative(delta: -1 | 1) {
+    const items = $entries.items;
+    const idx = items.findIndex(e => e.id === id);
+    if (idx === -1) return;
+    const next = items[idx + delta];
+    if (next) navigate(`/entry/${next.id}`);
   }
 
   function host(url: string): string {
     try { return new URL(url).host; } catch { return ''; }
   }
+
+  if (dispatch) {
+    onMount(() => {
+      dispatch.onToggleRead = toggleRead;
+      dispatch.onToggleSaved = toggleSaved;
+      dispatch.onViewOriginal = viewOriginal;
+    });
+    onDestroy(() => {
+      dispatch.onToggleRead = () => {};
+      dispatch.onToggleSaved = () => {};
+      dispatch.onViewOriginal = () => {};
+    });
+  }
 </script>
 
-<div class="reader">
-  <header class="header">
-    <button class="back" onclick={() => navigate('/')} aria-label="Back to unread">
-      ‹ <span class="back-label">UNREAD</span>
-    </button>
-    {#if entry}
-      <div class="actions">
-        <button class="action" onclick={toggleRead}>
-          {entry.read ? 'MARK UNREAD' : 'MARK READ'}
-        </button>
-        <a class="action" href={entry.url} target="_blank" rel="noopener">VIEW ORIGINAL</a>
-      </div>
-    {/if}
-  </header>
+<div class="layout">
+  <Sidebar />
+  <div class="reader-pane">
+    <header class="reader-header">
+      <button class="reader-back" onclick={() => navigate('/')} aria-label="Back to unread entries">
+        ‹ <span>UNREAD</span>
+      </button>
+      {#if entry}
+        <div class="reader-actions">
+          <button class="reader-action" onclick={toggleRead}>
+            {entry.read ? 'MARK UNREAD' : 'MARK READ'}
+          </button>
+          <button class="reader-action" class:is-saved={entry.saved} onclick={toggleSaved}>
+            {entry.saved ? 'SAVED' : 'SAVE'}
+          </button>
+          <a class="reader-action" href={entry.url} target="_blank" rel="noopener">VIEW ORIGINAL</a>
+        </div>
+      {/if}
+    </header>
 
-  <article class="body">
-    {#if error}
-      <p class="err">{error}</p>
-    {:else if !entry}
-      <p class="loading">Loading…</p>
-    {:else}
-      <div class="source">
-        <!-- Key the avatar off the host (stable per feed) rather than the
-             article URL, so all entries from the same source render the
-             same colour. EntryDetail doesn't carry feed_url today; using
-             the host of entry.url is a safe proxy in practice. -->
-        <FeedAvatar feedURL={host(entry.url)} size={10} radius={2} />
-        <span class="src-host">{host(entry.url)}</span>
-      </div>
-      <h1>{entry.title}</h1>
-      <div class="byline">
-        {#if entry.author}{entry.author}<span class="sep"> · </span>{/if}
-        {new Date(entry.published_at * 1000).toLocaleDateString()}
-      </div>
-      <div class="divider">
-        <span class="rule"></span>
-        <JunctionDot color="var(--accent)" />
-        <span class="rule"></span>
-      </div>
-      <!--
-        M1 SECURITY CAVEAT: feed HTML is rendered unsanitised here.
-        Sanitisation (DOMPurify or equivalent) is deferred to M2.
-        Do NOT expose this app on a network reachable by untrusted feed
-        authors until M2 lands. The binary defaults to 127.0.0.1:8080;
-        the container binds 0.0.0.0:8080 — keep it behind Docker's
-        port mapping and do not reverse-proxy it to the open internet.
-      -->
-      <div class="content">{@html entry.content}</div>
-      <div class="divider">
-        <span class="rule"></span>
-        <JunctionDot color="var(--ink-4)" filled={false} />
-        <span class="rule"></span>
-      </div>
-    {/if}
-  </article>
+    <article
+      class="reader-body"
+      {@attach swipe({
+        onSwipeRight: () => navigateRelative(-1),
+        onSwipeLeft:  () => navigateRelative(1),
+      })}
+    >
+      {#if error}
+        <p class="err">{error}</p>
+      {:else if !entry}
+        <p class="loading">Loading…</p>
+      {:else}
+        <div class="reader-source">
+          <FeedAvatar feedURL={host(entry.url)} size={10} radius={2} />
+          <span class="src-host">{host(entry.url)}</span>
+        </div>
+        <h1 class="reader-title">{entry.title}</h1>
+        <div class="reader-byline">
+          {#if entry.author}<span>{entry.author}</span><span aria-hidden="true"> · </span>{/if}
+          <span>{new Date(entry.published_at * 1000).toLocaleDateString()}</span>
+        </div>
+        <div class="reader-rule">
+          <span class="reader-rule-line"></span>
+          <JunctionDot color="var(--accent)" />
+          <span class="reader-rule-line"></span>
+        </div>
+        <div class="content">{@html entry.content}</div>
+        <div class="reader-end">
+          <span class="reader-end-line"></span>
+          <span class="reader-end-dot" aria-hidden="true"></span>
+          <span class="reader-end-line"></span>
+        </div>
+      {/if}
+    </article>
+  </div>
 </div>
 
 <style>
-  .reader { height: 100vh; display: flex; flex-direction: column; background: var(--bg); }
-  .header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 14px 28px;
-    border-bottom: 1px solid var(--rule);
-    background: var(--bg);
-    position: sticky; top: 0;
-  }
-  .back, .action {
-    font-family: var(--mono);
-    font-size: 11px;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--ink-2);
-    padding: 6px 10px 6px 4px;
-    border-radius: 4px;
-  }
-  .back:hover, .action:hover { background: var(--bg-soft); }
-  .actions { display: flex; gap: 8px; }
-  .body { max-width: 680px; margin: 0 auto; padding: 56px 56px 80px; flex: 1; overflow-y: auto; }
-  .source {
-    display: flex; align-items: center; gap: 8px;
-    font-family: var(--sans); font-size: 12px; color: var(--ink-2);
-    margin-bottom: 18px;
-  }
+  .layout { display: flex; height: 100vh; }
+  .err { color: #b14; font-family: var(--mono); font-size: 12px; }
+  .loading { color: var(--ink-3); font-family: var(--mono); font-size: 11px; }
   .src-host { font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
-  h1 {
-    font-family: var(--serif); font-size: 38px; line-height: 1.15;
-    font-weight: 600; letter-spacing: -0.015em; margin: 0 0 16px;
-    text-wrap: balance;
-  }
-  .byline {
-    font-family: var(--mono); font-size: 11px; letter-spacing: 0.04em;
-    text-transform: uppercase; color: var(--ink-3); margin-bottom: 28px;
-  }
-  .divider {
-    display: flex; align-items: center; gap: 8px;
-    margin: 32px 0;
-  }
-  .rule {
-    flex: 1; height: 1px; background: var(--rule);
-  }
   .content :global(p) {
     font-family: var(--serif); font-size: 17px; line-height: 1.7;
     color: var(--ink); margin: 0 0 22px; text-wrap: pretty;
@@ -174,7 +168,4 @@
     color: var(--ink-2); background: var(--bg-soft);
     padding: 14px 16px; border-left: 2px solid var(--accent); overflow-x: auto;
   }
-  .err { color: #b14; font-family: var(--mono); font-size: 12px; }
-  .loading { color: var(--ink-3); font-family: var(--mono); font-size: 11px; }
-  .sep { color: var(--ink-4); }
 </style>

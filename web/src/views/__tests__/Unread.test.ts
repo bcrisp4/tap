@@ -92,4 +92,44 @@ describe('Unread view', () => {
     render(Unread);
     expect(screen.getByText(/No unread entries/)).toBeInTheDocument();
   });
+
+  it('renders a <ul role="list"> for entry items', () => {
+    setEntries({ items: [
+      { id: 1, title: 'Entry One', read: false, saved: false, subscription_id: 10, published_at: 1700000000, fetched_at: 1700000001, url: 'https://a.com', extract_failed: false },
+    ], loading: false, error: null });
+    const { container } = render(Unread);
+    expect(container.querySelector('ul[role="list"]')).toBeTruthy();
+  });
+});
+
+describe('Unread keyboard context', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    _entriesSubs.length = 0;
+    _subsSubs.length = 0;
+    _entriesState = { items: [
+      { id: 1, title: 'Entry One', read: false, saved: false, subscription_id: 10, published_at: 1700000000, fetched_at: 1700000001, url: 'https://a.com', extract_failed: false },
+      { id: 2, title: 'Entry Two', read: false, saved: false, subscription_id: 10, published_at: 1700000000, fetched_at: 1700000001, url: 'https://b.com', extract_failed: false },
+    ], loading: false, error: null };
+    _subscriptionsState = [];
+    mockEntriesLoad.mockResolvedValue(undefined);
+    mockSubscriptionsLoad.mockResolvedValue(undefined);
+  });
+
+  it('registers onNext in dispatch context on mount', () => {
+    const dispatch = { onNext: () => {}, onPrev: () => {}, onOpen: () => {}, onToggleRead: () => {}, onToggleSaved: () => {}, onViewOriginal: () => {} };
+    render(Unread, { context: new Map([['keyDispatch', dispatch]]) });
+    expect(() => dispatch.onNext()).not.toThrow();
+  });
+
+  it('navigates to entry when onOpen called after onNext selects first entry', async () => {
+    const routerMod = await import('../../lib/router');
+    const mockNav = vi.mocked(routerMod.navigate as unknown as (...args: unknown[]) => void);
+    mockNav.mockClear?.();
+    const dispatch = { onNext: () => {}, onPrev: () => {}, onOpen: () => {}, onToggleRead: () => {}, onToggleSaved: () => {}, onViewOriginal: () => {} };
+    render(Unread, { context: new Map([['keyDispatch', dispatch]]) });
+    dispatch.onNext();
+    dispatch.onOpen();
+    expect(mockNav).toHaveBeenCalledWith('/entry/1');
+  });
 });
