@@ -39,7 +39,6 @@ func toAdminUserDTO(u db.User) adminUserDTO {
 	return dto
 }
 
-// listUsersHandler handles GET /api/v1/admin/users.
 func listUsersHandler(d *sql.DB) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		users, err := db.ListUsers(r.Context(), d)
@@ -64,7 +63,6 @@ type createUserRequest struct {
 	Role     string `json:"role"`
 }
 
-// createUserHandler handles POST /api/v1/admin/users.
 func createUserHandler(d *sql.DB, hashParams auth.Params) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
@@ -119,7 +117,6 @@ type patchUserRequest struct {
 	Disabled *bool   `json:"disabled"`
 }
 
-// patchUserHandler handles PATCH /api/v1/admin/users/{id}.
 func patchUserHandler(d *sql.DB) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -183,7 +180,6 @@ func patchUserHandler(d *sql.DB) http.Handler {
 	})
 }
 
-// resetUserPasswordHandler handles POST /api/v1/admin/users/{id}/password-reset.
 func resetUserPasswordHandler(d *sql.DB, hashParams auth.Params) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -218,7 +214,6 @@ func resetUserPasswordHandler(d *sql.DB, hashParams auth.Params) http.Handler {
 	})
 }
 
-// disableUserTOTPHandler handles POST /api/v1/admin/users/{id}/disable-totp.
 func disableUserTOTPHandler(d *sql.DB) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -238,7 +233,6 @@ func disableUserTOTPHandler(d *sql.DB) http.Handler {
 	})
 }
 
-// deleteUserHandler handles DELETE /api/v1/admin/users/{id}.
 func deleteUserHandler(d *sql.DB) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		caller, ok := userFromContext(r.Context())

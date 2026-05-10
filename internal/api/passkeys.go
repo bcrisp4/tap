@@ -55,7 +55,6 @@ type passkeyDTO struct {
 	CreatedAt int64  `json:"created_at"`
 }
 
-// beginPasskeyRegistrationHandler handles POST /api/v1/me/passkeys/registration/begin.
 func beginPasskeyRegistrationHandler(d *sql.DB, wa *webauthn.WebAuthn) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u, ok := userFromContext(r.Context())
@@ -92,7 +91,6 @@ func beginPasskeyRegistrationHandler(d *sql.DB, wa *webauthn.WebAuthn) http.Hand
 	})
 }
 
-// finishPasskeyRegistrationHandler handles POST /api/v1/me/passkeys/registration/finish.
 func finishPasskeyRegistrationHandler(d *sql.DB, wa *webauthn.WebAuthn) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u, ok := userFromContext(r.Context())
@@ -156,7 +154,6 @@ func finishPasskeyRegistrationHandler(d *sql.DB, wa *webauthn.WebAuthn) http.Han
 	})
 }
 
-// listPasskeysHandler handles GET /api/v1/me/passkeys.
 func listPasskeysHandler(d *sql.DB) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u, ok := userFromContext(r.Context())
@@ -177,7 +174,6 @@ func listPasskeysHandler(d *sql.DB) http.Handler {
 	})
 }
 
-// deletePasskeyHandler handles DELETE /api/v1/me/passkeys/{id}.
 func deletePasskeyHandler(d *sql.DB) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u, ok := userFromContext(r.Context())
@@ -207,7 +203,6 @@ type beginPasskeyLoginResponse struct {
 	Options   interface{} `json:"options"`
 }
 
-// beginPasskeyLoginHandler handles POST /api/v1/passkey-sessions/begin. Public.
 func beginPasskeyLoginHandler(d *sql.DB, wa *webauthn.WebAuthn, dep authDeps) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assertion, waSession, err := wa.BeginDiscoverableLogin()
@@ -222,9 +217,19 @@ func beginPasskeyLoginHandler(d *sql.DB, wa *webauthn.WebAuthn, dep authDeps) ht
 			return
 		}
 
+		_, anonTokenHash, err2 := auth.MintSessionToken()
+		if err2 != nil {
+			writeError(w, http.StatusInternalServerError, ErrCodeInternal, err2.Error())
+			return
+		}
+		anonCSRF, err2 := auth.MintCSRFToken()
+		if err2 != nil {
+			writeError(w, http.StatusInternalServerError, ErrCodeInternal, err2.Error())
+			return
+		}
 		now := time.Now()
 		sid, err := db.InsertAnonymousSession(r.Context(), d,
-			"anon-challenge-placeholder", "anon-csrf",
+			anonTokenHash, anonCSRF,
 			now.Unix(), now.Unix(),
 			now.Add(5*time.Minute).Unix(),
 			now.Add(5*time.Minute).Unix())
@@ -242,7 +247,6 @@ func beginPasskeyLoginHandler(d *sql.DB, wa *webauthn.WebAuthn, dep authDeps) ht
 	})
 }
 
-// finishPasskeyLoginHandler handles POST /api/v1/passkey-sessions/finish. Public.
 func finishPasskeyLoginHandler(d *sql.DB, wa *webauthn.WebAuthn, dep authDeps) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)

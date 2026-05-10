@@ -36,7 +36,6 @@ type totpRegenerateResponse struct {
 	RecoveryCodes []string `json:"recovery_codes"`
 }
 
-// beginTOTPEnrolmentHandler handles POST /api/v1/me/totp.
 func beginTOTPEnrolmentHandler(d *sql.DB, hashParams auth.Params) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u, ok := userFromContext(r.Context())
@@ -45,7 +44,6 @@ func beginTOTPEnrolmentHandler(d *sql.DB, hashParams auth.Params) http.Handler {
 			return
 		}
 
-		// Check if already enrolled (confirmed).
 		hasTOTP, confirmed, err := db.GetUserTOTPStatus(r.Context(), d, u.ID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())
@@ -81,7 +79,6 @@ func beginTOTPEnrolmentHandler(d *sql.DB, hashParams auth.Params) http.Handler {
 	})
 }
 
-// confirmTOTPEnrolmentHandler handles POST /api/v1/me/totp/confirm.
 func confirmTOTPEnrolmentHandler(d *sql.DB, hashParams auth.Params) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u, ok := userFromContext(r.Context())
@@ -154,7 +151,6 @@ func confirmTOTPEnrolmentHandler(d *sql.DB, hashParams auth.Params) http.Handler
 	})
 }
 
-// deleteTOTPHandler handles DELETE /api/v1/me/totp.
 func deleteTOTPHandler(d *sql.DB) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u, ok := userFromContext(r.Context())
@@ -222,7 +218,6 @@ func deleteTOTPHandler(d *sql.DB) http.Handler {
 	})
 }
 
-// regenerateRecoveryCodesHandler handles POST /api/v1/me/totp/recovery-codes.
 func regenerateRecoveryCodesHandler(d *sql.DB, hashParams auth.Params) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u, ok := userFromContext(r.Context())
