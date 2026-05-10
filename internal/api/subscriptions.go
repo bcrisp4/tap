@@ -26,6 +26,8 @@ type subscriptionDTO struct {
 	CreatedAt       int64  `json:"created_at"`
 	Extract         bool   `json:"extract"`
 	ExtractSelector string `json:"extract_selector"`
+	HasCookie       bool   `json:"has_cookie"`
+	HasBasicAuth    bool   `json:"has_basic_auth"`
 }
 
 func toDTO(s db.Subscription) subscriptionDTO {
@@ -38,6 +40,8 @@ func toDTO(s db.Subscription) subscriptionDTO {
 		CreatedAt:       s.CreatedAt,
 		Extract:         s.Extract,
 		ExtractSelector: s.ExtractSelector,
+		HasCookie:       s.Cookie != "",
+		HasBasicAuth:    s.BasicAuthUser != "",
 	}
 	if s.SiteURL.Valid {
 		d.SiteURL = s.SiteURL.String
@@ -68,9 +72,12 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 	m.HandleFunc("POST /api/v1/subscriptions", func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MiB cap on request body
 		var body struct {
-			FeedURL string `json:"feed_url"`
-			Title   string `json:"title"`
-			Extract bool   `json:"extract"`
+			FeedURL       string `json:"feed_url"`
+			Title         string `json:"title"`
+			Extract       bool   `json:"extract"`
+			Cookie        string `json:"cookie"`
+			BasicAuthUser string `json:"basic_auth_user"`
+			BasicAuthPass string `json:"basic_auth_pass"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "invalid JSON body")
@@ -90,11 +97,14 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 			title = body.FeedURL
 		}
 		id, err := db.InsertSubscription(r.Context(), d, db.NewSubscription{
-			Title:    title,
-			FeedURL:  body.FeedURL,
-			NextPoll: 0,
-			Created:  time.Now().Unix(),
-			Extract:  body.Extract,
+			Title:         title,
+			FeedURL:       body.FeedURL,
+			NextPoll:      0,
+			Created:       time.Now().Unix(),
+			Extract:       body.Extract,
+			Cookie:        body.Cookie,
+			BasicAuthUser: body.BasicAuthUser,
+			BasicAuthPass: body.BasicAuthPass,
 		})
 		if err != nil {
 			if errors.Is(err, db.ErrSubscriptionExists) {

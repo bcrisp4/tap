@@ -223,3 +223,66 @@ func TestPatchSubscription_PartialUpdate_ExtractOnlyKeepsSelector(t *testing.T) 
 	require.Contains(t, getRR.Body.String(), `"extract_selector":".article"`)
 	require.Contains(t, getRR.Body.String(), `"extract":true`)
 }
+
+// newSubscriptionsTestMux builds an unauthenticated subscriptions mux for unit
+// tests. The session-middleware tests live in middleware_test.go; tests here
+// focus on handler logic in isolation, so the mux is constructed without auth
+// wrapping. End-to-end auth coverage lives in cmd/tap/main_test.go.
+func newSubscriptionsTestMux(t *testing.T) (http.Handler, *sql.DB) {
+	t.Helper()
+	d := newTestDB(t)
+	m := http.NewServeMux()
+	registerSubscriptionRoutes(m, d, nil)
+	return m, d
+}
+
+func TestPostSubscriptionAcceptsCredentialsAndGetReturnsBooleans(t *testing.T) {
+	t.Parallel()
+	mux, _ := newSubscriptionsTestMux(t)
+
+	body := map[string]any{
+		"feed_url":        "https://x.example/feed",
+		"basic_auth_user": "ben",
+		"basic_auth_pass": "secret",
+		"cookie":          "session=abc",
+	}
+	bs, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/subscriptions", bytes.NewReader(bs))
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusCreated, rr.Code, rr.Body.String())
+
+	// Response should contain has_cookie + has_basic_auth, but NOT the values.
+	respBody := rr.Body.String()
+	require.Contains(t, respBody, `"has_cookie":true`)
+	require.Contains(t, respBody, `"has_basic_auth":true`)
+	require.NotContains(t, respBody, "secret")
+	require.NotContains(t, respBody, `"cookie":"session=abc"`)
+	require.NotContains(t, respBody, "basic_auth_user")
+	require.NotContains(t, respBody, "basic_auth_pass")
+
+	// GET the list — same expectations.
+	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/subscriptions", nil)
+	listRR := httptest.NewRecorder()
+	mux.ServeHTTP(listRR, listReq)
+	require.Equal(t, http.StatusOK, listRR.Code)
+	listBody := listRR.Body.String()
+	require.Contains(t, listBody, `"has_cookie":true`)
+	require.Contains(t, listBody, `"has_basic_auth":true`)
+	require.NotContains(t, listBody, "secret")
+}
+
+func TestPostSubscriptionWithoutCredentialsReturnsBooleanFalse(t *testing.T) {
+	t.Parallel()
+	mux, _ := newSubscriptionsTestMux(t)
+
+	body := map[string]any{"feed_url": "https://x.example/feed"}
+	bs, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/subscriptions", bytes.NewReader(bs))
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusCreated, rr.Code)
+
+	require.Contains(t, rr.Body.String(), `"has_cookie":false`)
+	require.Contains(t, rr.Body.String(), `"has_basic_auth":false`)
+}
