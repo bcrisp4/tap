@@ -35,6 +35,7 @@ type ArchiverOpts struct {
     Interval    time.Duration   // sweep cadence; default 24h
     CacheDir    string          // proxy cache root, e.g. ${TAP_DATA_DIR}/cache
     Now         func() time.Time // clock injection for tests; defaults to time.Now
+    OnEvict     func(n int)     // optional; called with count of FS files evicted per sweep; M12 wires tap_proxy_cache_evictions_total{reason="age_sweep"}
 }
 
 func NewArchiver(db *sql.DB, opts ArchiverOpts) *Archiver
@@ -49,7 +50,12 @@ func (a *Archiver) Stop()  // waits for any in-progress sweep before returning
 1. **DB pass** (`dbPass`) — deletes eligible entries and writes tombstones.
 2. **FS pass** (`fsPass`) — unlinks old cache files.
 
-Both passes are logged at `INFO` level on completion (entries deleted, tombstones written, cache files unlinked, duration). Errors in the FS pass are logged at `WARN` but do not abort the sweep or affect the DB pass result.
+Structured log events emitted by `sweep()` use the exact keys defined by M12's log taxonomy so the ring buffer handler captures them correctly:
+
+- `archival.sweep.start` — `slog.Info` at sweep entry, no required attributes beyond the event key.
+- `archival.sweep.complete` — `slog.Info` on completion, required attributes: `entries_deleted int`, `cache_files_evicted int`, `duration_ms int64`. The attribute `tombstones_written` is pending M12 resolution — m12-author will either add it to the `archival.sweep.complete` event definition or confirm it should be omitted; M11's implementation must match whichever they decide.
+
+Errors in the FS pass are logged at `WARN` but do not abort the sweep or affect the DB pass result.
 
 ### Schema migration
 
@@ -183,6 +189,7 @@ archiver := archival.NewArchiver(d, archival.ArchiverOpts{
     CacheAgeCap: *cacheAgeCap,
     Interval:    *archiveInterval,
     CacheDir:    cacheDir,
+    OnEvict:     nil, // M12 wires metrics.CacheEvictionsTotal.With("age_sweep").Add(float64(n))
 })
 archiver.Start()
 
@@ -194,6 +201,8 @@ db.Close()
 ```
 
 Stopping the archiver before the scheduler ensures a sweep in progress drains cleanly before the DB closes. HTTP is drained first so no new proxy reads race the FS pass.
+
+`OnEvict` is `nil` in M11's wire-up. M12 replaces it with an increment on `tap_proxy_cache_evictions_total{reason="age_sweep"}`. The callback receives the total count of FS files evicted in that sweep.
 
 ### Configuration knobs
 
