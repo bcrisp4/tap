@@ -222,7 +222,7 @@ After the M6 trust-posture paragraph:
 
 > **Archival + tombstones (M11).** A daily sweep deletes read-and-unsaved entries older than `--archive-horizon` (default 90d), recording tombstones so re-published entries do not resurface as unread. A second daily pass unlinks proxy cache files older than `--cache-age-cap` (default 14d). Both bounds are configurable via flags or environment variables. The tombstone table (`tombstones`) is small and grows slowly; tombstones are permanent by design — the dedup guarantee requires durability. The archival sweep is the third concurrent concern alongside the HTTP server and polling pipeline; it starts after migrations and stops cleanly on shutdown.
 
-Plus an upgrade note: "Migration 0006 adds the `tombstones` table. Existing M10 databases migrate cleanly. Entries already in the database are subject to archival on the next sweep if they meet the horizon criterion."
+Plus an upgrade note: "Migration 0010 adds the `tombstones` table. Existing M10 databases migrate cleanly. Entries already in the database are subject to archival on the next sweep if they meet the horizon criterion."
 
 ### Tests and methodology
 
@@ -318,13 +318,13 @@ FS pass correctness (real temp directory):
 3. Tombstoned entry: re-poll the same feed after step 2; tombstoned entry does not reappear in `entries`.
 4. FS pass: write fake `.bin`+`.meta` files to the cache directory with `fetched_at` older than `--cache-age-cap`; after sweep, both files are gone; a file with a recent `fetched_at` is retained.
 5. `Stop()` drains a sweep in progress before returning (race-tested with `-race`).
-6. Migration 0006 applies cleanly against an M10 database with no data loss.
+6. Migration 0010 applies cleanly against an M10 database with no data loss.
 7. `make build` produces a static binary that boots cleanly against a fresh `data/` directory and against an existing M10 database.
 8. README gains the M11 trust-posture paragraph and upgrade note.
 
 ## What this milestone deliberately does *not* prove
 
-- That per-user archival horizon preferences work — M7.
+- That per-user archival horizon preferences work — future milestone.
 - That tombstones are ever garbage-collected — they aren't, by design.
 - That sweep events appear in the system-status panel or OTel metrics — M12.
 - That entries deleted via the unsubscribe API path are tombstoned — they aren't; tombstones are sweep-only.
