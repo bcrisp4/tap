@@ -58,12 +58,37 @@ Since Tap is pre-production, no back-fill is performed. Operators start with a f
 **`internal/db/migrations/0007_2fa_passkeys_sessions_meta.sql`:**
 
 ```sql
--- Session metadata (deferred from M6 pending this UI)
-ALTER TABLE sessions ADD COLUMN user_agent TEXT NOT NULL DEFAULT '';
-ALTER TABLE sessions ADD COLUMN address    TEXT NOT NULL DEFAULT '';
+-- sessions.user_id must become nullable to support anonymous WebAuthn challenge
+-- sessions. SQLite cannot drop a NOT NULL constraint with ALTER TABLE, so we
+-- recreate the table using the standard rename→create→copy→drop pattern.
+-- The entire migration runs inside one transaction; it rolls back cleanly on failure.
+ALTER TABLE sessions RENAME TO sessions_old;
 
--- WebAuthn challenge staging (cleared after use)
-ALTER TABLE sessions ADD COLUMN webauthn_challenge BLOB;
+CREATE TABLE sessions (
+    id                  INTEGER PRIMARY KEY,
+    user_id             INTEGER REFERENCES users(id) ON DELETE CASCADE,  -- NULL for anonymous challenge sessions
+    token_hash          TEXT    NOT NULL UNIQUE,
+    csrf_token          TEXT    NOT NULL,
+    created_at          INTEGER NOT NULL,
+    last_seen_at        INTEGER NOT NULL,
+    idle_expires_at     INTEGER NOT NULL,
+    absolute_expires_at INTEGER NOT NULL,
+    user_agent          TEXT    NOT NULL DEFAULT '',
+    address             TEXT    NOT NULL DEFAULT '',
+    webauthn_challenge  BLOB
+);
+CREATE INDEX idx_sessions_user ON sessions(user_id);
+
+INSERT INTO sessions (id, user_id, token_hash, csrf_token, created_at, last_seen_at,
+                      idle_expires_at, absolute_expires_at, user_agent, address, webauthn_challenge)
+SELECT                id, user_id, token_hash, csrf_token, created_at, last_seen_at,
+                      idle_expires_at, absolute_expires_at, '',         '',      NULL
+FROM sessions_old;
+
+DROP TABLE sessions_old;
+
+-- The three new columns (user_agent, address, webauthn_challenge) are included in
+-- the table recreation above; no separate ALTER TABLE statements are needed.
 
 -- Pending two-step login tokens (TOTP second step)
 CREATE TABLE pending_logins (
@@ -311,7 +336,7 @@ Passkey login (public, no session required — new login path):
 
 - **`POST /api/v1/passkey-sessions/finish`** — Public. No CSRF.
   - Body: `{"session_id": N, "assertion": <AssertionResponse JSON>}`.
-  - Looks up the anonymous session by ID, reads the challenge, calls `webauthn.FinishAssertion`. On success, updates the passkey's `sign_counter`, upgrades the anonymous session to a full user session (sets `user_id`, mints cookie, returns same shape as password login). On failure, deletes the anonymous session and returns `401 invalid_credentials`.
+  - The session is looked up directly by the integer `session_id` from the request body, not via the `tap_session` cookie — this endpoint does not go through `requireSession` (the browser has no session cookie for the challenge session). Reads the challenge from the row, calls `webauthn.FinishAssertion`. On success, updates the passkey's `sign_counter`, upgrades the anonymous session to a full user session (sets `user_id`, mints cookie, returns same shape as password login). On failure, deletes the anonymous session and returns `401 invalid_credentials`.
   - No TOTP step — passkey login is inherently multi-factor per concept §7.3.
 
 Schema tweak for passkey login: `sessions.user_id` becomes `INTEGER REFERENCES users(id) ON DELETE CASCADE` (nullable, without `NOT NULL`) to support anonymous challenge sessions. Migration 0007 handles this. The `requireSession` middleware continues to reject sessions where `user_id IS NULL`.
@@ -337,7 +362,7 @@ All require `requireAdmin` middleware (role = admin). CSRF required on all state
 
 - **`POST /api/v1/admin/users`** — Create a user.
   - Body: `{"username": "...", "password": "...", "role": "admin"|"user"}`.
-  - Validates password length (≥8). Hashes with `auth.Hash(DefaultParams)`. Returns created user DTO. `ErrUserExists` → `409 user_already_exists`.
+  - Validates password length (≥8). Hashes with `auth.Hash(DefaultParams)`. Returns `201 Created` + user DTO. `ErrUserExists` → `409 user_already_exists`.
 
 - **`PATCH /api/v1/admin/users/{id}`** — Update role or disabled status.
   - Body: `{"role": "admin"|"user"}` and/or `{"disabled": true|false}`.
@@ -593,6 +618,8 @@ M7 follows the test-first discipline of M1–M6 (`docs/roadmap.md` §"Working ca
 - **WebAuthn challenge reuse.** A single session row holds `webauthn_challenge`. If a user clicks "Add a passkey" twice in quick succession, the second click overwrites the first challenge. The first registration ceremony will fail at finish (challenge mismatch). This is acceptable: the user sees an error and tries again. A future improvement could issue one-time challenge rows; not needed now.
 
 - **TOTP window drift.** ±1 window (one 30-second step) tolerates ~30 seconds of clock drift. For extreme drift, the user must sync their device clock. This is the industry standard.
+
+- **Recovery code hashing cost at enrolment.** `POST /api/v1/me/totp/confirm` hashes all 8 recovery codes sequentially using `auth.Hash(DefaultParams)` (argon2id t=2, m=64MiB). On typical self-hosted hardware this takes 1–2 seconds total — acceptable for a one-time enrolment flow, not a hot path. Test code must inject lower-cost params (same pattern as the existing auth tests in M6) to keep the test suite fast.
 
 - **Recovery code exhaustion.** 8 codes; no auto-regeneration. A user who exhausts all codes and forgets their TOTP device must contact an admin (or use `tap admin disable-totp` from the host). This is the intended recovery path — concept §7.6 specifies admin-mediated recovery.
 
