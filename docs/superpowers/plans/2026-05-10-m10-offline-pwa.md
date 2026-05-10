@@ -42,6 +42,7 @@ MCP tools:
 |---|---|---|
 | `web/package.json` | Modify | Add vite-plugin-pwa + Workbox deps |
 | `web/vite.config.ts` | Modify | Register VitePWA plugin, injectManifest config, manifest |
+| `web/src/sw/swPatterns.ts` | Create | URL-matching helpers shared between `sw.ts` and tests |
 | `web/src/sw/sw.ts` | Create | Hand-written service worker |
 | `web/src/sw/workerTypes.ts` | Create | `SWMessage` type shared between SW and app |
 | `web/src/lib/offlineQueue.ts` | Create | localStorage mutation queue |
@@ -225,71 +226,79 @@ git commit -m "M10: add placeholder PWA icons (192, 512 maskable)"
 **Invoke:** `superpowers:test-driven-development` skill at start of this task.
 
 **Files:**
+- Create: `web/src/sw/swPatterns.ts`
 - Create: `web/src/sw/sw.ts`
 - Create: `web/src/sw/__tests__/sw.test.ts`
 
-The service worker tests verify URL-pattern matching and cache-naming configuration in isolation. Because the SW runs in a different global context, these tests import the routing configuration as pure functions rather than testing the live SW.
+The service worker tests verify URL-pattern matching and cache-naming configuration in isolation. Because the SW runs in a different global context, the URL patterns are extracted into a shared `web/src/sw/swPatterns.ts` module imported by both `sw.ts` and the test — this makes the tests cover the real patterns rather than inline copies.
 
-- [ ] **Step 1: Write the failing strategy test**
+- [ ] **Step 1: Create `swPatterns.ts` and write the failing strategy test**
 
-Create `web/src/sw/__tests__/sw.test.ts`:
+Create `web/src/sw/swPatterns.ts` (imported by both `sw.ts` and the test so tests cover real patterns):
 
 ```ts
-import { describe, it, expect } from 'vitest';
-
-// These tests verify the URL matching logic and cache-name scheme
-// used in sw.ts without running a live service worker.
-
-const API_PROXY_PATTERN = /^\/api\/v1\/proxy\//;
-const API_ENTRIES_PATTERN = /^\/api\/v1\/(entries|subscriptions)/;
-const EXCLUDED_PATTERNS = [
+export const PROXY_PATTERN = /^\/api\/v1\/proxy\//;
+export const ENTRIES_PATTERN = /^\/api\/v1\/(entries|subscriptions)/;
+export const EXCLUDED_PATTERNS = [
   /^\/api\/v1\/search/,
   /^\/api\/v1\/opml/,
   /^\/api\/v1\/sessions/,
 ];
 
-function matchesProxy(url: string) { return API_PROXY_PATTERN.test(new URL(url, 'http://localhost').pathname); }
-function matchesEntries(url: string) { return API_ENTRIES_PATTERN.test(new URL(url, 'http://localhost').pathname); }
-function matchesExcluded(url: string) { return EXCLUDED_PATTERNS.some(p => p.test(new URL(url, 'http://localhost').pathname)); }
-function cacheName(prefix: string, userId: number) { return `${prefix}-${userId}`; }
+export function matchesProxy(pathname: string) { return PROXY_PATTERN.test(pathname); }
+export function matchesEntries(pathname: string) { return ENTRIES_PATTERN.test(pathname); }
+export function matchesExcluded(pathname: string) { return EXCLUDED_PATTERNS.some(p => p.test(pathname)); }
+export function apiCacheName(prefix: string, userId: number) { return `${prefix}-${userId}`; }
+```
+
+Create `web/src/sw/__tests__/sw.test.ts`:
+
+```ts
+import { describe, it, expect } from 'vitest';
+import {
+  matchesProxy, matchesEntries, matchesExcluded, apiCacheName,
+} from '../swPatterns';
+
+// Helper wraps pathname extraction so tests pass full URLs naturally.
+const p = (url: string) => new URL(url, 'http://localhost').pathname;
 
 describe('SW URL pattern matching', () => {
   it('proxy pattern matches proxy URLs', () => {
-    expect(matchesProxy('/api/v1/proxy/abc123.xyz456')).toBe(true);
+    expect(matchesProxy(p('/api/v1/proxy/abc123.xyz456'))).toBe(true);
   });
   it('proxy pattern does not match entry URLs', () => {
-    expect(matchesProxy('/api/v1/entries?unread=1')).toBe(false);
+    expect(matchesProxy(p('/api/v1/entries?unread=1'))).toBe(false);
   });
   it('entries pattern matches entries and subscriptions', () => {
-    expect(matchesEntries('/api/v1/entries?unread=1')).toBe(true);
-    expect(matchesEntries('/api/v1/subscriptions')).toBe(true);
+    expect(matchesEntries(p('/api/v1/entries?unread=1'))).toBe(true);
+    expect(matchesEntries(p('/api/v1/subscriptions'))).toBe(true);
   });
   it('entries pattern does not match proxy URLs', () => {
-    expect(matchesEntries('/api/v1/proxy/abc')).toBe(false);
+    expect(matchesEntries(p('/api/v1/proxy/abc'))).toBe(false);
   });
   it('search is excluded', () => {
-    expect(matchesExcluded('/api/v1/search?q=hello')).toBe(true);
+    expect(matchesExcluded(p('/api/v1/search?q=hello'))).toBe(true);
   });
   it('opml is excluded', () => {
-    expect(matchesExcluded('/api/v1/opml')).toBe(true);
+    expect(matchesExcluded(p('/api/v1/opml'))).toBe(true);
   });
   it('sessions is excluded', () => {
-    expect(matchesExcluded('/api/v1/sessions/current')).toBe(true);
+    expect(matchesExcluded(p('/api/v1/sessions/current'))).toBe(true);
   });
   it('entries is not excluded', () => {
-    expect(matchesExcluded('/api/v1/entries')).toBe(false);
+    expect(matchesExcluded(p('/api/v1/entries'))).toBe(false);
   });
 });
 
 describe('SW cache naming', () => {
   it('api cache name includes user ID', () => {
-    expect(cacheName('tap-api', 42)).toBe('tap-api-42');
+    expect(apiCacheName('tap-api', 42)).toBe('tap-api-42');
   });
   it('proxy cache name includes user ID', () => {
-    expect(cacheName('tap-proxy', 42)).toBe('tap-proxy-42');
+    expect(apiCacheName('tap-proxy', 42)).toBe('tap-proxy-42');
   });
   it('different users get different cache names', () => {
-    expect(cacheName('tap-api', 1)).not.toBe(cacheName('tap-api', 2));
+    expect(apiCacheName('tap-api', 1)).not.toBe(apiCacheName('tap-api', 2));
   });
 });
 ```
@@ -313,78 +322,81 @@ import { registerRoute } from 'workbox-routing';
 import { CacheFirst, StaleWhileRevalidate } from 'workbox-strategies';
 import { ExpirationPlugin } from 'workbox-expiration';
 import type { SWMessage } from './workerTypes';
+import { matchesProxy, matchesEntries, matchesExcluded, apiCacheName } from './swPatterns';
 
 declare let self: ServiceWorkerGlobalScope;
 
-// Injected by vite-plugin-pwa at build time.
+// precacheAndRoute handles the app shell AND the navigation fallback to
+// index.html for deep-linked routes — do NOT add a separate registerRoute
+// for navigate requests, as that would shadow the precache handler.
 precacheAndRoute(self.__WB_MANIFEST);
-
-// Navigation requests fall back to the SPA shell so the app boots offline.
-registerRoute(
-  ({ request }) => request.mode === 'navigate',
-  new CacheFirst({ cacheName: 'precache' }),
-);
 
 let userId: number | null = null;
 
+// Per-user strategy instances, created lazily and reused across requests.
+// Workbox ExpirationPlugin maintains internal IDB state — never instantiate
+// per-request or expiration tracking won't accumulate correctly.
+const proxyStrategies = new Map<number, CacheFirst>();
+const apiStrategies = new Map<number, StaleWhileRevalidate>();
+
+function getProxyStrategy(uid: number): CacheFirst {
+  if (!proxyStrategies.has(uid)) {
+    proxyStrategies.set(uid, new CacheFirst({
+      cacheName: apiCacheName('tap-proxy', uid),
+      plugins: [new ExpirationPlugin({ maxEntries: 500, maxAgeSeconds: 30 * 24 * 60 * 60 })],
+    }));
+  }
+  return proxyStrategies.get(uid)!;
+}
+
+function getApiStrategy(uid: number): StaleWhileRevalidate {
+  if (!apiStrategies.has(uid)) {
+    apiStrategies.set(uid, new StaleWhileRevalidate({
+      cacheName: apiCacheName('tap-api', uid),
+      plugins: [new ExpirationPlugin({ maxEntries: 200, maxAgeSeconds: 7 * 24 * 60 * 60 })],
+    }));
+  }
+  return apiStrategies.get(uid)!;
+}
+
 // Receive user context and logout signals from the app.
-self.addEventListener('message', (event: MessageEvent<SWMessage>) => {
-  if (event.data.type === 'set-user') {
-    userId = event.data.userId;
-  } else if (event.data.type === 'logout') {
-    const uid = event.data.userId;
-    caches.delete(`tap-api-${uid}`);
-    caches.delete(`tap-proxy-${uid}`);
+self.addEventListener('message', (event: MessageEvent<SWMessage | { type: string }>) => {
+  const data = event.data;
+  if (data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  } else if (data.type === 'set-user') {
+    userId = (data as SWMessage & { type: 'set-user' }).userId;
+  } else if (data.type === 'logout') {
+    const uid = (data as SWMessage & { type: 'logout' }).userId;
+    caches.delete(apiCacheName('tap-proxy', uid));
+    caches.delete(apiCacheName('tap-api', uid));
+    proxyStrategies.delete(uid);
+    apiStrategies.delete(uid);
     userId = null;
   }
 });
 
 // Proxy URLs — cache-first, immutable (M3 sets Cache-Control: immutable).
 registerRoute(
-  ({ url }) => url.pathname.startsWith('/api/v1/proxy/'),
-  ({ request }) => {
+  ({ url }) => matchesProxy(url.pathname),
+  ({ request, event }) => {
     if (userId === null) return fetch(request);
-    return new CacheFirst({
-      cacheName: `tap-proxy-${userId}`,
-      plugins: [
-        new ExpirationPlugin({
-          maxEntries: 500,
-          maxAgeSeconds: 30 * 24 * 60 * 60, // 30 days
-        }),
-      ],
-    }).handle({ request, event: null as unknown as FetchEvent });
+    return getProxyStrategy(userId).handle({ request, event: event as FetchEvent });
   },
 );
 
 // Entry list and subscription endpoints — stale-while-revalidate.
 // Excluded: search, opml, sessions (volatile or auth-sensitive).
 registerRoute(
-  ({ url, request }) => {
-    if (request.method !== 'GET') return false;
-    const p = url.pathname;
-    if (p.startsWith('/api/v1/search')) return false;
-    if (p.startsWith('/api/v1/opml')) return false;
-    if (p.startsWith('/api/v1/sessions')) return false;
-    return p.startsWith('/api/v1/entries') || p.startsWith('/api/v1/subscriptions');
-  },
-  ({ request }) => {
+  ({ url, request }) =>
+    request.method === 'GET' &&
+    !matchesExcluded(url.pathname) &&
+    matchesEntries(url.pathname),
+  ({ request, event }) => {
     if (userId === null) return fetch(request);
-    return new StaleWhileRevalidate({
-      cacheName: `tap-api-${userId}`,
-      plugins: [
-        new ExpirationPlugin({
-          maxEntries: 200,
-          maxAgeSeconds: 7 * 24 * 60 * 60, // 7 days
-        }),
-      ],
-    }).handle({ request, event: null as unknown as FetchEvent });
+    return getApiStrategy(userId).handle({ request, event: event as FetchEvent });
   },
 );
-
-// Skip waiting so a new SW activates immediately when prompted.
-self.addEventListener('message', (event) => {
-  if (event.data?.type === 'SKIP_WAITING') self.skipWaiting();
-});
 ```
 
 - [ ] **Step 4: Run tests to confirm they pass**
@@ -412,7 +424,8 @@ import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 describe('PWA manifest', () => {
-  const manifestPath = resolve(__dirname, '../../../../../dist/manifest.webmanifest');
+  // web/src/sw/__tests__/ is 4 dirs deep from web/ — four ../ reaches web/dist/
+  const manifestPath = resolve(__dirname, '../../../../dist/manifest.webmanifest');
 
   it('manifest exists after build', () => {
     // Run `pnpm --dir web build` before this test if manifest is missing.
@@ -434,7 +447,7 @@ describe('PWA manifest', () => {
 - [ ] **Step 7: Commit**
 
 ```bash
-git add web/src/sw/sw.ts web/src/sw/__tests__/sw.test.ts
+git add web/src/sw/swPatterns.ts web/src/sw/sw.ts web/src/sw/__tests__/sw.test.ts
 git commit -m "M10: add service worker with Workbox cache strategies (TDD)"
 ```
 
@@ -1011,6 +1024,9 @@ async function runWithConcurrency(urls: string[], concurrency: number): Promise<
   await Promise.all(Array.from({ length: concurrency }, worker));
 }
 
+// userId is accepted for interface consistency with callers (drain takes userId)
+// and for future per-user cache-warming signals; the browser attaches the session
+// cookie implicitly on same-origin GETs so no per-user auth is needed here.
 export async function warmCache(_userId: number): Promise<void> {
   try {
     const res = await fetch('/api/v1/entries?limit=50&unread=1');
@@ -1266,10 +1282,9 @@ Expected: the new offline-enqueue tests fail.
 
 - [ ] **Step 3: Update api.ts**
 
-At the top of `web/src/lib/api.ts`, add:
+At the top of `web/src/lib/api.ts`, add only the `offlineQueue` import — `get` from `svelte/store` is already imported on line 1:
 
 ```ts
-import { get } from 'svelte/store';
 import { offlineQueue } from './offlineQueue';
 ```
 
@@ -1448,6 +1463,7 @@ Expected: FAIL — `App.svelte` does not yet import `useRegisterSW` or render th
 ```svelte
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { get } from 'svelte/store';
   import { route } from './lib/router';
   import { auth } from './lib/auth';
   import { offlineQueue } from './lib/offlineQueue';
@@ -1469,15 +1485,11 @@ Expected: FAIL — `App.svelte` does not yet import `useRegisterSW` or render th
 
   async function bootSequence() {
     await auth.bootstrap();
-    const state = (() => {
-      let s: { user: { id: number } | null } = { user: null };
-      auth.subscribe(v => { s = v; })();
-      return s;
-    })();
-    if (state.user) {
-      notifySWUser(state.user.id);
-      await offlineQueue.drain(state.user.id);
-      setTimeout(() => { void warmCache(state.user!.id); }, 2000);
+    const user = get(auth).user;
+    if (user) {
+      notifySWUser(user.id);
+      await offlineQueue.drain(user.id);
+      setTimeout(() => { void warmCache(user.id); }, 2000);
     }
   }
 
@@ -1485,8 +1497,7 @@ Expected: FAIL — `App.svelte` does not yet import `useRegisterSW` or render th
     void bootSequence();
 
     const handleOnline = async () => {
-      let userId: number | null = null;
-      auth.subscribe(s => { userId = s.user?.id ?? null; })();
+      const userId = get(auth).user?.id ?? null;
       if (userId !== null) {
         await offlineQueue.drain(userId);
         void warmCache(userId);
