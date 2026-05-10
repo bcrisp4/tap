@@ -43,6 +43,7 @@ Items committed in the design but not yet sequenced into a specific milestone. T
 |---|---|---|
 | Per-user iframe-host allowlist | M6 user table | M2 ships a hard-coded default sourced from miniflux's `iframeAllowList` (13 hosts including `youtube.com`, `player.vimeo.com`, `bandcamp.com`, etc. — see `internal/sanitise/sanitise.go`). Per-user override stored in DB-backed preferences once the user table exists. |
 | SVG support in the media proxy | None (own decision) | M3 ships an `image/{png,jpeg,gif,webp,avif}` MIME allowlist and 415s SVG. No well-trodden pure-Go SVG sanitiser exists; two real options when we revisit: (a) roll our own XML allowlist walker mirroring M2's HTML post-pass (~200 LoC, edge cases around namespaces / SMIL / CSS in style attrs), or (b) rasterise SVG → PNG inside the proxy via `srwiley/oksvg` or similar (heavier dep, loses scalability). Likely a small follow-up extension to `internal/sanitise` rather than its own milestone. |
+| 413 on >1 MiB body across remaining write handlers | None | M6 fixed `loginHandler` and `passwordChangeHandler` (commit `3d436b4`) so they detect `*http.MaxBytesError` via `errors.As` and return `413 Request Entity Too Large` instead of `400 bad_request`. The same `MaxBytesReader → json.Decode` shape is used in `internal/api/subscriptions.go` (POST + PATCH `/subscriptions/{id}`) and `internal/api/entries.go` (PATCH `/entries/{id}`); they currently return `400` on oversize bodies. Spec compliance only — no security impact. ~5 lines per handler when we revisit. |
 
 ## Working cadence
 
