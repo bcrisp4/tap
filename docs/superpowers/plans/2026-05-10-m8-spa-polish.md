@@ -14,7 +14,7 @@
 
 Always-on for every code-touching task:
 
-- **`superpowers:test-driven-development`** — red/green/refactor on every behaviour-bearing change. Mandated by `docs/roadmap.md` §"Working cadence". Pure CSS and design-token changes (Tasks A1, A2) are exempt; everything with state, branches, or side-effects is in scope.
+- **`superpowers:test-driven-development`** — INVOKE AT THE START of every behaviour-bearing task. Drives the red/green/refactor loop. Mandated by `docs/roadmap.md` §"Working cadence". Pure CSS and design-token changes (Tasks A1, A2) are exempt; every task with state, branches, event handling, or side-effects is in scope. This means Tasks A3, B1, B2, C1, C2, D1, D2, D3, D4, D5, E1 — all of them.
 - **`superpowers:verification-before-completion`** — before marking a task done, run the exact verification command listed in the task and confirm output matches expected output.
 
 Reach for as needed:
@@ -250,7 +250,7 @@ EOF
 
 ### Task A3: Preference store (`preferences.svelte.ts`)
 
-**Skills:** invoke `svelte-runes`.
+**Skills:** invoke `superpowers:test-driven-development`, `svelte-runes`.
 
 **Files:**
 - Create: `web/src/lib/preferences.svelte.ts`
@@ -429,7 +429,7 @@ EOF
 
 ### Task B1: Keyboard handler (pure logic)
 
-**Skills:** invoke `svelte-runes`.
+**Skills:** invoke `superpowers:test-driven-development`, `svelte-runes`.
 
 **Files:**
 - Create: `web/src/lib/keyboard.ts`
@@ -590,13 +590,60 @@ EOF
 
 ### Task B2: Hotkeys modal + wire keyboard handler into `App.svelte`
 
-**Skills:** invoke `svelte-runes`, `svelte-template-directives`.
+**Skills:** invoke `superpowers:test-driven-development`, `svelte-runes`, `svelte-template-directives`.
 
 **Files:**
 - Create: `web/src/components/HotkeysModal.svelte`
 - Modify: `web/src/App.svelte`
 
-- [ ] **Step 1: Create `web/src/components/HotkeysModal.svelte`**
+- [ ] **Step 1: Write failing component tests**
+
+Create `web/src/components/__tests__/HotkeysModal.test.ts`:
+
+```typescript
+import { describe, it, expect } from 'vitest';
+import { render, screen } from '@testing-library/svelte';
+import { userEvent } from '@testing-library/user-event';
+import HotkeysModal from '../HotkeysModal.svelte';
+
+describe('HotkeysModal', () => {
+  it('renders nothing when open=false', () => {
+    render(HotkeysModal, { props: { open: false, onClose: () => {} } });
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('renders the dialog when open=true', () => {
+    render(HotkeysModal, { props: { open: true, onClose: () => {} } });
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    expect(screen.getByText('Keyboard shortcuts')).toBeTruthy();
+  });
+
+  it('calls onClose when the close button is clicked', async () => {
+    const user = userEvent.setup();
+    let closed = false;
+    render(HotkeysModal, { props: { open: true, onClose: () => { closed = true; } } });
+    await user.click(screen.getByRole('button', { name: 'Close' }));
+    expect(closed).toBe(true);
+  });
+
+  it('shows all expected shortcut rows', () => {
+    render(HotkeysModal, { props: { open: true, onClose: () => {} } });
+    expect(screen.getByText('Next entry')).toBeTruthy();
+    expect(screen.getByText('Toggle read')).toBeTruthy();
+    expect(screen.getByText('This modal')).toBeTruthy();
+  });
+});
+```
+
+- [ ] **Step 2: Run tests — confirm they fail**
+
+```bash
+cd web && pnpm test -- src/components/__tests__/HotkeysModal.test.ts
+```
+
+Expected: fail with `Cannot find module '../HotkeysModal.svelte'`.
+
+- [ ] **Step 3: Create `web/src/components/HotkeysModal.svelte`**
 
 ```svelte
 <script lang="ts">
@@ -667,7 +714,7 @@ EOF
 </style>
 ```
 
-- [ ] **Step 2: Update `web/src/App.svelte`**
+- [ ] **Step 5: Update `web/src/App.svelte`**
 
 Replace the entire contents of `App.svelte` with:
 
@@ -776,7 +823,7 @@ Replace the entire contents of `App.svelte` with:
 </style>
 ```
 
-- [ ] **Step 3: Create minimal stubs to unblock `pnpm check`**
+- [ ] **Step 6: Create minimal stubs to unblock `pnpm check`**
 
 The five new imports (Saved, Search, Settings, TabBar, preferences.svelte) don't exist yet. Create minimal stubs so `pnpm check` can validate `App.svelte`:
 
@@ -787,7 +834,7 @@ echo '<div></div>' > web/src/views/Settings.svelte
 echo '<div></div>' > web/src/components/TabBar.svelte
 ```
 
-- [ ] **Step 4: Run check**
+- [ ] **Step 7: Run check**
 
 ```bash
 cd web && pnpm check
@@ -795,11 +842,11 @@ cd web && pnpm check
 
 Expected: no TypeScript errors. (Stub files satisfy the import; full implementations land in Tasks D3–D5.)
 
-- [ ] **Step 5: Manual smoke test**
+- [ ] **Step 8: Manual smoke test**
 
 Run `make dev`. Press `?` — hotkeys modal appears. Press `Esc` — closes. Press `j` inside a text `<input>` — does not fire navigation.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
 git add web/src/components/HotkeysModal.svelte web/src/App.svelte \
@@ -824,7 +871,7 @@ EOF
 
 ### Task C1: Swipe gesture attachment
 
-**Skills:** invoke `svelte-template-directives`.
+**Skills:** invoke `superpowers:test-driven-development`, `svelte-template-directives`.
 
 **Files:**
 - Create: `web/src/lib/swipe.ts`
@@ -945,7 +992,7 @@ EOF
 
 ### Task C2: Pull-to-refresh attachment
 
-**Skills:** invoke `svelte-template-directives`.
+**Skills:** invoke `superpowers:test-driven-development`, `svelte-template-directives`.
 
 **Files:**
 - Create: `web/src/lib/pulltorefresh.ts`
@@ -1048,7 +1095,7 @@ EOF
 
 ### Task D1: Router — add saved / search / settings routes
 
-**Skills:** invoke `svelte-runes`.
+**Skills:** invoke `superpowers:test-driven-development`, `svelte-runes`.
 
 **Files:**
 - Modify: `web/src/lib/router.ts`
@@ -1113,12 +1160,50 @@ EOF
 
 ### Task D2: Desktop reader layout — sidebar visible + swipe nav
 
-**Skills:** invoke `svelte-runes`, `svelte-styling`, `svelte-template-directives`.
+**Skills:** invoke `superpowers:test-driven-development`, `svelte-runes`, `svelte-styling`, `svelte-template-directives`.
 
 **Files:**
 - Modify: `web/src/views/Reader.svelte`
+- Test: `web/src/views/__tests__/Reader.test.ts`
 
-- [ ] **Step 1: Rewrite `web/src/views/Reader.svelte`**
+- [ ] **Step 1: Write failing tests**
+
+Add to `web/src/views/__tests__/Reader.test.ts` (or create if absent):
+
+```typescript
+import { describe, it, expect, vi } from 'vitest';
+import { render, screen } from '@testing-library/svelte';
+import Reader from '../Reader.svelte';
+
+vi.mock('../../lib/api', () => ({
+  api: { getEntry: vi.fn().mockResolvedValue(null), patchEntry: vi.fn() },
+}));
+vi.mock('../../lib/store', () => ({
+  entries: { items: [], toggleRead: vi.fn() },
+}));
+vi.mock('../../components/Sidebar.svelte', () => ({ default: { render: () => {} } }));
+
+describe('Reader layout', () => {
+  it('renders a Sidebar alongside the reader pane', async () => {
+    const { container } = render(Reader, { props: { id: 1 } });
+    // The layout div should contain both sidebar and reader-pane children.
+    const layout = container.querySelector('.layout');
+    expect(layout).toBeTruthy();
+    // reader-pane exists inside the layout
+    expect(layout?.querySelector('.reader-pane')).toBeTruthy();
+  });
+});
+```
+
+- [ ] **Step 2: Run tests — confirm they fail**
+
+```bash
+cd web && pnpm test -- src/views/__tests__/Reader.test.ts
+```
+
+Expected: test fails because `.layout` or `.reader-pane` does not exist in the current single-column Reader.
+
+- [ ] **Step 3: Rewrite `web/src/views/Reader.svelte`**
 
 Replace the entire file with:
 
@@ -1301,7 +1386,15 @@ Replace the entire file with:
 </style>
 ```
 
-- [ ] **Step 2: Run check**
+- [ ] **Step 4: Run tests — confirm they pass**
+
+```bash
+cd web && pnpm test -- src/views/__tests__/Reader.test.ts
+```
+
+Expected: all tests pass.
+
+- [ ] **Step 5: Run check**
 
 ```bash
 cd web && pnpm check
@@ -1309,14 +1402,14 @@ cd web && pnpm check
 
 Expected: no TypeScript errors.
 
-- [ ] **Step 3: Visual smoke test**
+- [ ] **Step 6: Visual smoke test**
 
 Run `make dev`, navigate to an entry. Sidebar visible on left; reader content fills the rest; sidebar does not scroll with the article. Save button present alongside Mark Read.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add web/src/views/Reader.svelte
+git add web/src/views/Reader.svelte web/src/views/__tests__/Reader.test.ts
 git commit -m "$(cat <<'EOF'
 M8: desktop reader — sidebar visible, swipe prev/next, save toggle
 
@@ -1334,13 +1427,66 @@ EOF
 
 ### Task D3: Mobile layout — tab bar and breakpoint
 
-**Skills:** invoke `svelte-runes`, `svelte-styling`.
+**Skills:** invoke `superpowers:test-driven-development`, `svelte-runes`, `svelte-styling`.
 
 **Files:**
 - Modify: `web/src/components/TabBar.svelte` (replace stub)
 - Modify: `web/src/styles/global.css`
+- Test: `web/src/components/__tests__/TabBar.test.ts`
 
-- [ ] **Step 1: Replace `TabBar.svelte` stub with full implementation**
+- [ ] **Step 1: Write failing tests**
+
+Create `web/src/components/__tests__/TabBar.test.ts`:
+
+```typescript
+import { describe, it, expect, vi } from 'vitest';
+import { render, screen } from '@testing-library/svelte';
+import { userEvent } from '@testing-library/user-event';
+
+vi.mock('../../lib/router', () => ({
+  route: { subscribe: (fn: (v: { name: string }) => void) => { fn({ name: 'unread' }); return () => {}; } },
+  navigate: vi.fn(),
+}));
+
+import TabBar from '../TabBar.svelte';
+import { navigate } from '../../lib/router';
+
+describe('TabBar', () => {
+  it('renders four tabs', () => {
+    render(TabBar);
+    expect(screen.getAllByRole('button')).toHaveLength(4);
+  });
+
+  it('marks the active tab with aria-current="page"', () => {
+    render(TabBar);
+    const unreadBtn = screen.getByRole('button', { name: 'Unread' });
+    expect(unreadBtn.getAttribute('aria-current')).toBe('page');
+  });
+
+  it('does not mark inactive tabs with aria-current', () => {
+    render(TabBar);
+    const savedBtn = screen.getByRole('button', { name: 'Saved' });
+    expect(savedBtn.getAttribute('aria-current')).toBeNull();
+  });
+
+  it('calls navigate with /saved when Saved tab is clicked', async () => {
+    const user = userEvent.setup();
+    render(TabBar);
+    await user.click(screen.getByRole('button', { name: 'Saved' }));
+    expect(navigate).toHaveBeenCalledWith('/saved');
+  });
+});
+```
+
+- [ ] **Step 2: Run tests — confirm they fail**
+
+```bash
+cd web && pnpm test -- src/components/__tests__/TabBar.test.ts
+```
+
+Expected: fail because TabBar.svelte is a stub `<div></div>`.
+
+- [ ] **Step 3: Replace `TabBar.svelte` stub with full implementation**
 
 ```svelte
 <script lang="ts">
@@ -1382,7 +1528,15 @@ EOF
 </nav>
 ```
 
-- [ ] **Step 2: Add mobile breakpoint rules to `global.css`**
+- [ ] **Step 4: Run TabBar tests — confirm they pass**
+
+```bash
+cd web && pnpm test -- src/components/__tests__/TabBar.test.ts
+```
+
+Expected: all tests pass.
+
+- [ ] **Step 5: Add mobile breakpoint rules to `global.css`**
 
 Append to `web/src/styles/global.css`:
 
@@ -1394,7 +1548,7 @@ Append to `web/src/styles/global.css`:
 }
 ```
 
-- [ ] **Step 3: Run check**
+- [ ] **Step 6: Run check**
 
 ```bash
 cd web && pnpm check
@@ -1402,14 +1556,14 @@ cd web && pnpm check
 
 Expected: no errors.
 
-- [ ] **Step 4: Visual smoke test on mobile viewport**
+- [ ] **Step 7: Visual smoke test on mobile viewport**
 
 Run `make dev`, open DevTools → set viewport to 390×844. Sidebar hidden; tab bar at bottom with four tabs and inline SVG icons. Active tab shows Klein junction dot (CSS `::before`). Tap between tabs.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add web/src/components/TabBar.svelte web/src/styles/global.css
+git add web/src/components/TabBar.svelte web/src/components/__tests__/TabBar.test.ts web/src/styles/global.css
 git commit -m "$(cat <<'EOF'
 M8: mobile layout — tab bar (4 tabs) + sidebar hidden at ≤768px
 
@@ -1426,13 +1580,76 @@ EOF
 
 ### Task D4: Unread — swipe on rows, pull-to-refresh, keyboard context
 
-**Skills:** invoke `svelte-runes`, `svelte-template-directives`.
+**Skills:** invoke `superpowers:test-driven-development`, `svelte-runes`, `svelte-template-directives`.
 
 **Files:**
 - Modify: `web/src/views/Unread.svelte`
 - Modify: `web/src/components/EntryRow.svelte`
+- Test: `web/src/views/__tests__/Unread.test.ts`
 
-- [ ] **Step 1: Update `EntryRow.svelte`**
+- [ ] **Step 1: Write failing tests for keyboard context dispatch**
+
+Add to `web/src/views/__tests__/Unread.test.ts`:
+
+```typescript
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen } from '@testing-library/svelte';
+import { getContext, setContext } from 'svelte';
+
+vi.mock('../../lib/store', () => ({
+  entries: {
+    subscribe: (fn: (v: { items: unknown[]; loading: boolean; error: null }) => void) => {
+      fn({ items: [
+        { id: 1, title: 'Entry One', read: false, saved: false, subscription_id: 10, published_at: 1700000000, fetched_at: 1700000001, url: 'https://a.com', extract_failed: false },
+        { id: 2, title: 'Entry Two', read: false, saved: false, subscription_id: 10, published_at: 1700000000, fetched_at: 1700000001, url: 'https://b.com', extract_failed: false },
+      ], loading: false, error: null });
+      return () => {};
+    },
+    load: vi.fn(),
+    toggleRead: vi.fn(),
+  },
+  subscriptions: { subscribe: (fn: (v: unknown[]) => void) => { fn([]); return () => {}; }, load: vi.fn() },
+}));
+vi.mock('../../lib/router', () => ({ navigate: vi.fn(), route: { subscribe: (fn: (v: { name: string }) => void) => { fn({ name: 'unread' }); return () => {}; } } }));
+vi.mock('../../components/Sidebar.svelte', () => ({ default: { render: () => {} } }));
+vi.mock('../../components/TopBar.svelte', () => ({ default: { render: () => {} } }));
+vi.mock('../../components/EntryRow.svelte', () => ({ default: { render: () => {} } }));
+
+import Unread from '../Unread.svelte';
+import { navigate } from '../../lib/router';
+import { entries } from '../../lib/store';
+
+describe('Unread keyboard context', () => {
+  it('registers onNext in dispatch context on mount', () => {
+    const dispatch = { onNext: () => {}, onPrev: () => {}, onOpen: () => {}, onToggleRead: () => {}, onToggleSaved: () => {} };
+    // Provide context before render
+    render(Unread, { context: new Map([['keyDispatch', dispatch]]) });
+    // After mount, dispatch.onNext should be replaced with a real function
+    expect(dispatch.onNext).not.toBe(undefined);
+    // Calling it should not throw
+    expect(() => dispatch.onNext()).not.toThrow();
+  });
+
+  it('registers onOpen and navigate is called when entry is selected', async () => {
+    const dispatch = { onNext: () => {}, onPrev: () => {}, onOpen: () => {}, onToggleRead: () => {}, onToggleSaved: () => {} };
+    render(Unread, { context: new Map([['keyDispatch', dispatch]]) });
+    // Advance to select first entry
+    dispatch.onNext();
+    dispatch.onOpen();
+    expect(navigate).toHaveBeenCalledWith('/entry/1');
+  });
+});
+```
+
+- [ ] **Step 2: Run tests — confirm they fail**
+
+```bash
+cd web && pnpm test -- src/views/__tests__/Unread.test.ts
+```
+
+Expected: fails because Unread.svelte does not yet read from context or set dispatch callbacks.
+
+- [ ] **Step 3: Update `EntryRow.svelte`**
 
 Replace with:
 
@@ -1524,7 +1741,7 @@ Replace with:
 </style>
 ```
 
-- [ ] **Step 2: Update `Unread.svelte`**
+- [ ] **Step 4: Update `Unread.svelte`**
 
 Replace with:
 
@@ -1651,18 +1868,18 @@ Replace with:
 </style>
 ```
 
-- [ ] **Step 3: Run check + full test suite**
+- [ ] **Step 5: Run check + full test suite**
 
 ```bash
 cd web && pnpm check && pnpm test
 ```
 
-Expected: no TypeScript errors, all tests pass.
+Expected: no TypeScript errors, all tests pass including the new Unread context tests.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add web/src/views/Unread.svelte web/src/components/EntryRow.svelte
+git add web/src/views/Unread.svelte web/src/views/__tests__/Unread.test.ts web/src/components/EntryRow.svelte
 git commit -m "$(cat <<'EOF'
 M8: unread — swipe read/save, pull-to-refresh, keyboard context, ARIA
 
@@ -1680,14 +1897,67 @@ EOF
 
 ### Task D5: Settings + stub views (Saved, Search)
 
-**Skills:** invoke `svelte-runes`, `svelte-styling`.
+**Skills:** invoke `superpowers:test-driven-development`, `svelte-runes`, `svelte-styling`.
 
 **Files:**
 - Modify: `web/src/views/Settings.svelte` (replace stub)
 - Modify: `web/src/views/Saved.svelte` (replace stub)
 - Modify: `web/src/views/Search.svelte` (replace stub)
+- Test: `web/src/views/__tests__/Settings.test.ts`
 
-- [ ] **Step 1: Replace `Settings.svelte` stub**
+- [ ] **Step 1: Write failing tests**
+
+Create `web/src/views/__tests__/Settings.test.ts`:
+
+```typescript
+import { describe, it, expect, vi } from 'vitest';
+import { render, screen } from '@testing-library/svelte';
+import { userEvent } from '@testing-library/user-event';
+
+vi.mock('../../components/Sidebar.svelte', () => ({ default: { render: () => {} } }));
+vi.mock('../../lib/preferences.svelte', () => ({
+  theme: { stored: 'system', resolved: 'light' },
+  font: { value: 'serif' },
+  density: { value: 'default' },
+}));
+
+import Settings from '../Settings.svelte';
+
+describe('Settings', () => {
+  it('renders the Appearance section by default', () => {
+    render(Settings);
+    expect(screen.getByText('Appearance')).toBeTruthy();
+    expect(screen.getByLabelText('Theme')).toBeTruthy();
+    expect(screen.getByLabelText('Reading font')).toBeTruthy();
+    expect(screen.getByLabelText('Density')).toBeTruthy();
+  });
+
+  it('switches to Security section when Security nav item is clicked', async () => {
+    const user = userEvent.setup();
+    render(Settings);
+    await user.click(screen.getByRole('button', { name: 'Security' }));
+    expect(screen.getByText(/Security settings/)).toBeTruthy();
+    // Appearance controls should no longer be visible
+    expect(screen.queryByLabelText('Theme')).toBeNull();
+  });
+
+  it('Appearance nav item has aria-current="true" when active', () => {
+    render(Settings);
+    const appearanceBtn = screen.getByRole('button', { name: 'Appearance' });
+    expect(appearanceBtn.getAttribute('aria-current')).toBe('true');
+  });
+});
+```
+
+- [ ] **Step 2: Run tests — confirm they fail**
+
+```bash
+cd web && pnpm test -- src/views/__tests__/Settings.test.ts
+```
+
+Expected: fail because Settings.svelte is a stub `<div></div>`.
+
+- [ ] **Step 3: Replace `Settings.svelte` stub**
 
 ```svelte
 <script lang="ts">
@@ -1789,7 +2059,15 @@ EOF
 </style>
 ```
 
-- [ ] **Step 2: Replace `Saved.svelte` and `Search.svelte` stubs**
+- [ ] **Step 4: Run Settings tests — confirm they pass**
+
+```bash
+cd web && pnpm test -- src/views/__tests__/Settings.test.ts
+```
+
+Expected: all tests pass.
+
+- [ ] **Step 5: Replace `Saved.svelte` and `Search.svelte` stubs**
 
 `web/src/views/Saved.svelte`:
 
@@ -1825,7 +2103,7 @@ EOF
 </style>
 ```
 
-- [ ] **Step 3: Run check**
+- [ ] **Step 6: Run check**
 
 ```bash
 cd web && pnpm check
@@ -1833,14 +2111,14 @@ cd web && pnpm check
 
 Expected: no errors.
 
-- [ ] **Step 4: Manual smoke test**
+- [ ] **Step 7: Manual smoke test**
 
 Navigate to `/settings`. Change theme dropdown — page theme updates instantly. Toggle font — reader content switches serif/sans. Change density — entry row padding changes.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add web/src/views/Settings.svelte web/src/views/Saved.svelte web/src/views/Search.svelte
+git add web/src/views/Settings.svelte web/src/views/__tests__/Settings.test.ts web/src/views/Saved.svelte web/src/views/Search.svelte
 git commit -m "$(cat <<'EOF'
 M8: Settings Appearance section + stub Saved/Search views
 
@@ -1859,21 +2137,83 @@ EOF
 
 ### Task E1: Accessibility pass
 
-**Skills:** invoke `svelte-styling`.
+**Skills:** invoke `superpowers:test-driven-development`, `svelte-styling`.
 
 **Files:**
 - Modify: `web/src/components/Sidebar.svelte`
 - Modify: `web/src/components/TopBar.svelte`
+- Test: `web/src/components/__tests__/Sidebar.test.ts`
+- Test: `web/src/components/__tests__/TopBar.test.ts`
 
-- [ ] **Step 1: Sidebar — `<nav>` landmark**
+- [ ] **Step 1: Write failing ARIA tests**
+
+Create `web/src/components/__tests__/Sidebar.test.ts`:
+
+```typescript
+import { describe, it, expect, vi } from 'vitest';
+import { render, screen } from '@testing-library/svelte';
+
+vi.mock('../../lib/store', () => ({
+  subscriptions: { subscribe: (fn: (v: unknown[]) => void) => { fn([]); return () => {}; } },
+}));
+vi.mock('../../lib/router', () => ({
+  route: { subscribe: (fn: (v: { name: string }) => void) => { fn({ name: 'unread' }); return () => {}; } },
+  navigate: vi.fn(),
+}));
+
+import Sidebar from '../Sidebar.svelte';
+
+describe('Sidebar accessibility', () => {
+  it('renders a <nav> element with aria-label', () => {
+    render(Sidebar);
+    const nav = screen.getByRole('navigation');
+    expect(nav).toBeTruthy();
+    expect(nav.getAttribute('aria-label')).toBeTruthy();
+  });
+});
+```
+
+Create `web/src/components/__tests__/TopBar.test.ts`:
+
+```typescript
+import { describe, it, expect } from 'vitest';
+import { render, screen } from '@testing-library/svelte';
+import TopBar from '../TopBar.svelte';
+
+describe('TopBar accessibility', () => {
+  it('refresh button has an aria-label', () => {
+    render(TopBar, { props: { title: 'Unread', countShown: 5, countTotal: 10, onRefresh: () => {} } });
+    const refreshBtn = screen.getByRole('button', { name: /refresh/i });
+    expect(refreshBtn.getAttribute('aria-label')).toBeTruthy();
+  });
+});
+```
+
+- [ ] **Step 2: Run tests — confirm they fail**
+
+```bash
+cd web && pnpm test -- src/components/__tests__/Sidebar.test.ts src/components/__tests__/TopBar.test.ts
+```
+
+Expected: Sidebar test fails (no `<nav>` element); TopBar test fails (no aria-label on refresh button).
+
+- [ ] **Step 3: Sidebar — `<nav>` landmark**
 
 Ensure the root element of `Sidebar.svelte` is `<nav aria-label="Sidebar navigation">`. Feed-row buttons that are interactive should have `aria-label="{feed.title} feed"`.
 
-- [ ] **Step 2: TopBar — icon-button labels**
+- [ ] **Step 4: TopBar — icon-button labels**
 
 Add `aria-label` to every icon-only button in `TopBar.svelte`. The refresh button should be `aria-label="Refresh feeds"`.
 
-- [ ] **Step 3: Run check + full test suite**
+- [ ] **Step 5: Run tests — confirm they pass**
+
+```bash
+cd web && pnpm test -- src/components/__tests__/Sidebar.test.ts src/components/__tests__/TopBar.test.ts
+```
+
+Expected: all ARIA tests pass.
+
+- [ ] **Step 6: Run check + full test suite**
 
 ```bash
 cd web && pnpm check && pnpm test
@@ -1881,14 +2221,15 @@ cd web && pnpm check && pnpm test
 
 Expected: no errors, all tests pass.
 
-- [ ] **Step 4: Manual focus-ring audit**
+- [ ] **Step 7: Manual focus-ring audit**
 
 Run `make dev`. Open Unread view. Tab through all interactive elements — every button, link, select must show a visible `2px solid var(--accent)` focus ring. Verify in light, dark, and sepia themes (use Settings to switch).
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add web/src/components/Sidebar.svelte web/src/components/TopBar.svelte
+git add web/src/components/Sidebar.svelte web/src/components/__tests__/Sidebar.test.ts \
+        web/src/components/TopBar.svelte web/src/components/__tests__/TopBar.test.ts
 git commit -m "$(cat <<'EOF'
 M8: accessibility pass — nav landmark, icon-button aria-labels
 
@@ -2047,6 +2388,16 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 EOF
 )"
 ```
+
+- [ ] **Step 7: Run `/simplify`**
+
+Per the global CLAUDE.md standing instruction, invoke the `simplify` skill once all tasks are complete and all tests pass. This reviews the changed code for reuse, quality, and efficiency, then fixes any issues found.
+
+```
+/simplify
+```
+
+Expected: no significant issues — M8 is new code with no existing tech debt to accumulate against. If simplify surfaces something (duplicate logic, over-engineered attachment, unnecessary abstraction), fix it and re-run `pnpm test` to confirm nothing broke.
 
 ---
 
