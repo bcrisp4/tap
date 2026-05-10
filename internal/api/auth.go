@@ -8,14 +8,20 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+
 	"github.com/bcrisp4/tap/internal/auth"
 	"github.com/bcrisp4/tap/internal/db"
+	"github.com/bcrisp4/tap/internal/metrics"
+	"github.com/bcrisp4/tap/internal/ratelimit"
 )
 
 // CookieSecureMode controls the Secure attribute on the tap_session cookie.
@@ -104,6 +110,9 @@ type authDeps struct {
 	sessionIdleTTL     time.Duration
 	sessionAbsoluteTTL time.Duration
 	cookieSecure       bool
+	limiter            *ratelimit.Limiter // nil = no rate limiting
+	trustedProxy       bool
+	hashParams         auth.Params
 }
 
 func setSessionCookie(w http.ResponseWriter, value string, absoluteTTL time.Duration, secure bool) {
@@ -285,20 +294,87 @@ func loginHandler(dep authDeps) http.Handler {
 			return
 		}
 
+		source := sourceIP(r, dep.trustedProxy)
+
+		// Rate limit check.
+		if dep.limiter != nil {
+			allowed, retryAfter := dep.limiter.Allow(source, username)
+			if !allowed {
+				w.Header().Set("Retry-After", strconv.Itoa(int(retryAfter.Seconds())))
+				metrics.LoginAttempts.Add(r.Context(), 1, metric.WithAttributes(attribute.String("result", "rate_limited")))
+				slog.WarnContext(r.Context(), "login rate limited",
+					"event", "auth.login.failure",
+					"username", username,
+					"source", source,
+					"reason", "rate_limited")
+				writeError(w, http.StatusTooManyRequests, ErrCodeRateLimited, "too many requests")
+				return
+			}
+		}
+
 		u, err := db.GetUserByUsername(r.Context(), dep.d, username)
 		if err != nil {
+			if dep.limiter != nil {
+				dep.limiter.RecordFailure(source, username)
+			}
+			metrics.LoginAttempts.Add(r.Context(), 1, metric.WithAttributes(attribute.String("result", "failure")))
+			slog.WarnContext(r.Context(), "login failed",
+				"event", "auth.login.failure",
+				"username", username,
+				"source", source,
+				"reason", "bad_credentials")
 			writeError(w, http.StatusUnauthorized, ErrCodeInvalidCredentials, "username or password incorrect")
 			return
 		}
 		if u.DisabledAt.Valid {
+			if dep.limiter != nil {
+				dep.limiter.RecordFailure(source, username)
+			}
+			metrics.LoginAttempts.Add(r.Context(), 1, metric.WithAttributes(attribute.String("result", "failure")))
+			slog.WarnContext(r.Context(), "login failed",
+				"event", "auth.login.failure",
+				"username", username,
+				"source", source,
+				"reason", "disabled")
 			writeError(w, http.StatusUnauthorized, ErrCodeInvalidCredentials, "username or password incorrect")
 			return
 		}
 		ok, err := auth.Verify(u.PasswordHash, body.Password)
 		if err != nil || !ok {
+			if dep.limiter != nil {
+				dep.limiter.RecordFailure(source, username)
+			}
+			metrics.LoginAttempts.Add(r.Context(), 1, metric.WithAttributes(attribute.String("result", "failure")))
+			slog.WarnContext(r.Context(), "login failed",
+				"event", "auth.login.failure",
+				"username", username,
+				"source", source,
+				"reason", "bad_credentials")
 			writeError(w, http.StatusUnauthorized, ErrCodeInvalidCredentials, "username or password incorrect")
 			return
 		}
+
+		// Re-hash on verify if params are weaker than current.
+		if dep.hashParams != (auth.Params{}) {
+			if needs, err := auth.NeedsRehash(u.PasswordHash, dep.hashParams); err == nil && needs {
+				if newHash, err := auth.Hash(body.Password, dep.hashParams); err == nil {
+					_ = db.UpdatePasswordHash(r.Context(), dep.d, u.ID, newHash)
+					slog.InfoContext(r.Context(), "argon2 params upgraded on verify",
+						"event", "auth.rehash",
+						"user_id", u.ID)
+				}
+			}
+		}
+
+		if dep.limiter != nil {
+			dep.limiter.RecordSuccess(username)
+		}
+		metrics.LoginAttempts.Add(r.Context(), 1, metric.WithAttributes(attribute.String("result", "success")))
+		slog.InfoContext(r.Context(), "login successful",
+			"event", "auth.login.success",
+			"user_id", u.ID,
+			"username", u.Username,
+			"source", source)
 
 		hasTOTP, confirmed, err := db.GetUserTOTPStatus(r.Context(), dep.d, u.ID)
 		if err != nil {
@@ -499,6 +575,21 @@ func revokeSessionHandler(d *sql.DB) http.Handler {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
+}
+
+// sourceIP extracts the client IP from the request.
+// If trustedProxy is true, uses the leftmost X-Forwarded-For value.
+func sourceIP(r *http.Request, trustedProxy bool) string {
+	if trustedProxy {
+		if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
+			if idx := strings.Index(fwd, ","); idx >= 0 {
+				return strings.TrimSpace(fwd[:idx])
+			}
+			return strings.TrimSpace(fwd)
+		}
+	}
+	host, _, _ := net.SplitHostPort(r.RemoteAddr)
+	return host
 }
 
 func revokeAllOtherSessionsHandler(d *sql.DB) http.Handler {

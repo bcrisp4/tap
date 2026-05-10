@@ -8,6 +8,8 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 
 	"github.com/bcrisp4/tap/internal/auth"
+	"github.com/bcrisp4/tap/internal/ratelimit"
+	"github.com/bcrisp4/tap/internal/ring"
 )
 
 // MuxOpts carries optional dependencies for NewMux.
@@ -20,6 +22,14 @@ type MuxOpts struct {
 	HashParams         auth.Params
 	WebAuthnInstance   *webauthn.WebAuthn
 	DiscoverClient     *http.Client
+
+	Limiter        *ratelimit.Limiter // nil = no rate limiting
+	TrustedProxy   bool
+	MetricsEnabled bool
+	RingBuffer     *ring.Buffer
+	StartTime      time.Time
+	Version        string
+	PollsActive    func() int64 // current in-flight poll count
 }
 
 // NewMux returns the API mux.
@@ -41,6 +51,9 @@ func NewMux(db *sql.DB, opts MuxOpts) *http.ServeMux {
 		sessionIdleTTL:     opts.SessionIdleTTL,
 		sessionAbsoluteTTL: opts.SessionAbsoluteTTL,
 		cookieSecure:       opts.CookieSecure,
+		limiter:            opts.Limiter,
+		trustedProxy:       opts.TrustedProxy,
+		hashParams:         opts.HashParams,
 	}
 
 	m.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {

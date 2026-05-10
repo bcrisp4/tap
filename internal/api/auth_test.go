@@ -13,6 +13,7 @@ import (
 
 	"github.com/bcrisp4/tap/internal/auth"
 	"github.com/bcrisp4/tap/internal/db"
+	"github.com/bcrisp4/tap/internal/ratelimit"
 	"github.com/stretchr/testify/require"
 )
 
@@ -343,4 +344,62 @@ func TestPasswordChangeTooShortNew(t *testing.T) {
 	h.ServeHTTP(rr, req)
 	require.Equal(t, http.StatusBadRequest, rr.Code)
 	require.Contains(t, rr.Body.String(), `"code":"password_too_short"`)
+}
+
+func TestLogin_RateLimited_Returns429(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	lim := ratelimit.NewLimiter(ratelimit.Opts{
+		SourceRate:      0.0001, // effectively zero
+		SourceBurst:     0,
+		FailThreshold:   1000,
+		LockoutBase:     time.Hour,
+		LockoutMax:      time.Hour,
+		CleanupInterval: time.Hour,
+	})
+	defer lim.Stop()
+
+	deps := authDeps{
+		d: d, sessionIdleTTL: time.Hour, sessionAbsoluteTTL: 24 * time.Hour,
+		limiter: lim,
+	}
+
+	body := `{"username":"ben","password":"password123"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/sessions", strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	loginHandler(deps).ServeHTTP(rr, req)
+	require.Equal(t, http.StatusTooManyRequests, rr.Code, rr.Body.String())
+	require.NotEmpty(t, rr.Header().Get("Retry-After"))
+}
+
+func TestLogin_RehashOnWeakParams(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	// Hash with weaker params.
+	weakerParams := auth.Params{Time: 1, Memory: 8 * 1024, Threads: 1, SaltLen: 8, KeyLen: 16}
+	hash, err := auth.Hash("correctpassword1", weakerParams)
+	require.NoError(t, err)
+	userID, err := db.InsertUser(context.Background(), d, db.NewUser{
+		Username: "rehashuser", PasswordHash: hash, Role: "user", CreatedAt: 0,
+	})
+	require.NoError(t, err)
+
+	currentParams := auth.Params{Time: 2, Memory: 64 * 1024, Threads: 1, SaltLen: 16, KeyLen: 32}
+	deps := authDeps{
+		d: d, sessionIdleTTL: time.Hour, sessionAbsoluteTTL: 24 * time.Hour,
+		hashParams: currentParams,
+	}
+
+	body, _ := json.Marshal(loginRequest{Username: "rehashuser", Password: "correctpassword1"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/sessions", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	loginHandler(deps).ServeHTTP(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+
+	// Verify the stored hash has been upgraded.
+	u, err := db.GetUserByID(context.Background(), d, userID)
+	require.NoError(t, err)
+	needs, err := auth.NeedsRehash(u.PasswordHash, currentParams)
+	require.NoError(t, err)
+	require.False(t, needs, "hash should have been upgraded to current params")
 }

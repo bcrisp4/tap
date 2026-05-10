@@ -2,53 +2,54 @@ package metrics
 
 import (
 	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/metric/noop"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 )
 
-// Instrument variables — safe to call before Init (no-op provider).
+// Instrument variables — safe to call before Init (no-op instruments until Init is called).
 // Each variable's description appears verbatim in the Prometheus HELP line.
 var (
 	// PollsTotal counts feed poll attempts by result.
-	PollsTotal metric.Int64Counter
+	PollsTotal metric.Int64Counter = noop.Int64Counter{}
 
 	// PollDuration measures wall-clock poll cycle duration in seconds.
-	PollDuration metric.Float64Histogram
+	PollDuration metric.Float64Histogram = noop.Float64Histogram{}
 
 	// EntriesInserted counts new entries committed to the database.
-	EntriesInserted metric.Int64Counter
+	EntriesInserted metric.Int64Counter = noop.Int64Counter{}
 
 	// ConditionalGetHits counts polls receiving a 304 Not Modified response.
-	ConditionalGetHits metric.Int64Counter
+	ConditionalGetHits metric.Int64Counter = noop.Int64Counter{}
 
 	// HTTPRequestsTotal counts inbound HTTP requests.
-	HTTPRequestsTotal metric.Int64Counter
+	HTTPRequestsTotal metric.Int64Counter = noop.Int64Counter{}
 
 	// HTTPRequestDuration measures inbound request latency in seconds.
-	HTTPRequestDuration metric.Float64Histogram
+	HTTPRequestDuration metric.Float64Histogram = noop.Float64Histogram{}
 
 	// ProxyCacheHits counts proxy requests served from filesystem cache.
-	ProxyCacheHits metric.Int64Counter
+	ProxyCacheHits metric.Int64Counter = noop.Int64Counter{}
 
 	// ProxyCacheMisses counts proxy requests requiring an origin fetch.
-	ProxyCacheMisses metric.Int64Counter
+	ProxyCacheMisses metric.Int64Counter = noop.Int64Counter{}
 
 	// ProxyCacheEvictions counts evicted cache files by reason.
-	ProxyCacheEvictions metric.Int64Counter
+	ProxyCacheEvictions metric.Int64Counter = noop.Int64Counter{}
 
 	// ProxyCacheBytes tracks total media cache size in bytes.
-	ProxyCacheBytes metric.Int64Gauge
+	ProxyCacheBytes metric.Int64Gauge = noop.Int64Gauge{}
 
 	// LoginAttempts counts login attempts by outcome.
-	LoginAttempts metric.Int64Counter
+	LoginAttempts metric.Int64Counter = noop.Int64Counter{}
 
 	// Lockouts counts lockout events triggered.
-	Lockouts metric.Int64Counter
+	Lockouts metric.Int64Counter = noop.Int64Counter{}
 
 	// ActiveSessions tracks non-expired session rows (approximate).
-	ActiveSessions metric.Int64Gauge
+	ActiveSessions metric.Int64Gauge = noop.Int64Gauge{}
 
 	// DBTxDuration measures database transaction duration by operation.
-	DBTxDuration metric.Float64Histogram
+	DBTxDuration metric.Float64Histogram = noop.Float64Histogram{}
 )
 
 func registerInstruments(mp *sdkmetric.MeterProvider) {
