@@ -173,7 +173,7 @@ func runAdminCreate(args []string, stdin io.Reader, stdout, stderr io.Writer, ha
 		return adminExitGeneric
 	}
 	id, err := db.InsertUser(ctx, d, db.NewUser{
-		Username: username, PasswordHash: hash, Role: *role, CreatedAt: timeNowUnix(),
+		Username: username, PasswordHash: hash, Role: *role, CreatedAt: time.Now().Unix(),
 	})
 	if err != nil {
 		if errors.Is(err, db.ErrUserExists) {
@@ -259,13 +259,6 @@ func runAdminPasswd(args []string, stdin io.Reader, stdout, stderr io.Writer, ha
 	return adminExitOK
 }
 
-// timeNow lets tests override the clock if needed. Production: time.Now.
-var timeNow = time.Now
-
-// timeNowUnix is broken out so tests can inject a fixed clock by overriding
-// timeNow. Used by runAdminCreate and (later) bootstrapAdmin.
-func timeNowUnix() int64 { return timeNow().Unix() }
-
 // bootstrapAdmin creates an admin user from the supplied credentials. Used
 // by the env-var first-launch shortcut after migrations. Validates the
 // password (so a too-short bootstrap password aborts loudly rather than
@@ -280,7 +273,7 @@ func bootstrapAdmin(ctx context.Context, d *sql.DB, username, password string, h
 		return fmt.Errorf("hash bootstrap password: %w", err)
 	}
 	if _, err := db.InsertUser(ctx, d, db.NewUser{
-		Username: username, PasswordHash: hash, Role: "admin", CreatedAt: timeNowUnix(),
+		Username: username, PasswordHash: hash, Role: "admin", CreatedAt: time.Now().Unix(),
 	}); err != nil {
 		return fmt.Errorf("insert bootstrap admin: %w", err)
 	}
