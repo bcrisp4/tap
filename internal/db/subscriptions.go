@@ -193,3 +193,26 @@ func QueryVelocity(ctx context.Context, d *sql.DB, subID int64, now time.Time) (
 	}
 	return velocity, nil
 }
+
+// UpdateSubscriptionExtraction sets extract + extract_selector on one row.
+// Returns sql.ErrNoRows if no subscription with that id exists, so the API
+// layer can map cleanly to 404. Both fields are written unconditionally —
+// the API layer is responsible for layering merge-patch semantics over this.
+func UpdateSubscriptionExtraction(ctx context.Context, d *sql.DB, id int64, extract bool, selector string) error {
+	res, err := d.ExecContext(ctx, `
+		UPDATE subscriptions
+		SET extract = ?, extract_selector = ?
+		WHERE id = ?
+	`, boolToInt(extract), selector, id)
+	if err != nil {
+		return fmt.Errorf("update subscription extraction %d: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
