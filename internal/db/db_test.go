@@ -7,6 +7,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestOpen_StripHTMLFunctionRegistered(t *testing.T) {
+	t.Parallel()
+	d, err := Open(context.Background(), ":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = d.Close() })
+
+	var got string
+	err = d.QueryRowContext(context.Background(),
+		`SELECT tap_strip_html('<p>Hello <em>world</em></p>')`).Scan(&got)
+	require.NoError(t, err)
+	require.Equal(t, "Hello world", got)
+}
+
 func TestOpen_InMemory_AppliesPragmas(t *testing.T) {
 	t.Parallel()
 
