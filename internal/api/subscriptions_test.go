@@ -149,3 +149,77 @@ func TestPatchSubscription_SetsAndClearsSelector(t *testing.T) {
 	got = patch(`{"extract_selector":""}`)
 	require.Equal(t, "", got["extract_selector"])
 }
+
+func TestPatchSubscription_MalformedSelectorReturns400(t *testing.T) {
+	t.Parallel()
+	mux, _ := newAPI(t)
+	subID := postSubscription(t, mux, `{"feed_url":"https://x.example/feed"}`)
+
+	body := strings.NewReader(`{"extract_selector":"[unclosed"}`)
+	req := httptest.NewRequest(http.MethodPatch,
+		"/api/v1/subscriptions/"+strconv.FormatInt(subID, 10), body)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusBadRequest, rr.Code, rr.Body.String())
+	require.Contains(t, rr.Body.String(), `"code":"extract_selector_invalid"`)
+
+	// Confirm the DB row is unchanged.
+	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/subscriptions", nil)
+	getRR := httptest.NewRecorder()
+	mux.ServeHTTP(getRR, getReq)
+	require.Equal(t, http.StatusOK, getRR.Code)
+	require.Contains(t, getRR.Body.String(), `"extract_selector":""`)
+}
+
+func TestPatchSubscription_UnknownIDReturns404(t *testing.T) {
+	t.Parallel()
+	mux, _ := newAPI(t)
+
+	body := strings.NewReader(`{"extract":true}`)
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/subscriptions/9999", body)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusNotFound, rr.Code, rr.Body.String())
+}
+
+func TestPatchSubscription_MalformedJSONReturns400(t *testing.T) {
+	t.Parallel()
+	mux, _ := newAPI(t)
+	subID := postSubscription(t, mux, `{"feed_url":"https://x.example/feed"}`)
+
+	req := httptest.NewRequest(http.MethodPatch,
+		"/api/v1/subscriptions/"+strconv.FormatInt(subID, 10),
+		strings.NewReader(`{not json`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusBadRequest, rr.Code, rr.Body.String())
+}
+
+func TestPatchSubscription_PartialUpdate_ExtractOnlyKeepsSelector(t *testing.T) {
+	t.Parallel()
+	mux, _ := newAPI(t)
+	subID := postSubscription(t, mux, `{"feed_url":"https://x.example/feed"}`)
+
+	patch := func(body string) {
+		req := httptest.NewRequest(http.MethodPatch,
+			"/api/v1/subscriptions/"+strconv.FormatInt(subID, 10),
+			strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		mux.ServeHTTP(rr, req)
+		require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+	}
+	patch(`{"extract_selector":".article"}`)
+
+	// Toggle extract; selector must NOT be cleared.
+	patch(`{"extract":true}`)
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/subscriptions", nil)
+	getRR := httptest.NewRecorder()
+	mux.ServeHTTP(getRR, getReq)
+	require.Contains(t, getRR.Body.String(), `"extract_selector":".article"`)
+	require.Contains(t, getRR.Body.String(), `"extract":true`)
+}
