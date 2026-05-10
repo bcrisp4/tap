@@ -1,6 +1,10 @@
 import { writable } from 'svelte/store';
 import type { User, SessionResponse } from './types';
 
+/** ERR_UNAUTHORIZED is thrown when an API request returns 401, so callers can
+ * distinguish credential failures from generic network or server errors. */
+export const ERR_UNAUTHORIZED = 'unauthorized';
+
 type State = {
   user: User | null;
   csrfToken: string | null;
@@ -13,7 +17,7 @@ const BASE = '/api/v1';
 
 async function jsonOr401<T>(res: Response): Promise<T> {
   if (res.status === 401) {
-    throw new Error('unauthorized');
+    throw new Error(ERR_UNAUTHORIZED);
   }
   if (!res.ok) {
     let message = `${res.status} ${res.statusText}`;

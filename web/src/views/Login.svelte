@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { auth } from '../lib/auth';
+  import { auth, ERR_UNAUTHORIZED } from '../lib/auth';
 
   let username = $state('');
   let password = $state('');
@@ -13,7 +13,7 @@
     try {
       await auth.login(username, password);
     } catch (err) {
-      error = err instanceof Error && err.message !== 'unauthorized'
+      error = err instanceof Error && err.message !== ERR_UNAUTHORIZED
         ? err.message
         : 'Invalid username or password.';
     } finally {

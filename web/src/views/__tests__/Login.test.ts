@@ -8,6 +8,7 @@ vi.mock('../../lib/auth', () => ({
     login: (...args: unknown[]) => loginMock(...args),
     subscribe: () => () => {},
   },
+  ERR_UNAUTHORIZED: 'unauthorized',
 }));
 
 beforeEach(() => loginMock.mockReset());

@@ -7,7 +7,7 @@ import type {
   ApiError,
   PasswordChangeResponse,
 } from './types';
-import { auth } from './auth';
+import { auth, ERR_UNAUTHORIZED } from './auth';
 
 const BASE = '/api/v1';
 
@@ -30,7 +30,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
   if (res.status === 401) {
     auth.clearOn401();
-    throw new Error('unauthorized');
+    throw new Error(ERR_UNAUTHORIZED);
   }
   if (!res.ok) {
     let detail: ApiError | null = null;
