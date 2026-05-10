@@ -34,8 +34,10 @@ func ResolveCookieSecure(mode CookieSecureMode, addr string) bool {
 }
 
 // resolveCookieSecure decides whether to set the Secure attribute on the
-// session cookie. In auto mode, it inspects the listen address: bound to
-// 127.0.0.0/8, ::1, or "localhost" → Secure off; anything else → Secure on.
+// session cookie. In auto mode it inspects the listen address: only
+// definitely-loopback hosts (127.0.0.0/8, ::1, "localhost") disable Secure;
+// anything else — including an empty host (":8080" → bind all interfaces) —
+// is conservative-default-on.
 func resolveCookieSecure(mode CookieSecureMode, addr string) bool {
 	switch mode {
 	case CookieSecureTrue:
@@ -49,8 +51,13 @@ func resolveCookieSecure(mode CookieSecureMode, addr string) bool {
 		return true
 	}
 	host = strings.TrimSpace(host)
-	if host == "" || host == "localhost" {
+	if host == "localhost" {
 		return false
+	}
+	if host == "" {
+		// Empty host means bind-all-interfaces (e.g. ":8080") — externally
+		// reachable, so be conservative and require HTTPS.
+		return true
 	}
 	ip := net.ParseIP(host)
 	if ip == nil {

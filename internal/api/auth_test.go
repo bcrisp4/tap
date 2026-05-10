@@ -31,6 +31,32 @@ func seedUser(t *testing.T, d *sql.DB, username, password, role string) int64 {
 	return id
 }
 
+func TestResolveCookieSecure(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		mode CookieSecureMode
+		addr string
+		want bool
+	}{
+		{"force-true overrides loopback", CookieSecureTrue, "127.0.0.1:8080", true},
+		{"force-false overrides public", CookieSecureFalse, "0.0.0.0:8080", false},
+		{"auto loopback ipv4", CookieSecureAuto, "127.0.0.1:8080", false},
+		{"auto loopback ipv6", CookieSecureAuto, "[::1]:8080", false},
+		{"auto localhost name", CookieSecureAuto, "localhost:8080", false},
+		{"auto bind-all empty host", CookieSecureAuto, ":8080", true},
+		{"auto unspecified ipv4", CookieSecureAuto, "0.0.0.0:8080", true},
+		{"auto bare hostname", CookieSecureAuto, "example.com:8080", true},
+		{"auto routable ipv4", CookieSecureAuto, "10.0.0.1:8080", true},
+		{"auto malformed addr fails safe", CookieSecureAuto, "not-a-host", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, resolveCookieSecure(tc.mode, tc.addr))
+		})
+	}
+}
+
 func TestLoginHappyPath(t *testing.T) {
 	t.Parallel()
 	d := newTestDB(t)
