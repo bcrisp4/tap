@@ -1,4 +1,4 @@
-# M10 Offline + PWA Implementation Plan
+# M10 — Offline + PWA Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -12,6 +12,27 @@
 - M7's auth surface (`/api/v1/sessions/current` returning `csrf_token`) is used by drain's `403 csrf_invalid` recovery path.
 - M8's mobile bottom tab bar occupies the bottom of the viewport; the SW update banner must be `position: fixed; top: 0`.
 - `background_color` in the manifest (`#fafaf7`) must be confirmed against M8's `--bg` token before shipping — m8-author has confirmed it matches.
+
+---
+
+## Skills and tools to apply
+
+Always-on for every code-touching task:
+
+- **`superpowers:test-driven-development`** — red/green/refactor on every behaviour-bearing change. Mandated by `docs/roadmap.md` §"Working cadence". Pure scaffolding (Vite config additions, icon files, manifest JSON, the `workerTypes.ts` type file) is exempt; everything with branches, error handling, or state is in scope.
+- **`superpowers:verification-before-completion`** — before marking a task done, actually run the test command listed in the task's verification step and confirm output matches expectations.
+
+Reach for as needed:
+
+- **`svelte-runes`** — Svelte 5 runes (`$state`, `$derived`, `$effect`) in `App.svelte`. The `needRefresh` store from `vite-plugin-pwa` integrates with Svelte stores; subscribe with `$needRefresh`. The repo is already Svelte 5 — check existing components for established style.
+- **`svelte-deployment`** — `pwa-setup.md` reference for `vite-plugin-pwa` `injectManifest` mode, Workbox strategy imports, and SW TypeScript patterns. Reach for it again if the Vite config or SW compilation fails.
+- **`svelte-components`** — for the SW update banner component pattern in `App.svelte`. Match the existing component ergonomics.
+- **`svelte-styling`** — for the `sw-update-banner` CSS (scoped styles, CSS custom property `--accent`). The banner uses `position: fixed; top: 0` to avoid collision with M8's mobile bottom tab bar.
+
+MCP tools:
+
+- **`context7` (`mcp__plugin_context7_context7__query-docs`)** — already used in this session to verify the `vite-plugin-pwa` injectManifest API (library ID `/vite-pwa/vite-plugin-pwa`). Reach for it again if the Workbox strategy API (`CacheFirst`, `StaleWhileRevalidate`, `ExpirationPlugin`) or the `useRegisterSW` API changes between sessions. Also useful for `workbox-expiration` `ExpirationPlugin` constructor options.
+- **`mcp__plugin_playwright_playwright__*`** — for running and debugging the three offline E2E scenarios in Task 10. Use `browser_navigate`, `browser_evaluate` (for localStorage inspection), and `browser_wait_for` rather than fixed `waitForTimeout` where possible.
 
 ---
 
