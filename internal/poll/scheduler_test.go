@@ -72,3 +72,15 @@ func TestScheduler_SkipsInflight(t *testing.T) {
 	dispatched := sch.Tick(context.Background())
 	require.Equal(t, 0, dispatched)
 }
+
+func TestScheduler_ActiveCount(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d, err := db.Open(ctx, ":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = d.Close() })
+	require.NoError(t, db.Migrate(ctx, d))
+
+	s := NewScheduler(ctx, d, http.DefaultClient, SchedulerOpts{})
+	require.Equal(t, int64(0), s.ActiveCount())
+}

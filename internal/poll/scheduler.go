@@ -180,6 +180,11 @@ func (s *Scheduler) Tick(ctx context.Context) int {
 // Poke triggers an immediate tick. Non-blocking; if a poke is already pending
 // it's a no-op (one queued tick is enough). Use after POSTing a new
 // subscription so the user doesn't wait up to TickInterval for the first poll.
+// ActiveCount returns the number of feeds currently being polled (in-memory approximation).
+func (s *Scheduler) ActiveCount() int64 {
+	return int64(len(s.inflight.IDs()))
+}
+
 func (s *Scheduler) Poke() {
 	select {
 	case s.poke <- struct{}{}:
