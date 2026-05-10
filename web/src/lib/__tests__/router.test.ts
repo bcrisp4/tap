@@ -61,6 +61,33 @@ describe('router URL parsing', () => {
     unsub();
     expect(current).toEqual({ name: 'unread' });
   });
+
+  it('parses /saved as saved route', async () => {
+    setPathname('/saved');
+    const { route } = await import('../router');
+    let current: unknown;
+    const unsub = route.subscribe((v) => { current = v; });
+    unsub();
+    expect(current).toEqual({ name: 'saved' });
+  });
+
+  it('parses /search as search route', async () => {
+    setPathname('/search');
+    const { route } = await import('../router');
+    let current: unknown;
+    const unsub = route.subscribe((v) => { current = v; });
+    unsub();
+    expect(current).toEqual({ name: 'search' });
+  });
+
+  it('parses /settings as settings route', async () => {
+    setPathname('/settings');
+    const { route } = await import('../router');
+    let current: unknown;
+    const unsub = route.subscribe((v) => { current = v; });
+    unsub();
+    expect(current).toEqual({ name: 'settings' });
+  });
 });
 
 describe('navigate()', () => {
