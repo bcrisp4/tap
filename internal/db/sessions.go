@@ -70,3 +70,46 @@ func RefreshSessionIdle(ctx context.Context, d *sql.DB, id, lastSeenAt, idleExpi
 	}
 	return nil
 }
+
+// UpdateSessionCSRFToken rotates the CSRF token on a session. PATCH
+// /me/password is the only call site; tokens otherwise live for the
+// session's full lifetime.
+func UpdateSessionCSRFToken(ctx context.Context, d *sql.DB, id int64, csrf string) error {
+	_, err := d.ExecContext(ctx, `UPDATE sessions SET csrf_token = ? WHERE id = ?`, csrf, id)
+	if err != nil {
+		return fmt.Errorf("update csrf token: %w", err)
+	}
+	return nil
+}
+
+// DeleteSession removes a single session row by id. Used by logout and by
+// the middleware when an absolute-expired session is encountered.
+func DeleteSession(ctx context.Context, d *sql.DB, id int64) error {
+	_, err := d.ExecContext(ctx, `DELETE FROM sessions WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("delete session: %w", err)
+	}
+	return nil
+}
+
+// DeleteSessionsByUserID removes every session belonging to a user. Used by
+// `tap admin passwd` (admin reset implies the user is locked out).
+func DeleteSessionsByUserID(ctx context.Context, d *sql.DB, userID int64) error {
+	_, err := d.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ?`, userID)
+	if err != nil {
+		return fmt.Errorf("delete sessions by user: %w", err)
+	}
+	return nil
+}
+
+// DeleteOtherSessionsForUser removes every session belonging to a user
+// except keepID. Used by PATCH /me/password — the user-initiated password
+// change keeps the current session active while invalidating any others.
+func DeleteOtherSessionsForUser(ctx context.Context, d *sql.DB, userID, keepID int64) error {
+	_, err := d.ExecContext(ctx,
+		`DELETE FROM sessions WHERE user_id = ? AND id <> ?`, userID, keepID)
+	if err != nil {
+		return fmt.Errorf("delete other sessions: %w", err)
+	}
+	return nil
+}

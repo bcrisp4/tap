@@ -68,3 +68,96 @@ func TestRefreshSessionIdle(t *testing.T) {
 	require.Equal(t, int64(700), s.IdleExpiresAt)
 	require.Equal(t, int64(1_000_000), s.AbsoluteExpiresAt, "absolute should not change on idle refresh")
 }
+
+func TestUpdateSessionCSRFToken(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	ctx := context.Background()
+	uid := insertTestUser(t, d, "ben")
+	sid, err := InsertSession(ctx, d, NewSession{
+		UserID: uid, TokenHash: "h", CSRFToken: "old",
+		CreatedAt: 0, LastSeenAt: 0, IdleExpiresAt: 1, AbsoluteExpiresAt: 1,
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, UpdateSessionCSRFToken(ctx, d, sid, "new"))
+	s, err := GetSessionByTokenHash(ctx, d, "h")
+	require.NoError(t, err)
+	require.Equal(t, "new", s.CSRFToken)
+}
+
+func TestDeleteSession(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	ctx := context.Background()
+	uid := insertTestUser(t, d, "ben")
+	sid, err := InsertSession(ctx, d, NewSession{
+		UserID: uid, TokenHash: "h", CSRFToken: "c",
+		CreatedAt: 0, LastSeenAt: 0, IdleExpiresAt: 1, AbsoluteExpiresAt: 1,
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, DeleteSession(ctx, d, sid))
+
+	_, err = GetSessionByTokenHash(ctx, d, "h")
+	require.ErrorIs(t, err, sql.ErrNoRows)
+}
+
+func TestDeleteSessionsByUserID(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	ctx := context.Background()
+	uid := insertTestUser(t, d, "ben")
+	other := insertTestUser(t, d, "alice")
+
+	for _, h := range []string{"h1", "h2", "h3"} {
+		_, err := InsertSession(ctx, d, NewSession{
+			UserID: uid, TokenHash: h, CSRFToken: "c",
+			CreatedAt: 0, LastSeenAt: 0, IdleExpiresAt: 1, AbsoluteExpiresAt: 1,
+		})
+		require.NoError(t, err)
+	}
+	_, err := InsertSession(ctx, d, NewSession{
+		UserID: other, TokenHash: "untouched", CSRFToken: "c",
+		CreatedAt: 0, LastSeenAt: 0, IdleExpiresAt: 1, AbsoluteExpiresAt: 1,
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, DeleteSessionsByUserID(ctx, d, uid))
+
+	for _, h := range []string{"h1", "h2", "h3"} {
+		_, err := GetSessionByTokenHash(ctx, d, h)
+		require.ErrorIs(t, err, sql.ErrNoRows, "hash %s should be gone", h)
+	}
+	_, err = GetSessionByTokenHash(ctx, d, "untouched")
+	require.NoError(t, err, "the other user's session should remain")
+}
+
+func TestDeleteOtherSessionsForUser(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	ctx := context.Background()
+	uid := insertTestUser(t, d, "ben")
+
+	keepID, err := InsertSession(ctx, d, NewSession{
+		UserID: uid, TokenHash: "keep", CSRFToken: "c",
+		CreatedAt: 0, LastSeenAt: 0, IdleExpiresAt: 1, AbsoluteExpiresAt: 1,
+	})
+	require.NoError(t, err)
+	for _, h := range []string{"drop1", "drop2"} {
+		_, err := InsertSession(ctx, d, NewSession{
+			UserID: uid, TokenHash: h, CSRFToken: "c",
+			CreatedAt: 0, LastSeenAt: 0, IdleExpiresAt: 1, AbsoluteExpiresAt: 1,
+		})
+		require.NoError(t, err)
+	}
+
+	require.NoError(t, DeleteOtherSessionsForUser(ctx, d, uid, keepID))
+
+	_, err = GetSessionByTokenHash(ctx, d, "keep")
+	require.NoError(t, err)
+	for _, h := range []string{"drop1", "drop2"} {
+		_, err := GetSessionByTokenHash(ctx, d, h)
+		require.ErrorIs(t, err, sql.ErrNoRows, "hash %s should be gone", h)
+	}
+}
