@@ -217,8 +217,15 @@ func runAdminPasswd(args []string, stdin io.Reader, stdout, stderr io.Writer, ha
 
 	u, err := db.GetUserByUsername(ctx, d, username)
 	if err != nil {
-		fmt.Fprintf(stderr, "user '%s' not found\n", username)
-		return adminExitUserExistsOrGone
+		// sql.ErrNoRows is the genuine not-found case; anything else is a
+		// real DB error (locked, migration drift, ...) and should surface
+		// rather than masquerade as "user not found".
+		if errors.Is(err, sql.ErrNoRows) {
+			fmt.Fprintf(stderr, "user '%s' not found\n", username)
+			return adminExitUserExistsOrGone
+		}
+		fmt.Fprintf(stderr, "lookup user: %v\n", err)
+		return adminExitGeneric
 	}
 
 	pass1, err := readPassword(stdin, "new password: ", stdout)
