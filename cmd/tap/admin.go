@@ -187,14 +187,76 @@ func runAdminCreate(args []string, stdin io.Reader, stdout, stderr io.Writer, ha
 	return adminExitOK
 }
 
-// runAdminPasswd is implemented in Task G3.
+// runAdminPasswd is the implementation of `tap admin passwd <username>`.
+// Resets a user's password and revokes every active session for them
+// (admin reset implies the user is locked out and must log in again).
 func runAdminPasswd(args []string, stdin io.Reader, stdout, stderr io.Writer, hashParams auth.Params) int {
-	_ = args
-	_ = stdin
-	_ = stdout
-	_ = hashParams
-	fmt.Fprintln(stderr, "tap admin passwd: not implemented yet")
-	return adminExitGeneric
+	fs := flag.NewFlagSet("admin passwd", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	dataDir := fs.String("data", envOr("TAP_DATA_DIR", "./data"), "data directory containing tap.db")
+	if err := fs.Parse(args); err != nil {
+		return adminExitGeneric
+	}
+	if fs.NArg() != 1 {
+		fmt.Fprintln(stderr, "usage: tap admin passwd <username>")
+		return adminExitGeneric
+	}
+	username := fs.Arg(0)
+	if username == "" {
+		fmt.Fprintln(stderr, "usage: tap admin passwd <username>")
+		return adminExitGeneric
+	}
+
+	ctx := context.Background()
+	d, err := openAdminDB(ctx, *dataDir)
+	if err != nil {
+		fmt.Fprintf(stderr, "open db: %v\n", err)
+		return adminExitGeneric
+	}
+	defer d.Close()
+
+	u, err := db.GetUserByUsername(ctx, d, username)
+	if err != nil {
+		fmt.Fprintf(stderr, "user '%s' not found\n", username)
+		return adminExitUserExistsOrGone
+	}
+
+	pass1, err := readPassword(stdin, "new password: ", stdout)
+	if err != nil {
+		fmt.Fprintf(stderr, "read password: %v\n", err)
+		return adminExitGeneric
+	}
+	if err := auth.ValidatePassword(pass1); err != nil {
+		fmt.Fprintf(stderr, "password too short (min %d)\n", auth.MinPasswordLength)
+		return adminExitGeneric
+	}
+	pass2, err := readPassword(stdin, "confirm:      ", stdout)
+	if err != nil {
+		fmt.Fprintf(stderr, "read password: %v\n", err)
+		return adminExitGeneric
+	}
+	if pass1 != pass2 {
+		fmt.Fprintln(stderr, "passwords do not match")
+		return adminExitPasswordMismatch
+	}
+
+	hash, err := auth.Hash(pass1, hashParams)
+	if err != nil {
+		fmt.Fprintf(stderr, "hash password: %v\n", err)
+		return adminExitGeneric
+	}
+	if err := db.UpdatePasswordHash(ctx, d, u.ID, hash); err != nil {
+		fmt.Fprintf(stderr, "update password: %v\n", err)
+		return adminExitGeneric
+	}
+	// Admin reset always invalidates ALL sessions for the user — they are
+	// expected to log in again with the new credentials.
+	if err := db.DeleteSessionsByUserID(ctx, d, u.ID); err != nil {
+		fmt.Fprintf(stderr, "delete sessions: %v\n", err)
+		return adminExitGeneric
+	}
+	fmt.Fprintf(stdout, "password reset for '%s'\n", username)
+	return adminExitOK
 }
 
 // timeNow lets tests override the clock if needed. Production: time.Now.
