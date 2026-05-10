@@ -21,6 +21,7 @@ function makeEntry(overrides: Partial<EntryListItem> = {}): EntryListItem {
     fetched_at: 1700000001,
     read: false,
     saved: false,
+    extract_failed: false,
     ...overrides,
   };
 }

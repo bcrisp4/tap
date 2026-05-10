@@ -35,6 +35,7 @@ function makeEntry(overrides: Partial<EntryDetail> = {}): EntryDetail {
     fetched_at: 1700000001,
     read: false,
     saved: false,
+    extract_failed: false,
     ...overrides,
   };
 }

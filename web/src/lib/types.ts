@@ -8,6 +8,12 @@ export type Subscription = {
   error_count: number;
   last_error?: string;
   created_at: number;
+  // M5 backfill — present on the wire since M5; the type was missing them.
+  extract: boolean;
+  extract_selector: string;
+  // M6.
+  has_cookie: boolean;
+  has_basic_auth: boolean;
 };
 
 export type EntryListItem = {
@@ -20,6 +26,8 @@ export type EntryListItem = {
   fetched_at: number;
   read: boolean;
   saved: boolean;
+  // M5 backfill.
+  extract_failed: boolean;
 };
 
 export type EntryDetail = EntryListItem & {
@@ -35,4 +43,20 @@ export type ListResponse<T> = {
 
 export type ApiError = {
   error: { code: string; message: string };
+};
+
+// M6: auth types.
+export type User = {
+  id: number;
+  username: string;
+  role: 'admin' | 'user';
+};
+
+export type SessionResponse = {
+  user: User;
+  csrf_token: string;
+};
+
+export type PasswordChangeResponse = {
+  csrf_token: string;
 };
