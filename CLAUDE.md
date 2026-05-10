@@ -4,7 +4,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Tap is a self-hosted RSS / Atom / JSON Feed reader. It ships as **one static Go binary** with an embedded SQLite database, an embedded Svelte SPA, and no external services. See `docs/concept.md` for the full design and `docs/roadmap.md` for the milestone plan; **M5 in progress** (article extraction landing — spec at `docs/specs/2026-05-09-m5-article-extraction.md`; M4 polling discipline merged — spec at `docs/specs/2026-05-09-m4-polling-discipline.md`; M3 media proxy merged — spec at `docs/specs/2026-05-09-m3-media-proxy.md`; M2 sanitisation pipeline merged — spec at `docs/specs/2026-05-08-m2-sanitisation.md`; M1 walking-skeleton spec at `docs/specs/2026-05-08-m1-walking-skeleton.md`).
+Tap is a self-hosted RSS / Atom / JSON Feed reader. It ships as **one
+static Go binary** with an embedded SQLite database, an embedded Svelte
+SPA, and no external services. See `docs/concept.md` for the full design
+and `docs/roadmap.md` for the milestone plan; **M6 in progress** (auth
+foundations landing — spec at
+`docs/specs/2026-05-10-m6-auth-foundations.md`; M5 article extraction
+merged — spec at `docs/specs/2026-05-09-m5-article-extraction.md`; M4
+polling discipline merged — spec at
+`docs/specs/2026-05-09-m4-polling-discipline.md`; M3 media proxy merged
+— spec at `docs/specs/2026-05-09-m3-media-proxy.md`; M2 sanitisation
+pipeline merged — spec at `docs/specs/2026-05-08-m2-sanitisation.md`;
+M1 walking-skeleton spec at `docs/specs/2026-05-08-m1-walking-skeleton.md`).
 
 ## Commands
 
@@ -71,6 +82,31 @@ Feed HTML is sanitised on the server before storage by `internal/sanitise.Policy
 The shared HTTP client is constructed via `httpx.NewClient(opts)` (M4) and is used by both polling and the media proxy. SSRF is enforced by `internal/httpx/ssrf.go` (`SSRFPolicy.AllowAddr` for the dialer, `CheckRedirect` for redirects re-checked independently from the initial URL). Per-host concurrency is capped at 4 by default in `internal/httpx/hostlimit.go`. The polling cadence is adaptive (`internal/cadence/`), driven by the `velocity_24h_x100` column on `subscriptions`: floor 15min, ceiling 24h, with origin-mandated `Retry-After` and `Cache-Control: max-age` honoured as floors. Error backoff is exponential (5m × 2^(n-1), capped 24h, 25% jitter).
 
 Subscriptions opted into M5 article extraction (`extract = true`) fetch each new entry's article URL via the shared client (SSRF, per-host cap, `--http-timeout` all apply). Readability mode by default; per-feed `extract_selector` CSS override available via PATCH /api/v1/subscriptions/:id (validated through `cascadia.Compile` at write time). Extracted HTML flows through `processor.Process` so M2 sanitisation and M3 image proxying still apply. Per-entry failures set `entries.extract_failed = 1` and degrade to the feed-provided summary; they never abort the poll. Bounded by `--extract-concurrency` (default 4) inside each feed worker.
+
+M6 introduces user accounts (argon2id passwords, `users` + `sessions`
+tables) and the session/CSRF middleware on every `/api/v1/*` route except
+`POST /sessions` and `/healthz`. Session cookies are `HttpOnly`,
+`SameSite=Lax`, and conditionally `Secure` (auto-resolves against the
+listen address; explicit override via `--cookie-secure`). CSRF tokens
+live on the `sessions` row, return in the login JSON, and rotate only
+on password change.
+
+Per-feed credentials (`subscriptions.cookie`, `basic_auth_user`,
+`basic_auth_pass`) are accepted on POST/PATCH `/api/v1/subscriptions`
+but never returned on GET — the read DTO exposes only `has_cookie` /
+`has_basic_auth` booleans. Layered onto outbound requests via
+`internal/httpx.ApplyFeedCreds` for feed polling and article extraction
+only — the media proxy (`internal/proxy/handler.go`) deliberately
+fetches origins anonymously, mirroring Miniflux. Same-origin
+authenticated images render broken; this is a known cross-ecosystem
+limitation, not a Tap-specific deficiency.
+
+Admin bootstrap is out-of-band (concept §7.1): either
+`TAP_ADMIN_USERNAME`/`TAP_ADMIN_PASSWORD` on first launch (silent on
+populated DBs) or `tap admin create` interactively from the host.
+`tap admin passwd <username>` resets a forgotten password and
+force-logs-out that user's active sessions. There is no SPA-visible
+bootstrap path.
 
 Defence-in-depth defaults that should not be weakened lightly:
 
