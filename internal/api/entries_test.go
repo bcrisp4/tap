@@ -61,7 +61,7 @@ func toStr(i int64) string {
 	return strconv.FormatInt(i, 10)
 }
 
-func TestGetEntry_IncludesExtractFailed(t *testing.T) {
+func TestEntries_ListIncludesExtractFailed(t *testing.T) {
 	t.Parallel()
 	mux, d := newAPI(t)
 
@@ -77,6 +77,28 @@ func TestGetEntry_IncludesExtractFailed(t *testing.T) {
 
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/v1/entries", nil))
+	require.Equal(t, http.StatusOK, rr.Code)
+	require.Contains(t, rr.Body.String(), `"extract_failed":true`)
+}
+
+func TestGetEntry_IncludesExtractFailed(t *testing.T) {
+	t.Parallel()
+	mux, d := newAPI(t)
+
+	subID, err := db.InsertSubscription(context.Background(), d, db.NewSubscription{
+		Title: "x", FeedURL: "https://x.example/feed", NextPoll: 0, Created: 0,
+	})
+	require.NoError(t, err)
+	res, err := d.ExecContext(context.Background(), `
+		INSERT INTO entries (subscription_id, hash, title, url, content, published_at, fetched_at, extract_failed)
+		VALUES (?, 'h', 'T', 'https://x/1', '<p>x</p>', 0, 0, 1)
+	`, subID)
+	require.NoError(t, err)
+	entryID, err := res.LastInsertId()
+	require.NoError(t, err)
+
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/v1/entries/"+toStr(entryID), nil))
 	require.Equal(t, http.StatusOK, rr.Code)
 	require.Contains(t, rr.Body.String(), `"extract_failed":true`)
 }
