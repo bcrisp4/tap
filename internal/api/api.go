@@ -31,10 +31,10 @@ type MuxOpts struct {
 	HashParams         auth.Params
 }
 
-// NewMux returns the API mux. db is required for everything except /healthz
-// (and /api/v1/sessions login, which writes into db too — but the mux
-// degenerates to login-only when db is nil so callers that just want
-// /healthz still work).
+// NewMux returns the API mux. db is required for everything except /healthz;
+// when db is nil the mux degenerates to /healthz-only so callers that just
+// want the health surface still work. (POST /api/v1/sessions also needs db
+// for the user lookup, so it lives inside the db != nil branch.)
 //
 // The mux mounts the auth middleware on every authenticated route; the only
 // public surfaces are GET /healthz and POST /api/v1/sessions. State-changing
@@ -65,11 +65,15 @@ func NewMux(db *sql.DB, opts MuxOpts) *http.ServeMux {
 		w.Header().Set("Content-Type", "text/plain")
 		_, _ = w.Write([]byte("ok"))
 	})
-	m.Handle("POST /api/v1/sessions", loginHandler(deps))
 
 	if db == nil {
+		// /healthz only — login + every authenticated route reads/writes the
+		// DB and would panic on a nil handle. Callers that pass nil are
+		// asking for the health surface and nothing else.
 		return m
 	}
+
+	m.Handle("POST /api/v1/sessions", loginHandler(deps))
 
 	// Authenticated routes. Sub-muxes carry the existing handler bodies;
 	// each route is then mounted on the parent mux through the appropriate
