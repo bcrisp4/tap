@@ -249,7 +249,7 @@ func IsTombstoned(ctx context.Context, d *sql.DB, subscriptionID int64, entryHas
 		WHERE subscription_id = ? AND entry_hash = ?
 		LIMIT 1
 	`, subscriptionID, entryHash).Scan(&exists)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
@@ -785,6 +785,8 @@ func TestDBPass_ExistingTombstone_NoConflictError(t *testing.T) {
 }
 
 func TestDBPass_Chunking(t *testing.T) {
+	// Spec requires: 2500 entries → 3 transactions (1000 + 1000 + 500).
+	// Verified via chunkHook, which fires once per chunk transaction commit.
 	t.Parallel()
 	d := openTestDB(t)
 	ctx := context.Background()
@@ -793,10 +795,12 @@ func TestDBPass_Chunking(t *testing.T) {
 		insertEntry(t, d, subID, fmt.Sprintf("h%d", i), 100, true, false)
 	}
 
-	deleted, tombstoned, err := dbPass(ctx, d, 500, time.Now().Unix())
+	var txCount int
+	deleted, tombstoned, err := dbPassWithHook(ctx, d, 500, time.Now().Unix(), func() { txCount++ })
 	require.NoError(t, err)
 	require.Equal(t, 2500, deleted)
 	require.Equal(t, 2500, tombstoned)
+	require.Equal(t, 3, txCount, "expected 3 chunk transactions (1000+1000+500)")
 
 	var count int
 	require.NoError(t, d.QueryRowContext(ctx,
@@ -891,6 +895,11 @@ func TestDBPass_FTSTriggers_KeepFTSInSync(t *testing.T) {
 
 	if ftsExists == 1 {
 		var before int
+		// MATCH 'content' works because the test entries have content='content'
+		// (plain text, no HTML tags). M9's tap_strip_html("content") = "content",
+		// so FTS5 cross-column search finds it. The query relies on FTS5's
+		// default cross-column search behaviour — this is intentional for
+		// fixture simplicity.
 		require.NoError(t, d.QueryRowContext(ctx,
 			"SELECT COUNT(*) FROM entries_fts WHERE entries_fts MATCH 'content'",
 		).Scan(&before))
@@ -915,8 +924,6 @@ func TestDBPass_FTSTriggers_KeepFTSInSync(t *testing.T) {
 	require.Equal(t, 1, entryCount)
 }
 
-// suppress unused import error when errors package is only used in sweep.go
-var _ = errors.New
 ```
 
 - [ ] **Step 2: Run tests, confirm they fail**
@@ -947,7 +954,16 @@ import (
 
 const chunkSize = 1000
 
+// dbPass is the production entry point. For tests that need to count chunk
+// transactions, use dbPassWithHook.
 func dbPass(ctx context.Context, d *sql.DB, horizonUnix, nowUnix int64) (deleted, tombstoned int, err error) {
+	return dbPassWithHook(ctx, d, horizonUnix, nowUnix, nil)
+}
+
+// dbPassWithHook runs the DB archival pass, calling onChunk (if non-nil) after
+// each chunk transaction commits. Used by TestDBPass_Chunking to verify
+// transaction count without exposing a test seam on the production path.
+func dbPassWithHook(ctx context.Context, d *sql.DB, horizonUnix, nowUnix int64, onChunk func()) (deleted, tombstoned int, err error) {
 	for {
 		rows, err := db.ListArchivable(ctx, d, horizonUnix, chunkSize)
 		if err != nil {
@@ -987,6 +1003,10 @@ func dbPass(ctx context.Context, d *sql.DB, horizonUnix, nowUnix int64) (deleted
 		n, _ := res.RowsAffected()
 		deleted += int(n)
 		tombstoned += len(tbs)
+
+		if onChunk != nil {
+			onChunk()
+		}
 	}
 }
 
@@ -1015,6 +1035,13 @@ type cacheFileMeta struct {
 	FetchedAt   int64  `json:"fetched_at"`
 }
 
+// fsPass runs two directory walks: the first collects .meta files and records
+// which base paths have a .meta; the second finds .bin files with no .meta
+// sibling (orphans from a crash mid-write). The double-walk is deliberate
+// simplicity — this runs at most once per day, so two O(N) scans are fine.
+// Note: M3 writes .bin.tmp then renames to .bin; a crash between the two
+// renames leaves a .bin without a .meta, which the orphan walk correctly
+// detects and removes.
 func fsPass(cacheDir string, ageCapUnix int64, onEvict func(int)) (evicted int, err error) {
 	type candidate struct{ binPath, metaPath string }
 	var candidates []candidate
@@ -1304,7 +1331,7 @@ func (a *Archiver) sweep() {
 	now := a.opts.Now()
 	horizonUnix := now.Add(-a.opts.Horizon).Unix()
 	ageCapUnix := now.Add(-a.opts.CacheAgeCap).Unix()
-	start := time.Now()
+	start := now // use injected clock for consistent duration_ms in tests
 
 	slog.Info("archival.sweep.start")
 
@@ -1322,7 +1349,7 @@ func (a *Archiver) sweep() {
 		"entries_deleted", deleted,
 		"tombstones_written", tombstoned,
 		"cache_files_evicted", evicted,
-		"duration_ms", time.Since(start).Milliseconds(),
+		"duration_ms", a.opts.Now().Sub(start).Milliseconds(),
 	)
 }
 ```
@@ -1454,7 +1481,12 @@ Add to `cmd/tap/main_test.go` (check existing imports; add any missing ones from
 ```go
 func TestArchival_DBSweep_EndToEnd(t *testing.T) {
 	t.Parallel()
-	d := newTestDB(t) // opens :memory: + Migrate
+	// cmd/tap/main_test.go has no newTestDB helper — open inline following
+	// the pattern already used in that file.
+	d, err := db.Open(context.Background(), ":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = d.Close() })
+	require.NoError(t, db.Migrate(context.Background(), d))
 
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/atom+xml")
