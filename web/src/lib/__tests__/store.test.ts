@@ -178,7 +178,7 @@ describe('subscriptionsStore', () => {
     const { subscriptions: store } = await import('../store');
     await store.add('https://example.com/feed');
 
-    expect(api.addSubscription).toHaveBeenCalledWith('https://example.com/feed');
+    expect(api.addSubscription).toHaveBeenCalledWith({ feed_url: 'https://example.com/feed' });
     expect(api.listSubscriptions).toHaveBeenCalled();
   });
 });

@@ -1,22 +1,41 @@
+import { get } from 'svelte/store';
 import type {
   Subscription,
   EntryListItem,
   EntryDetail,
   ListResponse,
   ApiError,
+  PasswordChangeResponse,
 } from './types';
+import { auth } from './auth';
 
 const BASE = '/api/v1';
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const res = await fetch(BASE + path, {
-    headers: { 'Content-Type': 'application/json', ...(init.headers ?? {}) },
-    ...init,
-  });
+  const method = (init.method ?? 'GET').toUpperCase();
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...((init.headers ?? {}) as Record<string, string>),
+  };
+
+  // Attach CSRF on state-changing methods. Read non-reactively from the store.
+  if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
+    const csrf = get(auth).csrfToken;
+    if (csrf) {
+      headers['X-CSRF-Token'] = csrf;
+    }
+  }
+
+  const res = await fetch(BASE + path, { ...init, headers });
+
+  if (res.status === 401) {
+    auth.clearOn401();
+    throw new Error('unauthorized');
+  }
   if (!res.ok) {
     let detail: ApiError | null = null;
     try { detail = await res.json(); } catch { /* swallow */ }
-    throw new Error(detail?.error.message ?? `${res.status} ${res.statusText}`);
+    throw new Error(detail?.error?.message ?? `${res.status} ${res.statusText}`);
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
@@ -26,10 +45,32 @@ export const api = {
   listSubscriptions: () =>
     request<ListResponse<Subscription>>('/subscriptions').then(r => r.data),
 
-  addSubscription: (feed_url: string) =>
+  addSubscription: (body: {
+    feed_url: string;
+    title?: string;
+    extract?: boolean;
+    cookie?: string;
+    basic_auth_user?: string;
+    basic_auth_pass?: string;
+  }) =>
     request<Subscription>('/subscriptions', {
       method: 'POST',
-      body: JSON.stringify({ feed_url }),
+      body: JSON.stringify(body),
+    }),
+
+  patchSubscription: (
+    id: number,
+    patch: {
+      extract?: boolean;
+      extract_selector?: string;
+      cookie?: string;
+      basic_auth_user?: string;
+      basic_auth_pass?: string;
+    },
+  ) =>
+    request<Subscription>(`/subscriptions/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
     }),
 
   deleteSubscription: (id: number) =>
@@ -58,4 +99,16 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(patch),
     }),
+
+  changePassword: async (currentPassword: string, newPassword: string) => {
+    const resp = await request<PasswordChangeResponse>('/me/password', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        current_password: currentPassword,
+        new_password: newPassword,
+      }),
+    });
+    auth.setCSRFToken(resp.csrf_token);
+    return resp;
+  },
 };

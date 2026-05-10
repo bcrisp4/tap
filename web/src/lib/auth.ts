@@ -1,5 +1,5 @@
 import { writable } from 'svelte/store';
-import type { User, SessionResponse, PasswordChangeResponse } from './types';
+import type { User, SessionResponse } from './types';
 
 type State = {
   user: User | null;
@@ -89,8 +89,3 @@ export const auth = {
     internal.set({ user: null, csrfToken: null, bootstrapped: true });
   },
 };
-
-// Suppress an unused-import warning while PasswordChangeResponse is referenced
-// only in api.ts.
-const _typeAnchor: PasswordChangeResponse | null = null;
-void _typeAnchor;
