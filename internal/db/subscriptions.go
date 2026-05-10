@@ -220,42 +220,28 @@ func QueryVelocity(ctx context.Context, d *sql.DB, subID int64, now time.Time) (
 	return velocity, nil
 }
 
-// UpdateSubscriptionExtraction sets extract + extract_selector on one row.
-// Returns sql.ErrNoRows if no subscription with that id exists, so the API
-// layer can map cleanly to 404. Both fields are written unconditionally —
-// the API layer is responsible for layering merge-patch semantics over this.
-func UpdateSubscriptionExtraction(ctx context.Context, d *sql.DB, id int64, extract bool, selector string) error {
+// UpdateSubscriptionPatch sets extract + extract_selector + cookie +
+// basic_auth_user + basic_auth_pass on one row in a single atomic UPDATE.
+// Returns sql.ErrNoRows if no subscription with that id exists.
+//
+// All five columns are written unconditionally — the API layer is responsible
+// for layering merge-patch semantics over this (omitted = no change, empty =
+// clear) by reading the row first and substituting current values for any
+// fields the request did not specify.
+//
+// One UPDATE means a partial failure cannot leave the row half-updated, which
+// the predecessor pair (UpdateSubscriptionExtraction + UpdateSubscriptionCredentials)
+// could in principle do under SQLite I/O failure between the two writes.
+func UpdateSubscriptionPatch(ctx context.Context, d *sql.DB, id int64,
+	extract bool, selector, cookie, basicAuthUser, basicAuthPass string) error {
 	res, err := d.ExecContext(ctx, `
 		UPDATE subscriptions
-		SET extract = ?, extract_selector = ?
+		SET extract = ?, extract_selector = ?, cookie = ?,
+		    basic_auth_user = ?, basic_auth_pass = ?
 		WHERE id = ?
-	`, boolToInt(extract), selector, id)
+	`, boolToInt(extract), selector, cookie, basicAuthUser, basicAuthPass, id)
 	if err != nil {
-		return fmt.Errorf("update subscription extraction %d: %w", id, err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("rows affected: %w", err)
-	}
-	if n == 0 {
-		return sql.ErrNoRows
-	}
-	return nil
-}
-
-// UpdateSubscriptionCredentials sets cookie + basic_auth_user + basic_auth_pass
-// on one row. Returns sql.ErrNoRows if no subscription with that id exists.
-// All three fields are written unconditionally — the API layer is responsible
-// for the merge-patch semantics (omitted = no change, empty = clear).
-func UpdateSubscriptionCredentials(ctx context.Context, d *sql.DB, id int64,
-	cookie, basicAuthUser, basicAuthPass string) error {
-	res, err := d.ExecContext(ctx, `
-		UPDATE subscriptions
-		SET cookie = ?, basic_auth_user = ?, basic_auth_pass = ?
-		WHERE id = ?
-	`, cookie, basicAuthUser, basicAuthPass, id)
-	if err != nil {
-		return fmt.Errorf("update subscription credentials %d: %w", id, err)
+		return fmt.Errorf("update subscription patch %d: %w", id, err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {

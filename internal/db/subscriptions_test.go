@@ -151,7 +151,7 @@ func TestListDuePolls_ReturnsExtractionFields(t *testing.T) {
 	require.Equal(t, ".body", due[0].ExtractSelector, "ExtractSelector should round-trip")
 }
 
-func TestUpdateSubscriptionExtraction_HappyPath(t *testing.T) {
+func TestUpdateSubscriptionPatch_AllFieldsAtomic(t *testing.T) {
 	t.Parallel()
 	d := newTestDB(t)
 	ctx := context.Background()
@@ -161,27 +161,28 @@ func TestUpdateSubscriptionExtraction_HappyPath(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	require.NoError(t, UpdateSubscriptionExtraction(ctx, d, id, true, ".article"))
-
-	due, err := ListDuePolls(ctx, d, 0, 10)
+	// Happy path: writes all five columns in one statement.
+	require.NoError(t, UpdateSubscriptionPatch(ctx, d, id, true, ".body", "c", "u", "p"))
+	s, err := GetSubscription(ctx, d, id)
 	require.NoError(t, err)
-	require.Len(t, due, 1)
-	require.True(t, due[0].Extract)
-	require.Equal(t, ".article", due[0].ExtractSelector)
+	require.True(t, s.Extract)
+	require.Equal(t, ".body", s.ExtractSelector)
+	require.Equal(t, "c", s.Cookie)
+	require.Equal(t, "u", s.BasicAuthUser)
+	require.Equal(t, "p", s.BasicAuthPass)
 
-	// Clearing the selector with empty string works.
-	require.NoError(t, UpdateSubscriptionExtraction(ctx, d, id, true, ""))
-	due, err = ListDuePolls(ctx, d, 0, 10)
+	// Empty strings clear the selector and credentials atomically.
+	require.NoError(t, UpdateSubscriptionPatch(ctx, d, id, false, "", "", "", ""))
+	s, err = GetSubscription(ctx, d, id)
 	require.NoError(t, err)
-	require.Equal(t, "", due[0].ExtractSelector)
-}
+	require.False(t, s.Extract)
+	require.Empty(t, s.ExtractSelector)
+	require.Empty(t, s.Cookie)
+	require.Empty(t, s.BasicAuthUser)
+	require.Empty(t, s.BasicAuthPass)
 
-func TestUpdateSubscriptionExtraction_MissingIDReturnsErrNoRows(t *testing.T) {
-	t.Parallel()
-	d := newTestDB(t)
-	ctx := context.Background()
-
-	err := UpdateSubscriptionExtraction(ctx, d, 999, true, "")
+	// Missing id → sql.ErrNoRows.
+	err = UpdateSubscriptionPatch(ctx, d, id+999, false, "", "", "", "")
 	require.ErrorIs(t, err, sql.ErrNoRows)
 }
 
@@ -244,32 +245,3 @@ func TestListDuePollsCarriesCreds(t *testing.T) {
 	require.Equal(t, "p", due[0].BasicAuthPass)
 }
 
-func TestUpdateSubscriptionCredentials(t *testing.T) {
-	t.Parallel()
-	d := newTestDB(t)
-	ctx := context.Background()
-
-	id, err := InsertSubscription(ctx, d, NewSubscription{
-		Title: "x", FeedURL: "https://x.example/feed", NextPoll: 0, Created: 0,
-	})
-	require.NoError(t, err)
-
-	require.NoError(t, UpdateSubscriptionCredentials(ctx, d, id, "ckie", "u", "p"))
-	s, err := GetSubscription(ctx, d, id)
-	require.NoError(t, err)
-	require.Equal(t, "ckie", s.Cookie)
-	require.Equal(t, "u", s.BasicAuthUser)
-	require.Equal(t, "p", s.BasicAuthPass)
-
-	// Empty strings clear.
-	require.NoError(t, UpdateSubscriptionCredentials(ctx, d, id, "", "", ""))
-	s, err = GetSubscription(ctx, d, id)
-	require.NoError(t, err)
-	require.Empty(t, s.Cookie)
-	require.Empty(t, s.BasicAuthUser)
-	require.Empty(t, s.BasicAuthPass)
-
-	// Missing id → sql.ErrNoRows.
-	err = UpdateSubscriptionCredentials(ctx, d, id+999, "x", "y", "z")
-	require.ErrorIs(t, err, sql.ErrNoRows)
-}

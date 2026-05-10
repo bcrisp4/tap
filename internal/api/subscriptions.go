@@ -149,11 +149,10 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 		}
 
 		// Pre-read the row so omitted PATCH fields keep their current values:
-		// UpdateSubscriptionExtraction and UpdateSubscriptionCredentials each
-		// write all of their columns unconditionally, so without this step a
-		// PATCH of {"extract":true} alone would zero out an existing
-		// extract_selector — and a PATCH of {"cookie":"x"} would zero out
-		// basic_auth_user/basic_auth_pass.
+		// UpdateSubscriptionPatch writes every editable column unconditionally,
+		// so without this step a PATCH of {"extract":true} alone would zero
+		// out an existing extract_selector — and a PATCH of {"cookie":"x"}
+		// would zero out basic_auth_user/basic_auth_pass.
 		s, err := db.GetSubscription(r.Context(), d, id)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
@@ -194,15 +193,10 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 			basicPass = *body.BasicAuthPass
 		}
 
-		if err := db.UpdateSubscriptionExtraction(r.Context(), d, id, extract, selector); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				writeError(w, http.StatusNotFound, ErrCodeNotFound, "subscription not found")
-				return
-			}
-			writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())
-			return
-		}
-		if err := db.UpdateSubscriptionCredentials(r.Context(), d, id, cookie, basicUser, basicPass); err != nil {
+		// Single atomic UPDATE — a partial failure can't leave the row
+		// half-updated (predecessor used two sequential UPDATEs).
+		if err := db.UpdateSubscriptionPatch(r.Context(), d, id,
+			extract, selector, cookie, basicUser, basicPass); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				writeError(w, http.StatusNotFound, ErrCodeNotFound, "subscription not found")
 				return
