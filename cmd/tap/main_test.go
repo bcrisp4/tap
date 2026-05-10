@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/bcrisp4/tap/internal/api"
+	"github.com/bcrisp4/tap/internal/archival"
 	"github.com/bcrisp4/tap/internal/auth"
 	"github.com/bcrisp4/tap/internal/db"
 	"github.com/bcrisp4/tap/internal/httpx"
@@ -639,4 +641,88 @@ func TestEndToEnd_ExtractFailure_FallsBackToSummary(t *testing.T) {
 	require.NoError(t, json.NewDecoder(rr2.Body).Decode(&detail))
 	require.Contains(t, detail.Content, "feed-summary",
 		"failed extraction must fall back to the feed-provided summary")
+}
+
+func boolPtr(b bool) *bool { return &b }
+
+func TestArchival_DBSweep_EndToEnd(t *testing.T) {
+	t.Parallel()
+	d, err := db.Open(context.Background(), ":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = d.Close() })
+	require.NoError(t, db.Migrate(context.Background(), d))
+
+	ctx := context.Background()
+	uid := insertE2EUser(t, d)
+
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/atom+xml")
+		fmt.Fprint(w, `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>E2E</title><id>urn:e2e</id><updated>2026-05-01T00:00:00Z</updated>
+  <entry>
+    <title>Old Entry</title><id>urn:e2e:1</id>
+    <link href="https://example.com/1"/>
+    <updated>2024-01-01T00:00:00Z</updated>
+    <content type="html">body text</content>
+  </entry>
+</feed>`)
+	}))
+	t.Cleanup(origin.Close)
+
+	proc := processor.New(sanitise.DefaultPolicy(), nil)
+	subID, err := db.InsertSubscription(ctx, d, db.NewSubscription{
+		UserID: uid, Title: "e2e", FeedURL: origin.URL + "/feed", NextPoll: 0, Created: time.Now().Unix(),
+	})
+	require.NoError(t, err)
+
+	w := poll.NewWorker(d, http.DefaultClient, poll.WorkerOpts{Processor: proc})
+	w.Run(ctx, db.DueSubscription{UserID: uid, ID: subID, FeedURL: origin.URL + "/feed"})
+
+	entries, _, _, err := db.ListEntries(ctx, d, db.ListEntriesParams{UserID: uid, Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+
+	require.NoError(t, db.UpdateEntry(ctx, d, entries[0].ID, uid, db.EntryUpdate{Read: boolPtr(true)}))
+
+	// published_at is 2024-01-01; horizon = now is well past it
+	deleted, tombstoned, err := archival.ExportedDBPass(ctx, d, time.Now().Unix(), time.Now().Unix())
+	require.NoError(t, err)
+	require.Equal(t, 1, deleted)
+	require.Equal(t, 1, tombstoned)
+
+	entries, _, _, err = db.ListEntries(ctx, d, db.ListEntriesParams{UserID: uid, Limit: 10})
+	require.NoError(t, err)
+	require.Empty(t, entries)
+
+	// Re-poll — tombstoned entry must not reappear
+	w.Run(ctx, db.DueSubscription{UserID: uid, ID: subID, FeedURL: origin.URL + "/feed"})
+	entries, _, _, err = db.ListEntries(ctx, d, db.ListEntriesParams{UserID: uid, Limit: 10})
+	require.NoError(t, err)
+	require.Empty(t, entries, "tombstoned entry must not reappear")
+}
+
+func TestArchival_FSSweep_EndToEnd(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	writeE2ECacheFile(t, dir, "aabbccddeeff00112233445566778899aabbccddeeff001122", 100)
+	writeE2ECacheFile(t, dir, "ffeeddccbbaa99887766554433221100ffeeddccbbaa998877", 99999)
+
+	evicted, err := archival.ExportedFSPass(dir, 1000, nil)
+	require.NoError(t, err)
+	require.Equal(t, 1, evicted)
+	require.NoFileExists(t, filepath.Join(dir, "aa", "aabbccddeeff00112233445566778899aabbccddeeff001122.bin"))
+	require.FileExists(t, filepath.Join(dir, "ff", "ffeeddccbbaa99887766554433221100ffeeddccbbaa998877.bin"))
+}
+
+func writeE2ECacheFile(t *testing.T, dir, hash string, fetchedAt int64) {
+	t.Helper()
+	bucket := filepath.Join(dir, hash[:2])
+	require.NoError(t, os.MkdirAll(bucket, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(bucket, hash+".bin"), []byte("data"), 0o644))
+	meta, _ := json.Marshal(map[string]any{
+		"content_type": "image/jpeg", "byte_count": 4, "fetched_at": fetchedAt,
+	})
+	require.NoError(t, os.WriteFile(filepath.Join(bucket, hash+".meta"), meta, 0o644))
 }
