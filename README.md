@@ -9,9 +9,10 @@ embedded SPA, no external dependencies.
 
 ## Status
 
-M4 in review — polling discipline (adaptive cadence, SSRF guard,
-per-host concurrency cap, exponential error backoff, shared HTTP client).
-M3 media proxy + FS cache merged. M2 sanitisation pipeline merged.
+M5 in review — article extraction (per-subscription opt-in Readability
+or per-feed CSS selector mode, bounded-parallel inside the worker,
+fail-soft to feed summary on per-entry error). M4 polling discipline
+merged. M3 media proxy + FS cache merged. M2 sanitisation pipeline merged.
 See [`docs/specs/`](docs/specs/) for milestone specs.
 
 ## Development

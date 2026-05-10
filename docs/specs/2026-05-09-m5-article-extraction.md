@@ -169,7 +169,7 @@ The PATCH handler is mounted in `internal/api/api.go`'s `NewMux`. Method routing
 | Flag | Env | Default | Notes |
 |---|---|---|---|
 | `--extract-concurrency` | `TAP_EXTRACT_CONCURRENCY` | `4` | Per-worker `errgroup.SetLimit` on parallel article fetches. M4's per-host cap further serialises same-host bursts. |
-| `--extract-body-cap` | `TAP_EXTRACT_BODY_CAP` | `5242880` (5 MiB) | `io.LimitReader` cap on each article response before the parser sees it. |
+| `--extract-body-cap-bytes` | `TAP_EXTRACT_BODY_CAP_BYTES` | `5242880` (5 MiB) | `io.LimitReader` cap on each article response before the parser sees it. Suffix matches M3's `--proxy-body-cap-bytes` / `--proxy-cache-cap-bytes` convention. |
 
 The article fetch reuses the shared client's `--http-timeout` (30s default). No separate `--extract-timeout` — one knob, the global per-request deadline. If a real deployment hits a feed where 30s is too tight or too loose for articles specifically, we add `--extract-timeout` then.
 
@@ -259,7 +259,7 @@ Concrete test surface:
 | Manual "re-extract this entry" admin action | Won't ship in M5; potential future. |
 | Storing the feed summary alongside the extracted body for a "show summary" UX | Won't ship — overwrite-only matches M2 §"Storage." |
 | "Extracted shorter than summary → use summary" heuristic | Won't ship — concept §6.5 mandates trust-extraction-when-on; per-feed toggle is the user's escape hatch. |
-| Per-feed override of `--extract-concurrency` / `--extract-body-cap` / `--extract-timeout` | Won't ship — global knobs are sufficient. |
+| Per-feed override of `--extract-concurrency` / `--extract-body-cap-bytes` / `--extract-timeout` | Won't ship — global knobs are sufficient. |
 | ETag / Last-Modified conditional GET on article fetches | Won't ship — articles are fetched once at insert and never re-fetched. |
 | Headless-browser fallback for JavaScript-rendered article pages | Won't ship — `extract_failed` + summary is the documented limitation. Adds a non-static dependency, breaks the distroless image. |
 | GET-by-id and DELETE-by-id under `/api/v1/subscriptions/:id` | Not in M5; no current SPA caller. M9 add-feed/edit-feed flow lands them. |
