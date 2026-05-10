@@ -286,3 +286,61 @@ func TestPostSubscriptionWithoutCredentialsReturnsBooleanFalse(t *testing.T) {
 	require.Contains(t, rr.Body.String(), `"has_cookie":false`)
 	require.Contains(t, rr.Body.String(), `"has_basic_auth":false`)
 }
+
+func TestPatchSubscriptionCredentialMergeSemantics(t *testing.T) {
+	t.Parallel()
+	mux, d := newSubscriptionsTestMux(t)
+
+	// Seed a subscription with all three creds set.
+	id, err := db.InsertSubscription(context.Background(), d, db.NewSubscription{
+		Title: "x", FeedURL: "https://x.example/feed", NextPoll: 0, Created: 0,
+		Cookie: "c", BasicAuthUser: "u", BasicAuthPass: "p",
+	})
+	require.NoError(t, err)
+
+	// Step A: PATCH without any credential field — no change.
+	patchSubscription(mux, t, id, `{}`)
+	got, _ := db.GetSubscription(context.Background(), d, id)
+	require.Equal(t, "c", got.Cookie)
+	require.Equal(t, "u", got.BasicAuthUser)
+	require.Equal(t, "p", got.BasicAuthPass)
+
+	// Step B: PATCH cookie="" — clear cookie only.
+	patchSubscription(mux, t, id, `{"cookie":""}`)
+	got, _ = db.GetSubscription(context.Background(), d, id)
+	require.Empty(t, got.Cookie)
+	require.Equal(t, "u", got.BasicAuthUser)
+	require.Equal(t, "p", got.BasicAuthPass)
+
+	// Step C: PATCH basic_auth_pass set to a new value.
+	patchSubscription(mux, t, id, `{"basic_auth_pass":"newpass"}`)
+	got, _ = db.GetSubscription(context.Background(), d, id)
+	require.Empty(t, got.Cookie)
+	require.Equal(t, "u", got.BasicAuthUser)
+	require.Equal(t, "newpass", got.BasicAuthPass)
+
+	// Step D: PATCH extract:true — does NOT clobber any credential.
+	patchSubscription(mux, t, id, `{"extract":true}`)
+	got, _ = db.GetSubscription(context.Background(), d, id)
+	require.True(t, got.Extract)
+	require.Equal(t, "u", got.BasicAuthUser)
+	require.Equal(t, "newpass", got.BasicAuthPass)
+
+	// Step E: PATCH cookie:"x" — does NOT clobber extract or basic_auth_*.
+	patchSubscription(mux, t, id, `{"cookie":"x"}`)
+	got, _ = db.GetSubscription(context.Background(), d, id)
+	require.True(t, got.Extract)
+	require.Equal(t, "x", got.Cookie)
+	require.Equal(t, "u", got.BasicAuthUser)
+	require.Equal(t, "newpass", got.BasicAuthPass)
+}
+
+// patchSubscription is a tiny helper for the test above.
+func patchSubscription(mux http.Handler, t *testing.T, id int64, body string) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPatch,
+		"/api/v1/subscriptions/"+strconv.FormatInt(id, 10), strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code, "PATCH body=%s body=%s", body, rr.Body.String())
+}

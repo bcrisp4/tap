@@ -139,6 +139,9 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 		var body struct {
 			Extract         *bool   `json:"extract"`
 			ExtractSelector *string `json:"extract_selector"`
+			Cookie          *string `json:"cookie"`
+			BasicAuthUser   *string `json:"basic_auth_user"`
+			BasicAuthPass   *string `json:"basic_auth_pass"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "invalid JSON body")
@@ -146,9 +149,11 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 		}
 
 		// Pre-read the row so omitted PATCH fields keep their current values:
-		// UpdateSubscriptionExtraction writes both columns unconditionally,
-		// so without this step a PATCH of {"extract":true} alone would zero
-		// out an existing extract_selector.
+		// UpdateSubscriptionExtraction and UpdateSubscriptionCredentials each
+		// write all of their columns unconditionally, so without this step a
+		// PATCH of {"extract":true} alone would zero out an existing
+		// extract_selector — and a PATCH of {"cookie":"x"} would zero out
+		// basic_auth_user/basic_auth_pass.
 		s, err := db.GetSubscription(r.Context(), d, id)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
@@ -161,6 +166,10 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 
 		extract := s.Extract
 		selector := s.ExtractSelector
+		cookie := s.Cookie
+		basicUser := s.BasicAuthUser
+		basicPass := s.BasicAuthPass
+
 		if body.Extract != nil {
 			extract = *body.Extract
 		}
@@ -175,6 +184,15 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 			}
 			selector = candidate
 		}
+		if body.Cookie != nil {
+			cookie = *body.Cookie
+		}
+		if body.BasicAuthUser != nil {
+			basicUser = *body.BasicAuthUser
+		}
+		if body.BasicAuthPass != nil {
+			basicPass = *body.BasicAuthPass
+		}
 
 		if err := db.UpdateSubscriptionExtraction(r.Context(), d, id, extract, selector); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
@@ -184,11 +202,22 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 			writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())
 			return
 		}
+		if err := db.UpdateSubscriptionCredentials(r.Context(), d, id, cookie, basicUser, basicPass); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				writeError(w, http.StatusNotFound, ErrCodeNotFound, "subscription not found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())
+			return
+		}
 
-		// No second SELECT — we just wrote the only two columns this endpoint
-		// can change, and no other column auto-mutates on update.
+		// No second SELECT — we just wrote every column this endpoint can
+		// change, and no other column auto-mutates on update.
 		s.Extract = extract
 		s.ExtractSelector = selector
+		s.Cookie = cookie
+		s.BasicAuthUser = basicUser
+		s.BasicAuthPass = basicPass
 		writeJSON(w, http.StatusOK, toDTO(s))
 	})
 
