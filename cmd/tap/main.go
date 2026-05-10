@@ -39,7 +39,13 @@ func main() {
 		pollFloor     = flag.Duration("poll-floor", envOrDuration("TAP_POLL_FLOOR", 15*time.Minute), "adaptive cadence floor")
 		pollCeiling   = flag.Duration("poll-ceiling", envOrDuration("TAP_POLL_CEILING", 24*time.Hour), "adaptive cadence ceiling and error backoff cap")
 		pollErrorBase = flag.Duration("poll-error-base", envOrDuration("TAP_POLL_ERROR_BASE", 5*time.Minute), "base of exponential error backoff")
-		userAgent     = flag.String("user-agent", envOr("TAP_USER_AGENT", "tap/0.1 (+https://github.com/bcrisp4/tap)"), "User-Agent header on outbound HTTP")
+
+		extractConcurrency = flag.Int("extract-concurrency", envOrInt("TAP_EXTRACT_CONCURRENCY", 4),
+			"per-worker parallel article fetches when a subscription has extract=true")
+		extractBodyCap = flag.Int64("extract-body-cap-bytes", envOrInt64("TAP_EXTRACT_BODY_CAP_BYTES", 5<<20),
+			"per-article HTTP body cap before extraction parses it")
+
+		userAgent = flag.String("user-agent", envOr("TAP_USER_AGENT", "tap/0.1 (+https://github.com/bcrisp4/tap)"), "User-Agent header on outbound HTTP")
 
 		proxyCacheDir = flag.String("proxy-cache-dir", envOr("TAP_PROXY_CACHE_DIR", ""), "media cache directory (default: <data>/cache)")
 		proxyCacheCap = flag.Int64("proxy-cache-cap-bytes", envOrInt64("TAP_PROXY_CACHE_CAP_BYTES", 524288000), "media cache size cap in bytes")
@@ -128,10 +134,12 @@ func main() {
 	proc := processor.New(sanitise.DefaultPolicy(), signer.RewriteImageURL)
 
 	sched := poll.NewScheduler(ctx, d, client, poll.SchedulerOpts{
-		Processor: proc,
-		Floor:     *pollFloor,
-		Ceiling:   *pollCeiling,
-		ErrorBase: *pollErrorBase,
+		Processor:          proc,
+		Floor:              *pollFloor,
+		Ceiling:            *pollCeiling,
+		ErrorBase:          *pollErrorBase,
+		ExtractConcurrency: *extractConcurrency,
+		ExtractBodyCap:     *extractBodyCap,
 	})
 	sched.Start()
 

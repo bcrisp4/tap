@@ -164,3 +164,37 @@ func TestUpdateAfterPoll_RetryAfterPushesNextPoll(t *testing.T) {
 		`SELECT next_poll_at FROM subscriptions WHERE id = ?`, subID).Scan(&nextPoll))
 	require.Equal(t, retryAfter.Unix(), nextPoll, "retry-after wins over 15m floor")
 }
+
+func TestUpdateAfterPoll_WritesExtractFailed(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	ctx := context.Background()
+
+	subID, err := InsertSubscription(ctx, d, NewSubscription{
+		Title: "x", FeedURL: "https://x.example/feed", NextPoll: 0, Created: 0,
+	})
+	require.NoError(t, err)
+
+	_, err = UpdateAfterPoll(ctx, d, subID, PollResult{
+		NowUnix: 1_700_000_000,
+		Floor:   15 * time.Minute,
+		Ceiling: 24 * time.Hour,
+		NewEntries: []NewEntry{
+			{Hash: "ok", Title: "ok", URL: "https://x/1", Content: "<p>ok</p>", PublishedAt: 1_700_000_000, ExtractFailed: false},
+			{Hash: "bad", Title: "bad", URL: "https://x/2", Content: "<p>summary</p>", PublishedAt: 1_700_000_000, ExtractFailed: true},
+		},
+	})
+	require.NoError(t, err)
+
+	rows, err := d.QueryContext(ctx, `SELECT hash, extract_failed FROM entries WHERE subscription_id = ? ORDER BY hash`, subID)
+	require.NoError(t, err)
+	defer rows.Close()
+	got := map[string]int{}
+	for rows.Next() {
+		var h string
+		var ef int
+		require.NoError(t, rows.Scan(&h, &ef))
+		got[h] = ef
+	}
+	require.Equal(t, map[string]int{"bad": 1, "ok": 0}, got)
+}

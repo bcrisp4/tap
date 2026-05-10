@@ -17,10 +17,11 @@ type ErrorEnvelope struct {
 
 // Stable error codes the SPA can switch on.
 const (
-	ErrCodeBadRequest = "bad_request"
-	ErrCodeNotFound   = "not_found"
-	ErrCodeConflict   = "conflict"
-	ErrCodeInternal   = "internal"
+	ErrCodeBadRequest             = "bad_request"
+	ErrCodeNotFound               = "not_found"
+	ErrCodeConflict               = "conflict"
+	ErrCodeInternal               = "internal"
+	ErrCodeExtractSelectorInvalid = "extract_selector_invalid"
 )
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

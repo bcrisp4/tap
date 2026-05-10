@@ -131,6 +131,60 @@ func TestQueryVelocity_NoEntries(t *testing.T) {
 	require.Equal(t, 0, v, "velocity for empty feed")
 }
 
+func TestListDuePolls_ReturnsExtractionFields(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	ctx := context.Background()
+
+	id, err := InsertSubscription(ctx, d, NewSubscription{
+		Title: "x", FeedURL: "https://x.example/feed", NextPoll: 0, Created: 0,
+	})
+	require.NoError(t, err)
+	_, err = d.ExecContext(ctx,
+		`UPDATE subscriptions SET extract = 1, extract_selector = '.body' WHERE id = ?`, id)
+	require.NoError(t, err)
+
+	due, err := ListDuePolls(ctx, d, 0, 10)
+	require.NoError(t, err)
+	require.Len(t, due, 1)
+	require.True(t, due[0].Extract, "Extract should round-trip true")
+	require.Equal(t, ".body", due[0].ExtractSelector, "ExtractSelector should round-trip")
+}
+
+func TestUpdateSubscriptionExtraction_HappyPath(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	ctx := context.Background()
+
+	id, err := InsertSubscription(ctx, d, NewSubscription{
+		Title: "x", FeedURL: "https://x.example/feed", NextPoll: 0, Created: 0,
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, UpdateSubscriptionExtraction(ctx, d, id, true, ".article"))
+
+	due, err := ListDuePolls(ctx, d, 0, 10)
+	require.NoError(t, err)
+	require.Len(t, due, 1)
+	require.True(t, due[0].Extract)
+	require.Equal(t, ".article", due[0].ExtractSelector)
+
+	// Clearing the selector with empty string works.
+	require.NoError(t, UpdateSubscriptionExtraction(ctx, d, id, true, ""))
+	due, err = ListDuePolls(ctx, d, 0, 10)
+	require.NoError(t, err)
+	require.Equal(t, "", due[0].ExtractSelector)
+}
+
+func TestUpdateSubscriptionExtraction_MissingIDReturnsErrNoRows(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	ctx := context.Background()
+
+	err := UpdateSubscriptionExtraction(ctx, d, 999, true, "")
+	require.ErrorIs(t, err, sql.ErrNoRows)
+}
+
 func TestUpdateAfterNotModified_WritesVelocity(t *testing.T) {
 	t.Parallel()
 	d := newTestDB(t)

@@ -10,29 +10,34 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/andybalholm/cascadia"
 	"github.com/bcrisp4/tap/internal/db"
 )
 
 type subscriptionDTO struct {
-	ID         int64  `json:"id"`
-	Title      string `json:"title"`
-	FeedURL    string `json:"feed_url"`
-	SiteURL    string `json:"site_url,omitempty"`
-	NextPollAt int64  `json:"next_poll_at"`
-	LastPollAt int64  `json:"last_poll_at,omitempty"`
-	ErrorCount int    `json:"error_count"`
-	LastError  string `json:"last_error,omitempty"`
-	CreatedAt  int64  `json:"created_at"`
+	ID              int64  `json:"id"`
+	Title           string `json:"title"`
+	FeedURL         string `json:"feed_url"`
+	SiteURL         string `json:"site_url,omitempty"`
+	NextPollAt      int64  `json:"next_poll_at"`
+	LastPollAt      int64  `json:"last_poll_at,omitempty"`
+	ErrorCount      int    `json:"error_count"`
+	LastError       string `json:"last_error,omitempty"`
+	CreatedAt       int64  `json:"created_at"`
+	Extract         bool   `json:"extract"`
+	ExtractSelector string `json:"extract_selector"`
 }
 
 func toDTO(s db.Subscription) subscriptionDTO {
 	d := subscriptionDTO{
-		ID:         s.ID,
-		Title:      s.Title,
-		FeedURL:    s.FeedURL,
-		NextPollAt: s.NextPollAt,
-		ErrorCount: s.ErrorCount,
-		CreatedAt:  s.CreatedAt,
+		ID:              s.ID,
+		Title:           s.Title,
+		FeedURL:         s.FeedURL,
+		NextPollAt:      s.NextPollAt,
+		ErrorCount:      s.ErrorCount,
+		CreatedAt:       s.CreatedAt,
+		Extract:         s.Extract,
+		ExtractSelector: s.ExtractSelector,
 	}
 	if s.SiteURL.Valid {
 		d.SiteURL = s.SiteURL.String
@@ -65,6 +70,7 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 		var body struct {
 			FeedURL string `json:"feed_url"`
 			Title   string `json:"title"`
+			Extract bool   `json:"extract"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "invalid JSON body")
@@ -88,6 +94,7 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 			FeedURL:  body.FeedURL,
 			NextPoll: 0,
 			Created:  time.Now().Unix(),
+			Extract:  body.Extract,
 		})
 		if err != nil {
 			if errors.Is(err, db.ErrSubscriptionExists) {
@@ -110,6 +117,69 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 			poke()
 		}
 		writeJSON(w, http.StatusCreated, toDTO(s))
+	})
+
+	m.HandleFunc("PATCH /api/v1/subscriptions/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "invalid id")
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		var body struct {
+			Extract         *bool   `json:"extract"`
+			ExtractSelector *string `json:"extract_selector"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "invalid JSON body")
+			return
+		}
+
+		// Pre-read the row so omitted PATCH fields keep their current values:
+		// UpdateSubscriptionExtraction writes both columns unconditionally,
+		// so without this step a PATCH of {"extract":true} alone would zero
+		// out an existing extract_selector.
+		s, err := db.GetSubscription(r.Context(), d, id)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				writeError(w, http.StatusNotFound, ErrCodeNotFound, "subscription not found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())
+			return
+		}
+
+		extract := s.Extract
+		selector := s.ExtractSelector
+		if body.Extract != nil {
+			extract = *body.Extract
+		}
+		if body.ExtractSelector != nil {
+			candidate := *body.ExtractSelector
+			if candidate != "" {
+				if _, cerr := cascadia.Compile(candidate); cerr != nil {
+					writeError(w, http.StatusBadRequest, ErrCodeExtractSelectorInvalid,
+						"extract_selector did not compile: "+cerr.Error())
+					return
+				}
+			}
+			selector = candidate
+		}
+
+		if err := db.UpdateSubscriptionExtraction(r.Context(), d, id, extract, selector); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				writeError(w, http.StatusNotFound, ErrCodeNotFound, "subscription not found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())
+			return
+		}
+
+		// No second SELECT — we just wrote the only two columns this endpoint
+		// can change, and no other column auto-mutates on update.
+		s.Extract = extract
+		s.ExtractSelector = selector
+		writeJSON(w, http.StatusOK, toDTO(s))
 	})
 
 	m.HandleFunc("DELETE /api/v1/subscriptions/{id}", func(w http.ResponseWriter, r *http.Request) {

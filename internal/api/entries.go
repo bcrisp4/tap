@@ -22,6 +22,7 @@ type entryListItemDTO struct {
 	FetchedAt      int64  `json:"fetched_at"`
 	Read           bool   `json:"read"`
 	Saved          bool   `json:"saved"`
+	ExtractFailed  bool   `json:"extract_failed"`
 }
 
 type entryDetailDTO struct {
@@ -39,6 +40,7 @@ func toListItem(e db.Entry) entryListItemDTO {
 		FetchedAt:      e.FetchedAt,
 		Read:           e.Read,
 		Saved:          e.Saved,
+		ExtractFailed:  e.ExtractFailed,
 	}
 	if e.Author.Valid {
 		d.Author = e.Author.String

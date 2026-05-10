@@ -10,17 +10,28 @@ import (
 
 	"github.com/bcrisp4/tap/internal/cadence"
 	"github.com/bcrisp4/tap/internal/db"
+	"github.com/bcrisp4/tap/internal/extract"
 	"github.com/bcrisp4/tap/internal/feed"
 	"github.com/bcrisp4/tap/internal/processor"
 	"github.com/mmcdole/gofeed"
+	"golang.org/x/sync/errgroup"
 )
 
+// ExtractFunc matches extract.Extract — declared as a type so tests can
+// inject deterministic in-memory extractors without spinning up an
+// httptest origin. Same shape of test seam as Now func() time.Time.
+type ExtractFunc func(ctx context.Context, client *http.Client,
+	articleURL, selector string, bodyCap int64) (string, error)
+
 type WorkerOpts struct {
-	Processor *processor.Processor // applied to every entry's HTML body. Required (panics on nil).
-	Floor     time.Duration        // min interval between polls; default 15m
-	Ceiling   time.Duration        // max interval between polls; default 24h
-	ErrorBase time.Duration        // first-error backoff base, doubled per consecutive error; default 5m
-	Now       func() time.Time     // default time.Now (overridable in tests)
+	Processor          *processor.Processor // applied to every entry's HTML body. Required (panics on nil).
+	Floor              time.Duration        // min interval between polls; default 15m
+	Ceiling            time.Duration        // max interval between polls; default 24h
+	ErrorBase          time.Duration        // first-error backoff base, doubled per consecutive error; default 5m
+	Now                func() time.Time     // default time.Now (overridable in tests)
+	Extract            ExtractFunc          // default extract.Extract; test seam
+	ExtractConcurrency int                  // default 4
+	ExtractBodyCap     int64                // default 5 MiB
 }
 
 type Worker struct {
@@ -47,6 +58,15 @@ func NewWorker(d *sql.DB, c *http.Client, o WorkerOpts) *Worker {
 	}
 	if o.Now == nil {
 		o.Now = time.Now
+	}
+	if o.Extract == nil {
+		o.Extract = extract.Extract
+	}
+	if o.ExtractConcurrency <= 0 {
+		o.ExtractConcurrency = 4
+	}
+	if o.ExtractBodyCap <= 0 {
+		o.ExtractBodyCap = 5 << 20
 	}
 	if c == nil {
 		c = http.DefaultClient
@@ -104,24 +124,59 @@ func (w *Worker) Run(ctx context.Context, sub db.DueSubscription) {
 		return
 	}
 
-	newEntries := make([]db.NewEntry, 0, len(res.Feed.Items))
-	for _, item := range res.Feed.Items {
+	type pending struct {
+		item          *gofeed.Item
+		content       string
+		extractFailed bool
+	}
+	pendings := make([]pending, len(res.Feed.Items))
+	for i, item := range res.Feed.Items {
+		raw := item.Content
+		if raw == "" {
+			raw = item.Description
+		}
+		pendings[i] = pending{item: item, content: raw}
+	}
+
+	if sub.Extract && len(pendings) > 0 {
+		g := new(errgroup.Group)
+		g.SetLimit(w.opts.ExtractConcurrency)
+		for i := range pendings {
+			if pendings[i].item.Link == "" {
+				continue
+			}
+			g.Go(func() error {
+				extracted, eerr := w.opts.Extract(ctx, w.client,
+					pendings[i].item.Link, sub.ExtractSelector, w.opts.ExtractBodyCap)
+				if eerr != nil {
+					slog.WarnContext(ctx, "extract failed",
+						"feed_id", sub.ID,
+						"entry_url", pendings[i].item.Link,
+						"err", eerr)
+					pendings[i].extractFailed = true
+					return nil
+				}
+				pendings[i].content = extracted
+				return nil
+			})
+		}
+		_ = g.Wait()
+	}
+
+	newEntries := make([]db.NewEntry, 0, len(pendings))
+	for _, p := range pendings {
 		pubAt := now.Unix()
-		if item.PublishedParsed != nil {
-			pubAt = item.PublishedParsed.Unix()
+		if p.item.PublishedParsed != nil {
+			pubAt = p.item.PublishedParsed.Unix()
 		}
-		content := item.Content
-		if content == "" {
-			content = item.Description
-		}
-		content = w.opts.Processor.Process(content)
 		newEntries = append(newEntries, db.NewEntry{
-			Hash:        feed.EntryHash(sub.ID, item),
-			Title:       item.Title,
-			Author:      authorName(item),
-			URL:         item.Link,
-			Content:     content,
-			PublishedAt: pubAt,
+			Hash:          feed.EntryHash(sub.ID, p.item),
+			Title:         p.item.Title,
+			Author:        authorName(p.item),
+			URL:           p.item.Link,
+			Content:       w.opts.Processor.Process(p.content),
+			PublishedAt:   pubAt,
+			ExtractFailed: p.extractFailed,
 		})
 	}
 
