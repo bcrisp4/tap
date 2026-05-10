@@ -69,7 +69,6 @@ export const offlineQueue = {
         try {
           res = await sendMutation(head);
         } catch {
-          // Network error — stop; retry on next drain call.
           break;
         }
 
@@ -82,7 +81,6 @@ export const offlineQueue = {
         try { code = (await res.json())?.error?.code; } catch { /* swallow */ }
 
         if (res.status === 401) {
-          // Session expired — pause, preserve queue, signal pending drain.
           localStorage.setItem(pendingKey(userId), '1');
           break;
         }
@@ -113,7 +111,6 @@ export const offlineQueue = {
         write(userId, rest);
       }
     } finally {
-      // Clear pendingDrain on successful completion (queue empty).
       if (read(userId).length === 0) {
         localStorage.removeItem(pendingKey(userId));
       }

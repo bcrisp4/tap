@@ -33,8 +33,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     headers['X-CSRF-Token'] = authState.csrfToken;
   }
 
-  // If offline on a write method, queue the mutation.
-  if (isWriteMethod && !navigator.onLine) {
+  function queueAndReturn(): T {
     if (authState.user) {
       offlineQueue.enqueue(authState.user.id, {
         method,
@@ -46,21 +45,13 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     return undefined as T;
   }
 
+  if (isWriteMethod && !navigator.onLine) return queueAndReturn();
+
   let res: Response;
   try {
     res = await fetch(BASE + path, { ...init, headers });
   } catch (err) {
-    if (isWriteMethod && err instanceof TypeError) {
-      if (authState.user) {
-        offlineQueue.enqueue(authState.user.id, {
-          method,
-          path,
-          body: init.body ? JSON.parse(init.body as string) : undefined,
-          csrfToken: authState.csrfToken ?? '',
-        });
-      }
-      return undefined as T;
-    }
+    if (isWriteMethod && err instanceof TypeError) return queueAndReturn();
     throw err;
   }
 

@@ -10,9 +10,7 @@ async function runWithConcurrency(urls: string[], concurrency: number): Promise<
       const url = queue.shift()!;
       try {
         await fetch(url);
-      } catch {
-        // Silently swallow — warm-cache is opportunistic.
-      }
+      } catch { /* opportunistic — errors are irrelevant */ }
     }
   }
   await Promise.all(Array.from({ length: concurrency }, worker));
