@@ -367,8 +367,12 @@ func runServer() {
 		Version:            version,
 		PollsActive:        func() int64 { return sched.ActiveCount() },
 	})
-	mux.Handle("/api/", tracing.Middleware(apiMux))
-	mux.Handle("/healthz", tracing.Middleware(apiMux))
+	tracedAPIHandler := tracing.Middleware(apiMux)
+	mux.Handle("/api/", tracedAPIHandler)
+	mux.Handle("/healthz", tracedAPIHandler)
+	if *metricsEnabled {
+		mux.Handle("/metrics", tracedAPIHandler)
+	}
 	mux.Handle("/", server.SPAHandler())
 
 	srv := server.New(server.Config{Addr: *addr, Handler: mux})
