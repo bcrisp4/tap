@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -101,4 +102,32 @@ func TestGetEntry_IncludesExtractFailed(t *testing.T) {
 	mux.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/v1/entries/"+toStr(entryID), nil))
 	require.Equal(t, http.StatusOK, rr.Code)
 	require.Contains(t, rr.Body.String(), `"extract_failed":true`)
+}
+
+func TestPatchEntry_BodyTooLarge(t *testing.T) {
+	t.Parallel()
+	mux, d, uid := newAPIWithUser(t)
+
+	// Insert a subscription and entry so we have a valid entry ID.
+	subID, err := db.InsertSubscription(context.Background(), d, db.NewSubscription{
+		UserID: uid, Title: "x", FeedURL: "https://x.example/feed",
+	})
+	require.NoError(t, err)
+	_, err = db.UpdateAfterPoll(context.Background(), d, subID, db.PollResult{
+		UserID: uid, NowUnix: 1,
+		NewEntries: []db.NewEntry{{Hash: "aaa", Title: "t", URL: "https://x.example/1", Content: "c", PublishedAt: 1}},
+	})
+	require.NoError(t, err)
+	entries, _, _, err := db.ListEntries(context.Background(), d, db.ListEntriesParams{UserID: uid, Limit: 1})
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+
+	// Body must be parseable as JSON up to the 1 MiB limit before failing,
+	// so the MaxBytesError is what triggers, not a JSON syntax error.
+	body := `{"read":` + strings.Repeat(" ", 2<<20) + `true}`
+	req := httptest.NewRequest(http.MethodPatch,
+		"/api/v1/entries/"+strconv.FormatInt(entries[0].ID, 10), strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusRequestEntityTooLarge, rr.Code, rr.Body.String())
 }

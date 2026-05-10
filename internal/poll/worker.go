@@ -8,11 +8,16 @@ import (
 	"runtime/debug"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+
 	"github.com/bcrisp4/tap/internal/cadence"
 	"github.com/bcrisp4/tap/internal/db"
 	"github.com/bcrisp4/tap/internal/extract"
 	"github.com/bcrisp4/tap/internal/feed"
 	"github.com/bcrisp4/tap/internal/httpx"
+	"github.com/bcrisp4/tap/internal/metrics"
 	"github.com/bcrisp4/tap/internal/processor"
 	"github.com/mmcdole/gofeed"
 	"golang.org/x/sync/errgroup"
@@ -81,10 +86,20 @@ func (w *Worker) Run(ctx context.Context, sub db.DueSubscription) {
 	defer func() {
 		if r := recover(); r != nil {
 			slog.ErrorContext(ctx, "worker panic recovered",
+				"event", "worker.panic",
 				"feed_id", sub.ID, "feed_url", sub.FeedURL,
 				"panic", r, "stack", string(debug.Stack()))
 		}
 	}()
+
+	tracer := otel.Tracer("tap/poll")
+	ctx, span := tracer.Start(ctx, "poll.feed")
+	defer span.End()
+	span.SetAttributes(attribute.Int64("feed_id", sub.ID))
+
+	startTime := time.Now()
+	slog.DebugContext(ctx, "polling feed",
+		"event", "poll.start", "feed_id", sub.ID, "feed_url", sub.FeedURL)
 
 	now := w.opts.Now()
 
@@ -100,23 +115,28 @@ func (w *Worker) Run(ctx context.Context, sub db.DueSubscription) {
 		Creds:             creds,
 	})
 	if fetchErr != nil {
+		elapsed := time.Since(startTime).Seconds()
 		delay := cadence.BackoffFromErrorCount(sub.ErrorCount+1, w.opts.ErrorBase, w.opts.Ceiling, 0.25)
 		next := cadence.ApplyServerFloors(now.Add(delay), res.RetryAfter, 0, now)
+		metrics.PollsTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("result", "failure")))
+		metrics.PollDuration.Record(ctx, elapsed, metric.WithAttributes(attribute.String("result", "failure")))
 		slog.WarnContext(ctx, "poll error",
+			"event", "poll.failure",
 			"feed_id", sub.ID, "feed_url", sub.FeedURL,
+			"error", fetchErr.Error(),
 			"error_count", sub.ErrorCount+1,
-			"next_poll_at", next.Unix(),
-			"err", fetchErr)
+			"duration_ms", int64(elapsed*1000),
+			"next_poll_at", next.Unix())
 		_ = db.UpdateAfterError(ctx, w.db, sub.ID, fetchErr.Error(), next.Unix())
 		return
 	}
 
 	if res.Status == http.StatusNotModified {
+		elapsed := time.Since(startTime).Seconds()
 		velocity, verr := db.QueryVelocity(ctx, w.db, sub.ID, now)
 		if verr != nil {
-			// Treat velocity-query failure as a poll failure rather than
-			// silently returning — otherwise next_poll_at stays put and the
-			// scheduler picks this subscription on every tick (tight loop).
+			metrics.PollsTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("result", "failure")))
+			metrics.PollDuration.Record(ctx, elapsed, metric.WithAttributes(attribute.String("result", "failure")))
 			delay := cadence.BackoffFromErrorCount(sub.ErrorCount+1, w.opts.ErrorBase, w.opts.Ceiling, 0.25)
 			next := now.Add(delay)
 			slog.ErrorContext(ctx, "query velocity",
@@ -125,10 +145,16 @@ func (w *Worker) Run(ctx context.Context, sub db.DueSubscription) {
 			_ = db.UpdateAfterError(ctx, w.db, sub.ID, verr.Error(), next.Unix())
 			return
 		}
+		metrics.PollsTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("result", "success")))
+		metrics.PollDuration.Record(ctx, elapsed, metric.WithAttributes(attribute.String("result", "success")))
+		metrics.ConditionalGetHits.Add(ctx, 1)
 		interval := cadence.IntervalFromVelocity(velocity, w.opts.Floor, w.opts.Ceiling)
 		next := cadence.ApplyServerFloors(now.Add(interval), res.RetryAfter, res.CacheMaxAge, now)
-		slog.DebugContext(ctx, "poll 304",
-			"feed_id", sub.ID, "velocity_x100", velocity, "next_poll_at", next.Unix())
+		slog.InfoContext(ctx, "poll succeeded (304)",
+			"event", "poll.success",
+			"feed_id", sub.ID, "entries_inserted", 0,
+			"duration_ms", int64(elapsed*1000),
+			"conditional_hit", true)
 		_ = db.UpdateAfterNotModified(ctx, w.db, sub.ID, now.Unix(), next.Unix(), velocity)
 		return
 	}
@@ -217,19 +243,32 @@ func (w *Worker) Run(ctx context.Context, sub db.DueSubscription) {
 		RetryAfter:      res.RetryAfter,
 		CacheMaxAge:     res.CacheMaxAge,
 	})
+	elapsed := time.Since(startTime).Seconds()
 	if perr != nil {
+		metrics.PollsTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("result", "failure")))
+		metrics.PollDuration.Record(ctx, elapsed, metric.WithAttributes(attribute.String("result", "failure")))
 		// Commit failure is just as much a poll failure as a fetch error —
 		// use the same exponential backoff so a stuck DB doesn't get
 		// hammered every 5 minutes on a high-velocity feed.
 		delay := cadence.BackoffFromErrorCount(sub.ErrorCount+1, w.opts.ErrorBase, w.opts.Ceiling, 0.25)
 		next := now.Add(delay)
 		slog.ErrorContext(ctx, "commit poll",
-			"feed_id", sub.ID, "error_count", sub.ErrorCount+1,
-			"next_poll_at", next.Unix(), "err", perr)
+			"event", "poll.failure",
+			"feed_id", sub.ID, "error", perr.Error(),
+			"error_count", sub.ErrorCount+1,
+			"duration_ms", int64(elapsed*1000),
+			"next_poll_at", next.Unix())
 		_ = db.UpdateAfterError(ctx, w.db, sub.ID, perr.Error(), next.Unix())
 		return
 	}
-	slog.InfoContext(ctx, "poll ok", "feed_id", sub.ID, "inserted", inserted, "total_items", len(res.Feed.Items))
+	metrics.PollsTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("result", "success")))
+	metrics.PollDuration.Record(ctx, elapsed, metric.WithAttributes(attribute.String("result", "success")))
+	metrics.EntriesInserted.Add(ctx, int64(inserted))
+	slog.InfoContext(ctx, "poll succeeded",
+		"event", "poll.success",
+		"feed_id", sub.ID, "entries_inserted", inserted,
+		"duration_ms", int64(elapsed*1000),
+		"conditional_hit", false)
 }
 
 func authorName(i *gofeed.Item) string {

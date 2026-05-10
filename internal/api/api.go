@@ -2,12 +2,16 @@ package api
 
 import (
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"time"
 
 	"github.com/go-webauthn/webauthn/webauthn"
 
 	"github.com/bcrisp4/tap/internal/auth"
+	"github.com/bcrisp4/tap/internal/metrics"
+	"github.com/bcrisp4/tap/internal/ratelimit"
+	"github.com/bcrisp4/tap/internal/ring"
 )
 
 // MuxOpts carries optional dependencies for NewMux.
@@ -20,6 +24,14 @@ type MuxOpts struct {
 	HashParams         auth.Params
 	WebAuthnInstance   *webauthn.WebAuthn
 	DiscoverClient     *http.Client
+
+	Limiter        *ratelimit.Limiter // nil = no rate limiting
+	TrustedProxy   bool
+	MetricsEnabled bool
+	RingBuffer     *ring.Buffer
+	StartTime      time.Time
+	Version        string
+	PollsActive    func() int64 // current in-flight poll count
 }
 
 // NewMux returns the API mux.
@@ -41,12 +53,43 @@ func NewMux(db *sql.DB, opts MuxOpts) *http.ServeMux {
 		sessionIdleTTL:     opts.SessionIdleTTL,
 		sessionAbsoluteTTL: opts.SessionAbsoluteTTL,
 		cookieSecure:       opts.CookieSecure,
+		limiter:            opts.Limiter,
+		trustedProxy:       opts.TrustedProxy,
+		hashParams:         opts.HashParams,
 	}
 
 	m.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain")
-		_, _ = w.Write([]byte("ok"))
+		dbStatus := "ok"
+		if db != nil {
+			if err := db.PingContext(r.Context()); err != nil {
+				dbStatus = "degraded"
+			}
+		}
+		var active int64
+		if opts.PollsActive != nil {
+			active = opts.PollsActive()
+		}
+		status := "ok"
+		if dbStatus == "degraded" {
+			status = "degraded"
+		}
+		var uptime int64
+		if !opts.StartTime.IsZero() {
+			uptime = int64(time.Since(opts.StartTime).Seconds())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status":         status,
+			"version":        opts.Version,
+			"uptime_seconds": uptime,
+			"db":             dbStatus,
+			"polls_active":   active,
+		})
 	})
+
+	if opts.MetricsEnabled {
+		m.Handle("GET /metrics", metrics.Handler())
+	}
 
 	if db == nil {
 		return m
@@ -86,6 +129,15 @@ func NewMux(db *sql.DB, opts MuxOpts) *http.ServeMux {
 
 	m.Handle("GET /api/v1/me/passkeys", authed(listPasskeysHandler(db)))
 	m.Handle("DELETE /api/v1/me/passkeys/{id}", authedCSRF(deletePasskeyHandler(db)))
+
+	// System status endpoint (admin-only, M12).
+	m.Handle("GET /api/v1/status", authed(statusHandler(statusDeps{
+		db:          db,
+		buf:         opts.RingBuffer,
+		startTime:   opts.StartTime,
+		version:     opts.Version,
+		pollsActive: opts.PollsActive,
+	})))
 
 	// Admin endpoints.
 	m.Handle("GET /api/v1/admin/users", authedAdmin(listUsersHandler(db)))

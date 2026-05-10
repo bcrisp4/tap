@@ -4,6 +4,7 @@
   import { auth } from '../../lib/auth';
   import { api } from '../../lib/api';
   import type { Session, Passkey, TOTPEnrolmentBegin } from '../../lib/types';
+  import SystemStatus from '../../components/SystemStatus.svelte';
 
   let authState = $derived(get(auth));
 
@@ -306,6 +307,11 @@
       <button onclick={beginTOTPEnrolment} disabled={busy}>Set up authenticator app</button>
     {/if}
   </section>
+
+  <!-- System Status (admin only) -->
+  {#if authState?.user?.role === 'admin'}
+    <SystemStatus />
+  {/if}
 
   <!-- Passkeys -->
   <section>

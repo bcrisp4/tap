@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -87,4 +88,35 @@ func TestVerifyAcceptsHandcraftedPHCEncoding(t *testing.T) {
 	ok, err := Verify(handcrafted, "this-will-not-match")
 	require.NoError(t, err, "parser must accept the standard PHC encoding")
 	require.False(t, ok, "but the password is wrong, so Verify should return false")
+}
+
+func TestNeedsRehash_FalseForCurrentParams(t *testing.T) {
+	hash, err := Hash("password123", DefaultParams)
+	require.NoError(t, err)
+	needs, err := NeedsRehash(hash, DefaultParams)
+	require.NoError(t, err)
+	assert.False(t, needs)
+}
+
+func TestNeedsRehash_TrueForWeakerMemory(t *testing.T) {
+	weaker := Params{Time: 2, Memory: 32 * 1024, Threads: 1, SaltLen: 16, KeyLen: 32}
+	hash, err := Hash("password123", weaker)
+	require.NoError(t, err)
+	needs, err := NeedsRehash(hash, DefaultParams)
+	require.NoError(t, err)
+	assert.True(t, needs)
+}
+
+func TestNeedsRehash_TrueForWeakerTime(t *testing.T) {
+	weaker := Params{Time: 1, Memory: 64 * 1024, Threads: 1, SaltLen: 16, KeyLen: 32}
+	hash, err := Hash("password123", weaker)
+	require.NoError(t, err)
+	needs, err := NeedsRehash(hash, DefaultParams)
+	require.NoError(t, err)
+	assert.True(t, needs)
+}
+
+func TestNeedsRehash_ErrorOnMalformed(t *testing.T) {
+	_, err := NeedsRehash("not-a-phc-string", DefaultParams)
+	assert.Error(t, err)
 }

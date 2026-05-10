@@ -44,6 +44,11 @@ const (
 	ErrCodeAdminRequired              = "admin_required"
 	ErrCodeUserAlreadyExists          = "user_already_exists"
 	ErrCodeCannotDeleteSelf           = "cannot_delete_self"
+
+	// M12 error codes.
+	ErrCodeForbidden        = "forbidden"
+	ErrCodeRateLimited      = "rate_limited"
+	ErrCodeRequestTooLarge  = "request_too_large"
 )
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

@@ -30,7 +30,7 @@ const (
 // tests can call it directly without spawning a subprocess.
 func runAdmin(args []string, stdin io.Reader, stdout, stderr io.Writer, hashParams auth.Params) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: tap admin <create|passwd|disable-totp> ...")
+		fmt.Fprintln(stderr, "usage: tap admin <create|passwd|list|disable|disable-totp> ...")
 		return adminExitGeneric
 	}
 	switch args[0] {
@@ -38,6 +38,10 @@ func runAdmin(args []string, stdin io.Reader, stdout, stderr io.Writer, hashPara
 		return runAdminCreate(args[1:], stdin, stdout, stderr, hashParams)
 	case "passwd":
 		return runAdminPasswd(args[1:], stdin, stdout, stderr, hashParams)
+	case "list":
+		return runAdminList(args[1:], stdout, stderr)
+	case "disable":
+		return runAdminDisable(args[1:], stdout, stderr)
 	case "disable-totp":
 		return runAdminDisableTOTP(args[1:], stdout, stderr)
 	default:
@@ -265,6 +269,91 @@ func runAdminPasswd(args []string, stdin io.Reader, stdout, stderr io.Writer, ha
 		return adminExitGeneric
 	}
 	fmt.Fprintf(stdout, "password reset for '%s'\n", username)
+	return adminExitOK
+}
+
+// runAdminList implements `tap admin list`. Prints all users as a table.
+func runAdminList(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("admin list", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	dataDir := fs.String("data", envOr("TAP_DATA_DIR", "./data"), "data directory containing tap.db")
+	if err := fs.Parse(args); err != nil {
+		return adminExitGeneric
+	}
+
+	ctx := context.Background()
+	d, err := openAdminDB(ctx, *dataDir)
+	if err != nil {
+		fmt.Fprintf(stderr, "open db: %v\n", err)
+		return adminExitGeneric
+	}
+	defer d.Close()
+
+	users, err := db.ListUsers(ctx, d)
+	if err != nil {
+		fmt.Fprintf(stderr, "list users: %v\n", err)
+		return adminExitGeneric
+	}
+
+	fmt.Fprintf(stdout, "%-4s  %-20s  %-6s  %-20s  %s\n", "ID", "USERNAME", "ROLE", "CREATED", "DISABLED")
+	for _, u := range users {
+		created := time.Unix(u.CreatedAt, 0).UTC().Format(time.RFC3339)
+		disabled := "no"
+		if u.DisabledAt.Valid {
+			disabled = "yes (" + time.Unix(u.DisabledAt.Int64, 0).UTC().Format(time.RFC3339) + ")"
+		}
+		fmt.Fprintf(stdout, "%-4d  %-20s  %-6s  %-20s  %s\n",
+			u.ID, u.Username, u.Role, created, disabled)
+	}
+	return adminExitOK
+}
+
+// runAdminDisable implements `tap admin disable <username>`.
+func runAdminDisable(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("admin disable", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	dataDir := fs.String("data", envOr("TAP_DATA_DIR", "./data"), "data directory containing tap.db")
+	if err := fs.Parse(args); err != nil {
+		return adminExitGeneric
+	}
+	if fs.NArg() != 1 {
+		fmt.Fprintln(stderr, "usage: tap admin disable [--data <dir>] <username>")
+		return adminExitGeneric
+	}
+	username := fs.Arg(0)
+
+	ctx := context.Background()
+	d, err := openAdminDB(ctx, *dataDir)
+	if err != nil {
+		fmt.Fprintf(stderr, "open db: %v\n", err)
+		return adminExitGeneric
+	}
+	defer d.Close()
+
+	u, err := db.GetUserByUsername(ctx, d, username)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			fmt.Fprintf(stderr, "user '%s' not found\n", username)
+			return adminExitUserExistsOrGone
+		}
+		fmt.Fprintf(stderr, "lookup user: %v\n", err)
+		return adminExitGeneric
+	}
+
+	if u.DisabledAt.Valid {
+		fmt.Fprintf(stderr, "user '%s' is already disabled\n", username)
+		return adminExitPasswordMismatch // exit 3 per spec
+	}
+
+	if err := db.DisableUser(ctx, d, u.ID, time.Now().Unix()); err != nil {
+		fmt.Fprintf(stderr, "disable user: %v\n", err)
+		return adminExitGeneric
+	}
+	if err := db.DeleteSessionsByUserID(ctx, d, u.ID); err != nil {
+		fmt.Fprintf(stderr, "delete sessions: %v\n", err)
+		return adminExitGeneric
+	}
+	fmt.Fprintf(stdout, "disabled user '%s'\n", username)
 	return adminExitOK
 }
 

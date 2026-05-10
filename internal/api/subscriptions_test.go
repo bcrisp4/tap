@@ -364,3 +364,32 @@ func patchSubscription(mux http.Handler, t *testing.T, id int64, body string) {
 	mux.ServeHTTP(rr, req)
 	require.Equal(t, http.StatusOK, rr.Code, "PATCH body=%s body=%s", body, rr.Body.String())
 }
+
+func TestCreateSubscription_BodyTooLarge(t *testing.T) {
+	t.Parallel()
+	mux, _, _ := newAPIWithUser(t)
+
+	// Body is valid JSON for the first >1 MiB, then keeps going — triggers MaxBytesError, not syntax error.
+	body := `{"feed_url":"` + strings.Repeat("a", 2<<20) + `"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/subscriptions", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusRequestEntityTooLarge, rr.Code, rr.Body.String())
+}
+
+func TestPatchSubscription_BodyTooLarge(t *testing.T) {
+	t.Parallel()
+	mux, d, uid := newAPIWithUser(t)
+	id, err := db.InsertSubscription(context.Background(), d, db.NewSubscription{
+		UserID: uid, Title: "x", FeedURL: "https://x.example/feed",
+	})
+	require.NoError(t, err)
+
+	body := `{"feed_url":"` + strings.Repeat("a", 2<<20) + `"}`
+	req := httptest.NewRequest(http.MethodPatch,
+		"/api/v1/subscriptions/"+strconv.FormatInt(id, 10), strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusRequestEntityTooLarge, rr.Code, rr.Body.String())
+}

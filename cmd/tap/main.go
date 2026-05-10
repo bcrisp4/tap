@@ -18,6 +18,10 @@ import (
 	"syscall"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+	"golang.org/x/time/rate"
+
 	"github.com/go-webauthn/webauthn/webauthn"
 
 	"github.com/bcrisp4/tap/internal/api"
@@ -25,16 +29,26 @@ import (
 	"github.com/bcrisp4/tap/internal/auth"
 	"github.com/bcrisp4/tap/internal/db"
 	"github.com/bcrisp4/tap/internal/httpx"
+	"github.com/bcrisp4/tap/internal/metrics"
 	"github.com/bcrisp4/tap/internal/poll"
 	"github.com/bcrisp4/tap/internal/processor"
 	"github.com/bcrisp4/tap/internal/proxy"
+	"github.com/bcrisp4/tap/internal/ratelimit"
+	"github.com/bcrisp4/tap/internal/ring"
 	"github.com/bcrisp4/tap/internal/sanitise"
 	"github.com/bcrisp4/tap/internal/server"
+	"github.com/bcrisp4/tap/internal/tracing"
 )
+
+// version is set by the build via -ldflags "-X main.version=<tag>".
+var version = "dev"
 
 // main routes between the `tap admin ...` subcommand family and the regular
 // server. Subcommands return an exit code so tests can call them directly.
 func main() {
+	if len(os.Args) >= 2 && os.Args[1] == "healthcheck" {
+		os.Exit(runHealthcheck(os.Args[2:]))
+	}
 	if len(os.Args) >= 2 && os.Args[1] == "admin" {
 		os.Exit(runAdmin(os.Args[2:], os.Stdin, os.Stdout, os.Stderr, auth.DefaultParams))
 	}
@@ -94,6 +108,19 @@ func runServer() {
 		webAuthnRPID   = flag.String("webauthn-rp-id", envOr("TAP_WEBAUTHN_RP_ID", ""), "WebAuthn relying party ID (hostname); derived from --addr if empty")
 		webAuthnOrigin = flag.String("webauthn-origin", envOr("TAP_WEBAUTHN_ORIGIN", ""), "WebAuthn origin URL; derived from --addr if empty")
 
+		logLevel        = flag.String("log-level", envOr("TAP_LOG_LEVEL", "info"), "log level: debug, info, warn, error")
+		metricsEnabled  = flag.Bool("metrics-enabled", envOrBool("TAP_METRICS_ENABLED", false), "enable GET /metrics Prometheus scrape endpoint on the main listener")
+		otlpEndpoint    = flag.String("otlp-endpoint", envOr("TAP_OTLP_ENDPOINT", ""), "OTel collector endpoint (empty = disabled); http://, https://, or grpc:// scheme")
+		otlpHeaders     = flag.String("otlp-headers", envOr("TAP_OTLP_HEADERS", ""), "comma-separated key=value OTLP auth headers")
+		traceSampleRate = flag.Float64("trace-sample-rate", envOrFloat64("TAP_TRACE_SAMPLE_RATE", 0.1), "fraction of normal traces to sample (0.0-1.0)")
+
+		loginRate        = flag.String("login-rate", envOr("TAP_LOGIN_RATE", "10/min"), "per-source login rate limit (N/min or N/s)")
+		loginBurst       = flag.Int("login-burst", envOrInt("TAP_LOGIN_BURST", 5), "per-source burst allowance for login attempts")
+		lockoutThreshold = flag.Int("lockout-threshold", envOrInt("TAP_LOCKOUT_THRESHOLD", 5), "consecutive per-username login failures before first lockout")
+		lockoutBase      = flag.Duration("lockout-base", envOrDuration("TAP_LOCKOUT_BASE", 30*time.Second), "initial lockout duration")
+		lockoutMax       = flag.Duration("lockout-max", envOrDuration("TAP_LOCKOUT_MAX", time.Hour), "maximum lockout duration after escalation")
+		trustedProxy     = flag.Bool("trusted-proxy", envOrBool("TAP_TRUSTED_PROXY", false), "trust X-Forwarded-For for client IP in rate limiting and auth logs")
+
 		ssrfAllow stringSlice
 	)
 	flag.Var(&ssrfAllow, "ssrf-allow", "SSRF allowlist entry (CIDR, IP literal, or hostname suffix). Repeatable; env TAP_SSRF_ALLOW is comma-separated.")
@@ -110,7 +137,36 @@ func runServer() {
 		}
 	}
 
-	configureLogger(*logFmt)
+	configureLogger(*logFmt, *logLevel)
+
+	startTime := time.Now()
+
+	// Initialise metrics provider (Prometheus bridge + optional OTLP).
+	if err := metrics.Init(metrics.Opts{
+		OTLPEndpoint: *otlpEndpoint,
+		OTLPHeaders:  parseOTLPHeaders(*otlpHeaders),
+	}); err != nil {
+		slog.Error("init metrics", "err", err)
+		os.Exit(1)
+	}
+
+	// Wrap the slog default handler with the ring buffer so warn/error log
+	// events are captured for the system-status panel.
+	ringBuf := ring.NewBuffer(100)
+	slog.SetDefault(slog.New(ring.NewHandler(slog.Default().Handler(), ringBuf)))
+
+	// Initialise tracing provider (no-op when otlp-endpoint is empty).
+	if err := tracing.Init(tracing.Opts{
+		OTLPEndpoint: *otlpEndpoint,
+		OTLPHeaders:  parseOTLPHeaders(*otlpHeaders),
+		SampleRate:   *traceSampleRate,
+		ServiceName:  "tap",
+	}); err != nil {
+		slog.Error("init tracing", "err", err)
+		os.Exit(1)
+	}
+
+	slog.Info("tap starting", "event", "startup", "addr", *addr, "data_dir", *dataDir)
 
 	if err := os.MkdirAll(*dataDir, 0o755); err != nil {
 		slog.Error("create data dir", "err", err)
@@ -218,9 +274,21 @@ func runServer() {
 		CacheAgeCap: *cacheAgeCap,
 		Interval:    *archiveInterval,
 		CacheDir:    cacheDir,
-		OnEvict:     nil, // M12 wires tap_proxy_cache_evictions_total{reason="age_sweep"}
+		OnEvict: func(n int) {
+			metrics.ProxyCacheEvictions.Add(context.Background(), int64(n),
+				metric.WithAttributes(attribute.String("reason", "age_sweep")))
+		},
 	})
 	archiver.Start()
+
+	limiter := ratelimit.NewLimiter(ratelimit.Opts{
+		SourceRate:      parseLoginRate(*loginRate),
+		SourceBurst:     *loginBurst,
+		FailThreshold:   *lockoutThreshold,
+		LockoutBase:     *lockoutBase,
+		LockoutMax:      *lockoutMax,
+		CleanupInterval: 5 * time.Minute,
+	})
 
 	// Resolve --cookie-secure once at startup. "auto" (the default) inspects
 	// --addr: loopback bind => Secure off, anything else => Secure on. Any
@@ -290,9 +358,20 @@ func runServer() {
 		HashParams:         auth.DefaultParams,
 		WebAuthnInstance:   waInstance,
 		DiscoverClient:     client,
+		Limiter:            limiter,
+		TrustedProxy:       *trustedProxy,
+		MetricsEnabled:     *metricsEnabled,
+		RingBuffer:         ringBuf,
+		StartTime:          startTime,
+		Version:            version,
+		PollsActive:        func() int64 { return sched.ActiveCount() },
 	})
-	mux.Handle("/api/", apiMux)
-	mux.Handle("/healthz", apiMux)
+	tracedAPIHandler := tracing.Middleware(apiMux)
+	mux.Handle("/api/", tracedAPIHandler)
+	mux.Handle("/healthz", tracedAPIHandler)
+	if *metricsEnabled {
+		mux.Handle("/metrics", tracedAPIHandler)
+	}
 	mux.Handle("/", server.SPAHandler())
 
 	srv := server.New(server.Config{Addr: *addr, Handler: mux})
@@ -302,16 +381,17 @@ func runServer() {
 	}
 
 	<-ctx.Done()
-	slog.Info("shutting down")
+	slog.Info("shutting down", "event", "shutdown", "reason", "signal")
 
-	// Stop accepting connections; drain in-flight HTTP. Then stop the scheduler
-	// (which cancels in-flight worker ctxs and waits for them to finish).
 	shutdownCtx, sCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer sCancel()
 	_ = srv.Shutdown(shutdownCtx)
 	archiver.Stop()
 	sched.Stop()
+	limiter.Stop()
 	client.CloseIdleConnections()
+	_ = tracing.Shutdown(shutdownCtx)
+	_ = metrics.Shutdown(shutdownCtx)
 }
 
 func envOr(k, def string) string {
@@ -321,12 +401,24 @@ func envOr(k, def string) string {
 	return def
 }
 
-func configureLogger(format string) {
+func configureLogger(format, level string) {
+	var lvl slog.Level
+	switch strings.ToLower(level) {
+	case "debug":
+		lvl = slog.LevelDebug
+	case "warn":
+		lvl = slog.LevelWarn
+	case "error":
+		lvl = slog.LevelError
+	default:
+		lvl = slog.LevelInfo
+	}
+	opts := &slog.HandlerOptions{Level: lvl}
 	var h slog.Handler
 	if format == "text" {
-		h = slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})
+		h = slog.NewTextHandler(os.Stdout, opts)
 	} else {
-		h = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})
+		h = slog.NewJSONHandler(os.Stdout, opts)
 	}
 	slog.SetDefault(slog.New(h))
 }
@@ -402,6 +494,78 @@ func envOrBool(k string, def bool) bool {
 		fmt.Fprintf(os.Stderr, "warning: %s=%q is not a valid bool; using default %v\n", k, v, def)
 	}
 	return def
+}
+
+func envOrFloat64(k string, def float64) float64 {
+	if v := os.Getenv(k); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f
+		}
+		fmt.Fprintf(os.Stderr, "warning: %s=%q is not a valid float64; using default %g\n", k, v, def)
+	}
+	return def
+}
+
+func parseOTLPHeaders(raw string) map[string]string {
+	m := make(map[string]string)
+	for _, pair := range strings.Split(raw, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		k, v, _ := strings.Cut(pair, "=")
+		m[strings.TrimSpace(k)] = strings.TrimSpace(v)
+	}
+	return m
+}
+
+func parseLoginRate(s string) rate.Limit {
+	s = strings.TrimSpace(s)
+	if strings.HasSuffix(s, "/min") {
+		n, err := strconv.Atoi(strings.TrimSuffix(s, "/min"))
+		if err == nil && n > 0 {
+			return rate.Every(time.Minute / time.Duration(n))
+		}
+	}
+	if strings.HasSuffix(s, "/s") {
+		n, err := strconv.Atoi(strings.TrimSuffix(s, "/s"))
+		if err == nil && n > 0 {
+			return rate.Limit(n)
+		}
+	}
+	return rate.Every(6 * time.Second) // default 10/min
+}
+
+func runHealthcheck(args []string) int {
+	fs := flag.NewFlagSet("healthcheck", flag.ContinueOnError)
+	addr := fs.String("addr", envOr("TAP_ADDR", "127.0.0.1:8080"), "server address to check")
+	timeout := fs.Duration("timeout", 5*time.Second, "HTTP request timeout")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+
+	host, port, err := net.SplitHostPort(*addr)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "invalid addr:", err)
+		return 1
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+
+	client := &http.Client{Timeout: *timeout}
+	url := "http://" + net.JoinHostPort(host, port) + "/healthz"
+	resp, err := client.Get(url) //nolint:noctx
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "healthcheck failed:", err)
+		return 1
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusOK {
+		return 0
+	}
+	fmt.Fprintln(os.Stderr, "healthcheck: unexpected status", resp.StatusCode)
+	return 1
 }
 
 // stringSlice implements flag.Value for repeatable string flags.
