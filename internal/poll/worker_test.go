@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -1059,4 +1060,99 @@ func TestWorker_MixedTombstones(t *testing.T) {
 	for _, e := range entries {
 		require.NotEqual(t, tombstoneHash, e.Hash)
 	}
+}
+
+// captureHandler captures slog records.
+type captureHandler struct {
+	mu      sync.Mutex
+	records []slog.Record
+}
+
+func (c *captureHandler) Enabled(_ context.Context, _ slog.Level) bool { return true }
+func (c *captureHandler) Handle(_ context.Context, r slog.Record) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.records = append(c.records, r)
+	return nil
+}
+func (c *captureHandler) WithAttrs(_ []slog.Attr) slog.Handler { return c }
+func (c *captureHandler) WithGroup(_ string) slog.Handler      { return c }
+
+func (c *captureHandler) hasEvent(key string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, r := range c.records {
+		r.Attrs(func(a slog.Attr) bool {
+			if a.Key == "event" && a.Value.String() == key {
+				return false
+			}
+			return true
+		})
+		// Check if any attr matches
+		found := false
+		r.Attrs(func(a slog.Attr) bool {
+			if a.Key == "event" && a.Value.String() == key {
+				found = true
+				return false
+			}
+			return true
+		})
+		if found {
+			return true
+		}
+	}
+	return false
+}
+
+func TestWorker_EmitsPollSuccessLogEvent(t *testing.T) {
+	// Not parallel — modifies slog default, which would race with other tests.
+	h := &captureHandler{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(h))
+	defer slog.SetDefault(prev)
+
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/atom+xml")
+		_, _ = w.Write([]byte(sampleAtom))
+	}))
+	defer origin.Close()
+
+	d, uid := newDBUser(t)
+	subID, err := db.InsertSubscription(context.Background(), d, db.NewSubscription{
+		UserID: uid, Title: "x", FeedURL: origin.URL, NextPoll: 0, Created: 0,
+	})
+	require.NoError(t, err)
+
+	worker := NewWorker(d, http.DefaultClient, WorkerOpts{
+		Processor: processor.New(sanitise.DefaultPolicy(), nil),
+	})
+	worker.Run(context.Background(), db.DueSubscription{UserID: uid, ID: subID, FeedURL: origin.URL})
+
+	require.True(t, h.hasEvent("poll.success"), "expected poll.success event in logs")
+}
+
+func TestWorker_EmitsPollFailureLogEvent(t *testing.T) {
+	// Not parallel — modifies slog default, which would race with other tests.
+	h := &captureHandler{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(h))
+	defer slog.SetDefault(prev)
+
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer origin.Close()
+
+	d, uid := newDBUser(t)
+	subID, err := db.InsertSubscription(context.Background(), d, db.NewSubscription{
+		UserID: uid, Title: "x", FeedURL: origin.URL, NextPoll: 0, Created: 0,
+	})
+	require.NoError(t, err)
+
+	worker := NewWorker(d, http.DefaultClient, WorkerOpts{
+		Processor: processor.New(sanitise.DefaultPolicy(), nil),
+	})
+	worker.Run(context.Background(), db.DueSubscription{UserID: uid, ID: subID, FeedURL: origin.URL})
+
+	require.True(t, h.hasEvent("poll.failure"), "expected poll.failure event in logs")
 }
