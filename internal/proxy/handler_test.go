@@ -216,3 +216,48 @@ func TestHandler_NeverSendsCredentialsToOrigin(t *testing.T) {
 	require.Empty(t, gotCookie, "proxy must not forward Cookie to origin")
 	require.Empty(t, gotAuth, "proxy must not forward Authorization to origin")
 }
+
+func TestHandler_IncrementsCacheHitMissCounters(t *testing.T) {
+	t.Parallel()
+	origin, _ := newOriginServer(t, pngFixture, "image/png", http.StatusOK)
+	signer := proxy.NewSigner(testKey)
+	cache := proxy.NewCache(t.TempDir(), 1<<20)
+	h := proxy.NewHandler(signer, cache, http.DefaultClient, 10<<20)
+	// sharedReg was initialised in TestMain with metrics.InitWithRegistry.
+	tok := signer.Sign(origin.URL + "/img.png")
+
+	// First request — cache miss.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/proxy/"+tok, nil)
+	req.SetPathValue("token", tok)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	// Second request — cache hit.
+	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/proxy/"+tok, nil)
+	req2.SetPathValue("token", tok)
+	rr2 := httptest.NewRecorder()
+	h.ServeHTTP(rr2, req2)
+	require.Equal(t, http.StatusOK, rr2.Code)
+
+	gathered, err := sharedReg.Gather()
+	require.NoError(t, err)
+
+	var hits, misses float64
+	for _, mf := range gathered {
+		if mf.GetName() == "tap_proxy_cache_hits_total" {
+			for _, m := range mf.GetMetric() {
+				hits += m.GetCounter().GetValue()
+			}
+		}
+		if mf.GetName() == "tap_proxy_cache_misses_total" {
+			for _, m := range mf.GetMetric() {
+				misses += m.GetCounter().GetValue()
+			}
+		}
+	}
+	// We assert counters are positive — the exact values include contributions from
+	// other parallel tests that also use the cache.
+	require.Positive(t, hits, "expected at least 1 cache hit across all tests")
+	require.Positive(t, misses, "expected at least 1 cache miss across all tests")
+}

@@ -10,7 +10,11 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 	"golang.org/x/sync/singleflight"
+
+	"github.com/bcrisp4/tap/internal/metrics"
 )
 
 // FetchedResource is what a fetcher closure returns. Bytes is the full body
@@ -56,8 +60,10 @@ func (c *Cache) Get(ctx context.Context, hash string, fetch func(ctx context.Con
 		return FetchedResource{}, fmt.Errorf("proxy cache: invalid hash %q", hash)
 	}
 	if got, ok := c.tryHit(hash); ok {
+		metrics.ProxyCacheHits.Add(ctx, 1)
 		return got, nil
 	}
+	metrics.ProxyCacheMisses.Add(ctx, 1)
 
 	v, err, _ := c.sf.Do(hash, func() (any, error) {
 		// Recheck under singleflight in case another goroutine just filled the cache.
@@ -196,6 +202,8 @@ func (c *Cache) evictIfOverCap(incoming int64) error {
 	// Sort by mtime ascending — oldest first.
 	slices.SortFunc(entries, func(a, b evictEntry) int { return a.mtime.Compare(b.mtime) })
 
+	var evicted int64
+	var bytesFreed int64
 	for _, e := range entries {
 		if total+incoming <= c.capBytes {
 			break
@@ -203,6 +211,13 @@ func (c *Cache) evictIfOverCap(incoming int64) error {
 		_ = os.Remove(e.binPath)
 		_ = os.Remove(e.metaPath)
 		total -= e.size
+		evicted++
+		bytesFreed += e.size
+	}
+	if evicted > 0 {
+		metrics.ProxyCacheEvictions.Add(context.Background(), evicted,
+			metric.WithAttributes(attribute.String("reason", "size_cap")))
+		metrics.ProxyCacheBytes.Record(context.Background(), total)
 	}
 	return nil
 }
