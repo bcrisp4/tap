@@ -7,7 +7,7 @@
   import { navigate } from '../lib/router';
   import { pullToRefresh } from '../lib/pulltorefresh';
 
-  let listEl = $state<HTMLElement | null>(null);
+  let mainEl = $state<HTMLElement | null>(null);
   let refreshing = $state(false);
   let selectedId = $state<number | null>(null);
 
@@ -65,7 +65,7 @@
 
 <div class="layout">
   <Sidebar />
-  <main class="main">
+  <main class="main" bind:this={mainEl}>
     <TopBar
       title="Unread"
       countShown={$entries.items.length}
@@ -83,10 +83,9 @@
         class="list"
         role="list"
         aria-label="Unread entries"
-        bind:this={listEl}
         {@attach pullToRefresh({
           onRefresh: doRefresh,
-          getScrollTop: () => listEl?.scrollTop ?? 0,
+          getScrollTop: () => mainEl?.scrollTop ?? 0,
         })}
       >
         {#if refreshing}

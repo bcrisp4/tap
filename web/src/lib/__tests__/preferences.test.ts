@@ -34,6 +34,11 @@ describe('theme', () => {
     const { theme } = await import('../preferences.svelte');
     expect(theme.stored).toBe('dark');
   });
+  it('falls back to "system" when localStorage contains an invalid theme value', async () => {
+    store['tap.theme'] = 'invalid-value';
+    const { theme } = await import('../preferences.svelte');
+    expect(theme.stored).toBe('system');
+  });
   it('resolves "system" to "light" when matchMedia does not match dark', async () => {
     const { theme } = await import('../preferences.svelte');
     expect(theme.resolved).toBe('light');
@@ -70,6 +75,11 @@ describe('theme', () => {
 });
 
 describe('font', () => {
+  it('falls back to "serif" when localStorage contains an invalid font value', async () => {
+    store['tap.font'] = 'Comic Sans';
+    const { font } = await import('../preferences.svelte');
+    expect(font.value).toBe('serif');
+  });
   it('defaults to "serif"', async () => {
     const { font } = await import('../preferences.svelte');
     expect(font.value).toBe('serif');
@@ -87,6 +97,11 @@ describe('font', () => {
 });
 
 describe('density', () => {
+  it('falls back to "default" when localStorage contains an invalid density value', async () => {
+    store['tap.density'] = 'ultra-compact';
+    const { density } = await import('../preferences.svelte');
+    expect(density.value).toBe('default');
+  });
   it('defaults to "default"', async () => {
     const { density } = await import('../preferences.svelte');
     expect(density.value).toBe('default');

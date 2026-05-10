@@ -3,6 +3,10 @@ type Theme = 'light' | 'dark' | 'sepia' | 'system';
 type Font = 'serif' | 'sans';
 type Density = 'compact' | 'default' | 'comfortable';
 
+const THEMES: Theme[] = ['light', 'dark', 'sepia', 'system'];
+const FONTS: Font[] = ['serif', 'sans'];
+const DENSITIES: Density[] = ['compact', 'default', 'comfortable'];
+
 const mq = typeof window !== 'undefined'
   ? window.matchMedia('(prefers-color-scheme: dark)')
   : null;
@@ -17,8 +21,9 @@ if (mq) {
 }
 
 function makeTheme() {
+  const raw = localStorage.getItem('tap.theme');
   let stored = $state<Theme>(
-    (localStorage.getItem('tap.theme') as Theme) ?? 'system'
+    THEMES.includes(raw as Theme) ? (raw as Theme) : 'system'
   );
   const resolved = $derived<'light' | 'dark' | 'sepia'>(
     stored === 'system' ? (prefersDark ? 'dark' : 'light') : stored
@@ -30,8 +35,9 @@ function makeTheme() {
   };
 }
 
-function makePref<T extends string>(key: string, def: T) {
-  let value = $state<T>((localStorage.getItem(key) as T) ?? def);
+function makePref<T extends string>(key: string, def: T, allowed: T[]) {
+  const raw = localStorage.getItem(key);
+  let value = $state<T>(allowed.includes(raw as T) ? (raw as T) : def);
   return {
     get value() { return value; },
     set value(v: T) { value = v; localStorage.setItem(key, v); },
@@ -39,5 +45,5 @@ function makePref<T extends string>(key: string, def: T) {
 }
 
 export const theme = makeTheme();
-export const font = makePref<Font>('tap.font', 'serif');
-export const density = makePref<Density>('tap.density', 'default');
+export const font = makePref<Font>('tap.font', 'serif', FONTS);
+export const density = makePref<Density>('tap.density', 'default', DENSITIES);
