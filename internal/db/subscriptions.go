@@ -43,11 +43,13 @@ type NewSubscription struct {
 }
 
 type DueSubscription struct {
-	ID           int64
-	FeedURL      string
-	ETag         sql.NullString
-	LastModified sql.NullString
-	ErrorCount   int
+	ID              int64
+	FeedURL         string
+	ETag            sql.NullString
+	LastModified    sql.NullString
+	ErrorCount      int
+	Extract         bool
+	ExtractSelector string
 }
 
 // PollResult and UpdateAfterPoll live in entries.go because they reference db.NewEntry.
@@ -118,7 +120,7 @@ func DeleteSubscription(ctx context.Context, d *sql.DB, id int64) error {
 // The caller is responsible for excluding currently in-flight subscriptions.
 func ListDuePolls(ctx context.Context, d *sql.DB, now int64, limit int) ([]DueSubscription, error) {
 	rows, err := d.QueryContext(ctx, `
-		SELECT id, feed_url, etag, last_modified, error_count
+		SELECT id, feed_url, etag, last_modified, error_count, extract, extract_selector
 		FROM subscriptions
 		WHERE next_poll_at <= ?
 		ORDER BY next_poll_at
@@ -132,7 +134,8 @@ func ListDuePolls(ctx context.Context, d *sql.DB, now int64, limit int) ([]DueSu
 	var out []DueSubscription
 	for rows.Next() {
 		var s DueSubscription
-		if err := rows.Scan(&s.ID, &s.FeedURL, &s.ETag, &s.LastModified, &s.ErrorCount); err != nil {
+		if err := rows.Scan(&s.ID, &s.FeedURL, &s.ETag, &s.LastModified,
+			&s.ErrorCount, &s.Extract, &s.ExtractSelector); err != nil {
 			return nil, fmt.Errorf("scan due poll: %w", err)
 		}
 		out = append(out, s)
