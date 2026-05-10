@@ -1841,7 +1841,8 @@ package api
 //   - Calls db.DeleteSessionsByUserID
 //   - Returns {"temporary_password": "..."} — shown once
 // disableUserTOTPHandler handles POST /api/v1/admin/users/{id}/disable-totp.
-//   - Calls db.DeleteTOTPSecret + db.DeleteRecoveryCodes
+//   - Wraps db.DeleteTOTPSecret + db.DeleteRecoveryCodes in a single transaction
+//     (same pattern as deleteTOTPHandler — both deletes must succeed or both roll back)
 ```
 
 - [ ] **Step 3: Run tests**
