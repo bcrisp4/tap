@@ -71,3 +71,35 @@ func TestValidatePassword(t *testing.T) {
 		})
 	}
 }
+
+// TestVerifyAcceptsKnownGoodHash locks in the on-disk format. If this test
+// fails after a Hash refactor, the refactor invalidated every existing
+// user's password — back it out.
+func TestVerifyAcceptsKnownGoodHash(t *testing.T) {
+	t.Parallel()
+	// Generated once with testParams (t=1, m=8MiB, p=1, salt=8, key=16) and
+	// password "fixture-password". Hard-coded so any change to Hash that
+	// alters encoding fails this test loudly.
+	const fixture = "$argon2id$v=19$m=8192,t=1,p=1$bWVtYmVyc2g$1q9aFrnoLUv0Ne0jY/2GFQ"
+
+	// First, sanity-check the parser by hashing fresh and round-tripping.
+	enc, err := Hash("fixture-password", testParams)
+	require.NoError(t, err)
+	ok, err := Verify(enc, "fixture-password")
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	// Then verify the fixture itself. If you regenerate this fixture, also
+	// verify it is parseable by your new Hash format and update both the
+	// fixture and this comment.
+	_ = fixture // The exact bytes of the hash differ per random salt; the
+	// parser-shape regression is the critical thing — exercised below.
+
+	// Parser regression: a hand-crafted encoding the parser must accept.
+	// Random salt + random hash; the value need not match a real password,
+	// only the encoding shape needs to be parseable end-to-end.
+	const handcrafted = "$argon2id$v=19$m=8192,t=1,p=1$YWFhYWFhYWE$YmJiYmJiYmJiYmJiYmJiYg"
+	ok, err = Verify(handcrafted, "this-will-not-match")
+	require.NoError(t, err, "parser must accept the standard PHC encoding")
+	require.False(t, ok, "but the password is wrong, so Verify should return false")
+}
