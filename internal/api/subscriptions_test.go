@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/bcrisp4/tap/internal/db"
@@ -55,4 +56,37 @@ func TestSubscriptions_PostRejectsBadURL(t *testing.T) {
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
 	require.Equal(t, http.StatusBadRequest, rr.Code)
+}
+
+func TestPostSubscriptions_PersistsExtractFlag(t *testing.T) {
+	t.Parallel()
+	mux, _ := newAPI(t)
+
+	body := strings.NewReader(`{"feed_url":"https://x.example/feed","extract":true}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/subscriptions", body)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusCreated, rr.Code, rr.Body.String())
+
+	var got map[string]any
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&got))
+	require.Equal(t, true, got["extract"])
+	require.Equal(t, "", got["extract_selector"])
+}
+
+func TestPostSubscriptions_DefaultsExtractFalse(t *testing.T) {
+	t.Parallel()
+	mux, _ := newAPI(t)
+
+	body := strings.NewReader(`{"feed_url":"https://x.example/feed"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/subscriptions", body)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusCreated, rr.Code, rr.Body.String())
+
+	var got map[string]any
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&got))
+	require.Equal(t, false, got["extract"])
 }

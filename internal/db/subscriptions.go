@@ -21,17 +21,19 @@ var ErrSubscriptionExists = errors.New("subscription with this feed_url already 
 const velocityWindow = 7 * 24 * time.Hour
 
 type Subscription struct {
-	ID           int64
-	Title        string
-	FeedURL      string
-	SiteURL      sql.NullString
-	LastPollAt   sql.NullInt64
-	NextPollAt   int64
-	ETag         sql.NullString
-	LastModified sql.NullString
-	ErrorCount   int
-	LastError    sql.NullString
-	CreatedAt    int64
+	ID              int64
+	Title           string
+	FeedURL         string
+	SiteURL         sql.NullString
+	LastPollAt      sql.NullInt64
+	NextPollAt      int64
+	ETag            sql.NullString
+	LastModified    sql.NullString
+	ErrorCount      int
+	LastError       sql.NullString
+	CreatedAt       int64
+	Extract         bool
+	ExtractSelector string
 }
 
 type NewSubscription struct {
@@ -40,6 +42,7 @@ type NewSubscription struct {
 	SiteURL  string
 	NextPoll int64
 	Created  int64
+	Extract  bool
 }
 
 type DueSubscription struct {
@@ -56,9 +59,9 @@ type DueSubscription struct {
 
 func InsertSubscription(ctx context.Context, d *sql.DB, s NewSubscription) (int64, error) {
 	res, err := d.ExecContext(ctx, `
-		INSERT INTO subscriptions (title, feed_url, site_url, next_poll_at, created_at)
-		VALUES (?, ?, NULLIF(?, ''), ?, ?)
-	`, s.Title, s.FeedURL, s.SiteURL, s.NextPoll, s.Created)
+		INSERT INTO subscriptions (title, feed_url, site_url, next_poll_at, created_at, extract)
+		VALUES (?, ?, NULLIF(?, ''), ?, ?, ?)
+	`, s.Title, s.FeedURL, s.SiteURL, s.NextPoll, s.Created, boolToInt(s.Extract))
 	if err != nil {
 		// modernc.org/sqlite reports unique violations through the standard
 		// SQLite error text. We match on substring rather than the typed
@@ -75,10 +78,12 @@ func GetSubscription(ctx context.Context, d *sql.DB, id int64) (Subscription, er
 	var s Subscription
 	err := d.QueryRowContext(ctx, `
 		SELECT id, title, feed_url, site_url, last_poll_at, next_poll_at,
-		       etag, last_modified, error_count, last_error, created_at
+		       etag, last_modified, error_count, last_error, created_at,
+		       extract, extract_selector
 		FROM subscriptions WHERE id = ?
 	`, id).Scan(&s.ID, &s.Title, &s.FeedURL, &s.SiteURL, &s.LastPollAt, &s.NextPollAt,
-		&s.ETag, &s.LastModified, &s.ErrorCount, &s.LastError, &s.CreatedAt)
+		&s.ETag, &s.LastModified, &s.ErrorCount, &s.LastError, &s.CreatedAt,
+		&s.Extract, &s.ExtractSelector)
 	if err != nil {
 		return Subscription{}, fmt.Errorf("get subscription %d: %w", id, err)
 	}
@@ -88,7 +93,8 @@ func GetSubscription(ctx context.Context, d *sql.DB, id int64) (Subscription, er
 func ListSubscriptions(ctx context.Context, d *sql.DB) ([]Subscription, error) {
 	rows, err := d.QueryContext(ctx, `
 		SELECT id, title, feed_url, site_url, last_poll_at, next_poll_at,
-		       etag, last_modified, error_count, last_error, created_at
+		       etag, last_modified, error_count, last_error, created_at,
+		       extract, extract_selector
 		FROM subscriptions ORDER BY title COLLATE NOCASE
 	`)
 	if err != nil {
@@ -100,7 +106,8 @@ func ListSubscriptions(ctx context.Context, d *sql.DB) ([]Subscription, error) {
 	for rows.Next() {
 		var s Subscription
 		if err := rows.Scan(&s.ID, &s.Title, &s.FeedURL, &s.SiteURL, &s.LastPollAt, &s.NextPollAt,
-			&s.ETag, &s.LastModified, &s.ErrorCount, &s.LastError, &s.CreatedAt); err != nil {
+			&s.ETag, &s.LastModified, &s.ErrorCount, &s.LastError, &s.CreatedAt,
+			&s.Extract, &s.ExtractSelector); err != nil {
 			return nil, fmt.Errorf("scan subscription: %w", err)
 		}
 		out = append(out, s)

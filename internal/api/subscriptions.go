@@ -14,25 +14,29 @@ import (
 )
 
 type subscriptionDTO struct {
-	ID         int64  `json:"id"`
-	Title      string `json:"title"`
-	FeedURL    string `json:"feed_url"`
-	SiteURL    string `json:"site_url,omitempty"`
-	NextPollAt int64  `json:"next_poll_at"`
-	LastPollAt int64  `json:"last_poll_at,omitempty"`
-	ErrorCount int    `json:"error_count"`
-	LastError  string `json:"last_error,omitempty"`
-	CreatedAt  int64  `json:"created_at"`
+	ID              int64  `json:"id"`
+	Title           string `json:"title"`
+	FeedURL         string `json:"feed_url"`
+	SiteURL         string `json:"site_url,omitempty"`
+	NextPollAt      int64  `json:"next_poll_at"`
+	LastPollAt      int64  `json:"last_poll_at,omitempty"`
+	ErrorCount      int    `json:"error_count"`
+	LastError       string `json:"last_error,omitempty"`
+	CreatedAt       int64  `json:"created_at"`
+	Extract         bool   `json:"extract"`
+	ExtractSelector string `json:"extract_selector"`
 }
 
 func toDTO(s db.Subscription) subscriptionDTO {
 	d := subscriptionDTO{
-		ID:         s.ID,
-		Title:      s.Title,
-		FeedURL:    s.FeedURL,
-		NextPollAt: s.NextPollAt,
-		ErrorCount: s.ErrorCount,
-		CreatedAt:  s.CreatedAt,
+		ID:              s.ID,
+		Title:           s.Title,
+		FeedURL:         s.FeedURL,
+		NextPollAt:      s.NextPollAt,
+		ErrorCount:      s.ErrorCount,
+		CreatedAt:       s.CreatedAt,
+		Extract:         s.Extract,
+		ExtractSelector: s.ExtractSelector,
 	}
 	if s.SiteURL.Valid {
 		d.SiteURL = s.SiteURL.String
@@ -65,6 +69,7 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 		var body struct {
 			FeedURL string `json:"feed_url"`
 			Title   string `json:"title"`
+			Extract bool   `json:"extract"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "invalid JSON body")
@@ -88,6 +93,7 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 			FeedURL:  body.FeedURL,
 			NextPoll: 0,
 			Created:  time.Now().Unix(),
+			Extract:  body.Extract,
 		})
 		if err != nil {
 			if errors.Is(err, db.ErrSubscriptionExists) {
