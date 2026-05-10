@@ -123,3 +123,49 @@ func TestExtract_ReadabilityEmptyContent(t *testing.T) {
 	_, err := Extract(context.Background(), srv.Client(), srv.URL, "", 5<<20)
 	require.Error(t, err, "Readability should error on a page with empty body")
 }
+
+func TestExtract_SelectorMode_Match(t *testing.T) {
+	t.Parallel()
+	const page = `<!doctype html><html><body>
+<header>SITE HEADER</header>
+<div class="article"><p>extracted body</p></div>
+<footer>SITE FOOTER</footer>
+</body></html>`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(page))
+	}))
+	t.Cleanup(srv.Close)
+
+	got, err := Extract(context.Background(), srv.Client(), srv.URL, ".article", 5<<20)
+	require.NoError(t, err)
+	require.Contains(t, got, "extracted body")
+	require.NotContains(t, got, "SITE HEADER")
+	require.NotContains(t, got, "SITE FOOTER")
+}
+
+func TestExtract_SelectorMode_NoMatch(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<!doctype html><html><body><p>x</p></body></html>`))
+	}))
+	t.Cleanup(srv.Close)
+
+	_, err := Extract(context.Background(), srv.Client(), srv.URL, ".missing", 5<<20)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "matched no node")
+}
+
+func TestExtract_SelectorMode_MalformedSelector(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<!doctype html><html><body><p>x</p></body></html>`))
+	}))
+	t.Cleanup(srv.Close)
+
+	_, err := Extract(context.Background(), srv.Client(), srv.URL, "[unclosed", 5<<20)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "compile selector")
+}

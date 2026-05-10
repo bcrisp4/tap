@@ -15,7 +15,9 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/andybalholm/cascadia"
 	readability "codeberg.org/readeck/go-readability/v2"
+	"golang.org/x/net/html"
 )
 
 // Extract fetches articleURL via client and returns the article body
@@ -62,8 +64,27 @@ func Extract(ctx context.Context, client *http.Client, articleURL, selector stri
 	}
 
 	if selector != "" {
-		// Selector mode is added in Task B4; punt for now.
-		return "", errors.New("selector mode not implemented yet")
+		sel, serr := cascadia.Compile(selector)
+		if serr != nil {
+			return "", fmt.Errorf("compile selector: %w", serr)
+		}
+		doc, perr := html.Parse(bytes.NewReader(body))
+		if perr != nil {
+			return "", fmt.Errorf("parse html: %w", perr)
+		}
+		match := sel.MatchFirst(doc)
+		if match == nil {
+			return "", errors.New("selector matched no node")
+		}
+		var buf bytes.Buffer
+		if err := html.Render(&buf, match); err != nil {
+			return "", fmt.Errorf("render selector match: %w", err)
+		}
+		out := strings.TrimSpace(buf.String())
+		if out == "" {
+			return "", errors.New("selector match rendered empty")
+		}
+		return out, nil
 	}
 
 	article, err := readability.FromReader(bytes.NewReader(body), pageURL)
