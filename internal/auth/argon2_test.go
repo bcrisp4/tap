@@ -37,9 +37,12 @@ func TestVerifyRejectsMalformedEncoding(t *testing.T) {
 	cases := []string{
 		"",
 		"plaintext",
-		"$argon2id$v=19$m=8192,t=1,p=1$abc",       // missing the hash component
-		"$argon2id$v=99$m=8192,t=1,p=1$YWFh$YmJi", // wrong version
-		"$argon2i$v=19$m=8192,t=1,p=1$YWFh$YmJi",  // wrong family
+		"$argon2id$v=19$m=8192,t=1,p=1$abc",          // missing the hash component
+		"$argon2id$v=99$m=8192,t=1,p=1$YWFh$YmJi",    // wrong version
+		"$argon2i$v=19$m=8192,t=1,p=1$YWFh$YmJi",     // wrong family
+		"$argon2id$v=19abc$m=8192,t=1,p=1$YWFh$YmJi", // trailing garbage in version
+		"$argon2id$v=19$m=8192,xxxx,p=1$YWFh$YmJi",   // malformed param prefix
+		"$argon2id$v=19$m=8192,t=1$YWFh$YmJi",        // wrong number of params
 	}
 	for _, e := range cases {
 		ok, err := Verify(e, "anything")
