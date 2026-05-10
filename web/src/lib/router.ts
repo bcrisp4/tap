@@ -6,11 +6,14 @@ type RouteState =
   | { name: 'saved' }
   | { name: 'search' }
   | { name: 'settings' }
-  | { name: 'admin' };
+  | { name: 'admin' }
+  | { name: 'category'; params: { id: number } };
 
 function parse(pathname: string): RouteState {
   const m = pathname.match(/^\/entry\/(\d+)$/);
   if (m) return { name: 'reader', params: { id: Number(m[1]) } };
+  const mc = pathname.match(/^\/categories\/(\d+)$/);
+  if (mc) return { name: 'category', params: { id: Number(mc[1]) } };
   if (pathname === '/saved')    return { name: 'saved' };
   if (pathname === '/search')   return { name: 'search' };
   if (pathname === '/settings') return { name: 'settings' };

@@ -289,6 +289,7 @@ func runServer() {
 		CookieSecure:       cookieSecure,
 		HashParams:         auth.DefaultParams,
 		WebAuthnInstance:   waInstance,
+		DiscoverClient:     client,
 	})
 	mux.Handle("/api/", apiMux)
 	mux.Handle("/healthz", apiMux)

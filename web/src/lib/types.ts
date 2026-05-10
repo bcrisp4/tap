@@ -12,7 +12,26 @@ export type Subscription = {
   extract_selector: string;
   has_cookie: boolean;
   has_basic_auth: boolean;
+  category_id: number | null;
 };
+
+export type Category = {
+  id: number;
+  name: string;
+  unread: number;
+  created_at: number;
+};
+
+export type DiscoverCandidate = {
+  title: string;
+  feed_url: string;
+  site_url: string;
+  type: string;
+};
+
+export type DiscoverResult = { candidates: DiscoverCandidate[] };
+
+export type OPMLImportResult = { imported: number; skipped: number; errors: string[] };
 
 export type EntryListItem = {
   id: number;

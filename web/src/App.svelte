@@ -9,6 +9,7 @@
   import Reader from './views/Reader.svelte';
   import Saved from './views/Saved.svelte';
   import Search from './views/Search.svelte';
+  import Category from './views/Category.svelte';
   import Settings from './views/Settings.svelte';
   import Admin from './views/Admin.svelte';
   import HotkeysModal from './components/HotkeysModal.svelte';
@@ -66,7 +67,19 @@
   });
 </script>
 
-<svelte:window onkeydown={keyHandler} />
+<svelte:window onkeydown={(e) => {
+  // '/' focuses search; only fires outside form controls.
+  if (e.key === '/' && !hotkeysOpen) {
+    const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
+    if (tag !== 'input' && tag !== 'textarea' && tag !== 'select') {
+      e.preventDefault();
+      if ($route.name !== 'search') navigate('/search');
+      // Focus happens in Search.svelte onMount; also dispatch a custom event.
+      window.dispatchEvent(new CustomEvent('tap:focus-search'));
+    }
+  }
+  keyHandler(e);
+}} />
 
 <HotkeysModal open={hotkeysOpen} onClose={() => { hotkeysOpen = false; }} />
 
@@ -81,6 +94,8 @@
     <Saved />
   {:else if $route.name === 'search'}
     <Search />
+  {:else if $route.name === 'category'}
+    <Category id={$route.params.id} />
   {:else if $route.name === 'settings'}
     <Settings />
   {:else if $route.name === 'admin'}

@@ -67,6 +67,14 @@ func registerEntryRoutes(m *http.ServeMux, d *sql.DB) {
 			}
 			p.SubscriptionID = id
 		}
+		if v := r.URL.Query().Get("category"); v != "" {
+			id, err := strconv.ParseInt(v, 10, 64)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "invalid category id")
+				return
+			}
+			p.CategoryID = id
+		}
 		if v := r.URL.Query().Get("limit"); v != "" {
 			n, err := strconv.Atoi(v)
 			if err != nil || n < 1 {

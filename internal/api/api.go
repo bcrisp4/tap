@@ -19,6 +19,7 @@ type MuxOpts struct {
 	CookieSecure       bool
 	HashParams         auth.Params
 	WebAuthnInstance   *webauthn.WebAuthn
+	DiscoverClient     *http.Client
 }
 
 // NewMux returns the API mux.
@@ -98,18 +99,38 @@ func NewMux(db *sql.DB, opts MuxOpts) *http.ServeMux {
 	registerSubscriptionRoutes(subsMux, db, opts.Poke)
 	entriesMux := http.NewServeMux()
 	registerEntryRoutes(entriesMux, db)
+	catsMux := http.NewServeMux()
+	registerCategoryRoutes(catsMux, db)
+	searchMux := http.NewServeMux()
+	registerSearchRoutes(searchMux, db)
+	opmlMux := http.NewServeMux()
+	registerOPMLRoutes(opmlMux, db)
+	if opts.DiscoverClient != nil {
+		discoverMux := http.NewServeMux()
+		registerDiscoverRoutes(discoverMux, opts.DiscoverClient)
+		m.Handle("POST /api/v1/discover", authedCSRF(discoverMux))
+	}
 
 	for _, p := range []struct {
 		method, path string
 		handler      http.Handler
 	}{
 		{"GET", "/api/v1/subscriptions", authed(subsMux)},
+		{"GET", "/api/v1/subscriptions/{id}", authed(subsMux)},
 		{"POST", "/api/v1/subscriptions", authedCSRF(subsMux)},
 		{"PATCH", "/api/v1/subscriptions/{id}", authedCSRF(subsMux)},
 		{"DELETE", "/api/v1/subscriptions/{id}", authedCSRF(subsMux)},
 		{"GET", "/api/v1/entries", authed(entriesMux)},
 		{"GET", "/api/v1/entries/{id}", authed(entriesMux)},
 		{"PATCH", "/api/v1/entries/{id}", authedCSRF(entriesMux)},
+		{"GET", "/api/v1/categories", authed(catsMux)},
+		{"POST", "/api/v1/categories", authedCSRF(catsMux)},
+		{"PATCH", "/api/v1/categories/{id}", authedCSRF(catsMux)},
+		{"DELETE", "/api/v1/categories/{id}", authedCSRF(catsMux)},
+		{"POST", "/api/v1/categories/{id}/mark-read", authedCSRF(catsMux)},
+		{"GET", "/api/v1/search", authed(searchMux)},
+		{"GET", "/api/v1/opml", authed(opmlMux)},
+		{"POST", "/api/v1/opml", authedCSRF(opmlMux)},
 	} {
 		m.Handle(p.method+" "+p.path, p.handler)
 	}
