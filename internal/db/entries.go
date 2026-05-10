@@ -24,6 +24,7 @@ type NewEntry struct {
 // The cadence inputs let UpdateAfterPoll compute next_poll_at + velocity in
 // one transaction so the post-insert count flows directly into the schedule.
 type PollResult struct {
+	UserID          int64
 	NewETag         sql.NullString
 	NewLastModified sql.NullString
 	NowUnix         int64
@@ -36,6 +37,7 @@ type PollResult struct {
 
 type Entry struct {
 	ID             int64
+	UserID         int64
 	SubscriptionID int64
 	Hash           string
 	Title          string
@@ -50,6 +52,7 @@ type Entry struct {
 }
 
 type ListEntriesParams struct {
+	UserID            int64
 	UnreadOnly        bool
 	SubscriptionID    int64 // 0 means all
 	Limit             int
@@ -76,10 +79,9 @@ func ListEntries(ctx context.Context, d *sql.DB, p ListEntriesParams) (entries [
 		p.Limit = 50
 	}
 
-	var (
-		clauses []string
-		args    []any
-	)
+	clauses := []string{"user_id = ?"}
+	args := []any{p.UserID}
+
 	if p.UnreadOnly {
 		clauses = append(clauses, "read = 0")
 	}
@@ -91,13 +93,10 @@ func ListEntries(ctx context.Context, d *sql.DB, p ListEntriesParams) (entries [
 		clauses = append(clauses, "(published_at, id) < (?, ?)")
 		args = append(args, p.CursorPublishedAt, p.CursorID)
 	}
-	where := ""
-	if len(clauses) > 0 {
-		where = "WHERE " + strings.Join(clauses, " AND ")
-	}
+	where := "WHERE " + strings.Join(clauses, " AND ")
 
 	q := fmt.Sprintf(`
-		SELECT id, subscription_id, hash, title, author, url, '' AS content,
+		SELECT id, user_id, subscription_id, hash, title, author, url, '' AS content,
 		       published_at, fetched_at, read, saved, extract_failed
 		FROM entries %s
 		ORDER BY published_at DESC, id DESC
@@ -113,7 +112,7 @@ func ListEntries(ctx context.Context, d *sql.DB, p ListEntriesParams) (entries [
 
 	for rows.Next() {
 		var e Entry
-		if err := rows.Scan(&e.ID, &e.SubscriptionID, &e.Hash, &e.Title, &e.Author,
+		if err := rows.Scan(&e.ID, &e.UserID, &e.SubscriptionID, &e.Hash, &e.Title, &e.Author,
 			&e.URL, &e.Content, &e.PublishedAt, &e.FetchedAt, &e.Read, &e.Saved,
 			&e.ExtractFailed); err != nil {
 			return nil, 0, 0, fmt.Errorf("scan entry: %w", err)
@@ -133,13 +132,13 @@ func ListEntries(ctx context.Context, d *sql.DB, p ListEntriesParams) (entries [
 	return entries, nextPub, nextID, nil
 }
 
-func GetEntry(ctx context.Context, d *sql.DB, id int64) (Entry, error) {
+func GetEntry(ctx context.Context, d *sql.DB, id, userID int64) (Entry, error) {
 	var e Entry
 	err := d.QueryRowContext(ctx, `
-		SELECT id, subscription_id, hash, title, author, url, content,
+		SELECT id, user_id, subscription_id, hash, title, author, url, content,
 		       published_at, fetched_at, read, saved, extract_failed
-		FROM entries WHERE id = ?
-	`, id).Scan(&e.ID, &e.SubscriptionID, &e.Hash, &e.Title, &e.Author,
+		FROM entries WHERE id = ? AND user_id = ?
+	`, id, userID).Scan(&e.ID, &e.UserID, &e.SubscriptionID, &e.Hash, &e.Title, &e.Author,
 		&e.URL, &e.Content, &e.PublishedAt, &e.FetchedAt, &e.Read, &e.Saved,
 		&e.ExtractFailed)
 	if err != nil {
@@ -148,7 +147,7 @@ func GetEntry(ctx context.Context, d *sql.DB, id int64) (Entry, error) {
 	return e, nil
 }
 
-func UpdateEntry(ctx context.Context, d *sql.DB, id int64, u EntryUpdate) error {
+func UpdateEntry(ctx context.Context, d *sql.DB, id, userID int64, u EntryUpdate) error {
 	var sets []string
 	var args []any
 	if u.Read != nil {
@@ -162,8 +161,8 @@ func UpdateEntry(ctx context.Context, d *sql.DB, id int64, u EntryUpdate) error 
 	if len(sets) == 0 {
 		return nil
 	}
-	args = append(args, id)
-	_, err := d.ExecContext(ctx, fmt.Sprintf("UPDATE entries SET %s WHERE id = ?", strings.Join(sets, ", ")), args...)
+	args = append(args, id, userID)
+	_, err := d.ExecContext(ctx, fmt.Sprintf("UPDATE entries SET %s WHERE id = ? AND user_id = ?", strings.Join(sets, ", ")), args...)
 	if err != nil {
 		return fmt.Errorf("update entry %d: %w", id, err)
 	}
@@ -196,10 +195,10 @@ func UpdateAfterPoll(ctx context.Context, d *sql.DB, subID int64, r PollResult) 
 
 	for _, e := range r.NewEntries {
 		res, ierr := tx.ExecContext(ctx, `
-			INSERT INTO entries (subscription_id, hash, title, author, url, content, published_at, fetched_at, extract_failed)
-			VALUES (?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?)
+			INSERT INTO entries (user_id, subscription_id, hash, title, author, url, content, published_at, fetched_at, extract_failed)
+			VALUES (?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?)
 			ON CONFLICT (subscription_id, hash) DO NOTHING
-		`, subID, e.Hash, e.Title, e.Author, e.URL, e.Content, e.PublishedAt, r.NowUnix, boolToInt(e.ExtractFailed))
+		`, r.UserID, subID, e.Hash, e.Title, e.Author, e.URL, e.Content, e.PublishedAt, r.NowUnix, boolToInt(e.ExtractFailed))
 		if ierr != nil {
 			err = fmt.Errorf("insert entry: %w", ierr)
 			return 0, err

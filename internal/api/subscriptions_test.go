@@ -29,11 +29,27 @@ func postSubscription(t *testing.T, mux http.Handler, body string) int64 {
 	return got.ID
 }
 
-// newAPI returns an UNAUTHENTICATED mux for unit-test handlers — the real
-// NewMux now wraps every /api/v1/* route in requireSession + (where
-// applicable) requireCSRF. End-to-end auth coverage lives in
-// cmd/tap/main_test.go; package-level handler tests bypass the chain by
-// mounting the route registrars directly.
+// newAPIWithUser creates an unauthenticated mux with a test user injected into
+// context for all requests. Returns the mux, db, and the user ID.
+func newAPIWithUser(t *testing.T) (http.Handler, *sql.DB, int64) {
+	t.Helper()
+	d := newTestDB(t)
+	uid := seedUser(t, d, "testuser", "testpass", "admin")
+	u, err := db.GetUserByID(context.Background(), d, uid)
+	require.NoError(t, err)
+	testSess := db.Session{ID: 1, UserID: uid, CSRFToken: "test-csrf"}
+
+	m := http.NewServeMux()
+	registerSubscriptionRoutes(m, d, nil)
+	registerEntryRoutes(m, d)
+
+	// Wrap each request to inject the test user and session into context.
+	wrapped := withFakeAuth(t, u, testSess, m)
+	return wrapped, d, uid
+}
+
+// newAPI returns an UNAUTHENTICATED mux for unit-test handlers — with a test
+// user injected into context so handlers can resolve userFromContext.
 func newAPI(t *testing.T) (*http.ServeMux, *sql.DB) {
 	t.Helper()
 	d, err := db.Open(context.Background(), ":memory:")
@@ -48,7 +64,7 @@ func newAPI(t *testing.T) (*http.ServeMux, *sql.DB) {
 
 func TestSubscriptions_PostThenList(t *testing.T) {
 	t.Parallel()
-	mux, _ := newAPI(t)
+	mux, _, _ := newAPIWithUser(t)
 
 	body, _ := json.Marshal(map[string]string{"feed_url": "https://example.com/feed"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/subscriptions", bytes.NewReader(body))
@@ -71,7 +87,7 @@ func TestSubscriptions_PostThenList(t *testing.T) {
 
 func TestSubscriptions_PostRejectsBadURL(t *testing.T) {
 	t.Parallel()
-	mux, _ := newAPI(t)
+	mux, _, _ := newAPIWithUser(t)
 
 	body, _ := json.Marshal(map[string]string{"feed_url": "not-a-url"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/subscriptions", bytes.NewReader(body))
@@ -83,7 +99,7 @@ func TestSubscriptions_PostRejectsBadURL(t *testing.T) {
 
 func TestPostSubscriptions_PersistsExtractFlag(t *testing.T) {
 	t.Parallel()
-	mux, _ := newAPI(t)
+	mux, _, _ := newAPIWithUser(t)
 
 	body := strings.NewReader(`{"feed_url":"https://x.example/feed","extract":true}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/subscriptions", body)
@@ -100,7 +116,7 @@ func TestPostSubscriptions_PersistsExtractFlag(t *testing.T) {
 
 func TestPostSubscriptions_DefaultsExtractFalse(t *testing.T) {
 	t.Parallel()
-	mux, _ := newAPI(t)
+	mux, _, _ := newAPIWithUser(t)
 
 	body := strings.NewReader(`{"feed_url":"https://x.example/feed"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/subscriptions", body)
@@ -116,7 +132,7 @@ func TestPostSubscriptions_DefaultsExtractFalse(t *testing.T) {
 
 func TestPatchSubscription_TogglesExtract(t *testing.T) {
 	t.Parallel()
-	mux, _ := newAPI(t)
+	mux, _, _ := newAPIWithUser(t)
 
 	subID := postSubscription(t, mux, `{"feed_url":"https://x.example/feed"}`)
 
@@ -135,7 +151,7 @@ func TestPatchSubscription_TogglesExtract(t *testing.T) {
 
 func TestPatchSubscription_SetsAndClearsSelector(t *testing.T) {
 	t.Parallel()
-	mux, _ := newAPI(t)
+	mux, _, _ := newAPIWithUser(t)
 	subID := postSubscription(t, mux, `{"feed_url":"https://x.example/feed"}`)
 
 	patch := func(body string) map[string]any {
@@ -160,7 +176,7 @@ func TestPatchSubscription_SetsAndClearsSelector(t *testing.T) {
 
 func TestPatchSubscription_MalformedSelectorReturns400(t *testing.T) {
 	t.Parallel()
-	mux, _ := newAPI(t)
+	mux, _, _ := newAPIWithUser(t)
 	subID := postSubscription(t, mux, `{"feed_url":"https://x.example/feed"}`)
 
 	body := strings.NewReader(`{"extract_selector":"[unclosed"}`)
@@ -182,7 +198,7 @@ func TestPatchSubscription_MalformedSelectorReturns400(t *testing.T) {
 
 func TestPatchSubscription_UnknownIDReturns404(t *testing.T) {
 	t.Parallel()
-	mux, _ := newAPI(t)
+	mux, _, _ := newAPIWithUser(t)
 
 	body := strings.NewReader(`{"extract":true}`)
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/subscriptions/9999", body)
@@ -194,7 +210,7 @@ func TestPatchSubscription_UnknownIDReturns404(t *testing.T) {
 
 func TestPatchSubscription_MalformedJSONReturns400(t *testing.T) {
 	t.Parallel()
-	mux, _ := newAPI(t)
+	mux, _, _ := newAPIWithUser(t)
 	subID := postSubscription(t, mux, `{"feed_url":"https://x.example/feed"}`)
 
 	req := httptest.NewRequest(http.MethodPatch,
@@ -208,7 +224,7 @@ func TestPatchSubscription_MalformedJSONReturns400(t *testing.T) {
 
 func TestPatchSubscription_PartialUpdate_ExtractOnlyKeepsSelector(t *testing.T) {
 	t.Parallel()
-	mux, _ := newAPI(t)
+	mux, _, _ := newAPIWithUser(t)
 	subID := postSubscription(t, mux, `{"feed_url":"https://x.example/feed"}`)
 
 	patch := func(body string) {
@@ -232,21 +248,17 @@ func TestPatchSubscription_PartialUpdate_ExtractOnlyKeepsSelector(t *testing.T) 
 	require.Contains(t, getRR.Body.String(), `"extract":true`)
 }
 
-// newSubscriptionsTestMux builds an unauthenticated subscriptions mux for unit
-// tests. The session-middleware tests live in middleware_test.go; tests here
-// focus on handler logic in isolation, so the mux is constructed without auth
-// wrapping. End-to-end auth coverage lives in cmd/tap/main_test.go.
+// newSubscriptionsTestMux builds an unauthenticated subscriptions mux with
+// a test user injected for unit tests.
 func newSubscriptionsTestMux(t *testing.T) (http.Handler, *sql.DB) {
 	t.Helper()
-	d := newTestDB(t)
-	m := http.NewServeMux()
-	registerSubscriptionRoutes(m, d, nil)
-	return m, d
+	mux, d, _ := newAPIWithUser(t)
+	return mux, d
 }
 
 func TestPostSubscriptionAcceptsCredentialsAndGetReturnsBooleans(t *testing.T) {
 	t.Parallel()
-	mux, _ := newSubscriptionsTestMux(t)
+	mux, _, _ := newAPIWithUser(t)
 
 	body := map[string]any{
 		"feed_url":        "https://x.example/feed",
@@ -282,7 +294,7 @@ func TestPostSubscriptionAcceptsCredentialsAndGetReturnsBooleans(t *testing.T) {
 
 func TestPostSubscriptionWithoutCredentialsReturnsBooleanFalse(t *testing.T) {
 	t.Parallel()
-	mux, _ := newSubscriptionsTestMux(t)
+	mux, _, _ := newAPIWithUser(t)
 
 	body := map[string]any{"feed_url": "https://x.example/feed"}
 	bs, _ := json.Marshal(body)
@@ -297,46 +309,46 @@ func TestPostSubscriptionWithoutCredentialsReturnsBooleanFalse(t *testing.T) {
 
 func TestPatchSubscriptionCredentialMergeSemantics(t *testing.T) {
 	t.Parallel()
-	mux, d := newSubscriptionsTestMux(t)
+	mux, d, uid := newAPIWithUser(t)
 
 	// Seed a subscription with all three creds set.
 	id, err := db.InsertSubscription(context.Background(), d, db.NewSubscription{
-		Title: "x", FeedURL: "https://x.example/feed", NextPoll: 0, Created: 0,
+		UserID: uid, Title: "x", FeedURL: "https://x.example/feed", NextPoll: 0, Created: 0,
 		Cookie: "c", BasicAuthUser: "u", BasicAuthPass: "p",
 	})
 	require.NoError(t, err)
 
 	// Step A: PATCH without any credential field — no change.
 	patchSubscription(mux, t, id, `{}`)
-	got, _ := db.GetSubscription(context.Background(), d, id)
+	got, _ := db.GetSubscription(context.Background(), d, id, uid)
 	require.Equal(t, "c", got.Cookie)
 	require.Equal(t, "u", got.BasicAuthUser)
 	require.Equal(t, "p", got.BasicAuthPass)
 
 	// Step B: PATCH cookie="" — clear cookie only.
 	patchSubscription(mux, t, id, `{"cookie":""}`)
-	got, _ = db.GetSubscription(context.Background(), d, id)
+	got, _ = db.GetSubscription(context.Background(), d, id, uid)
 	require.Empty(t, got.Cookie)
 	require.Equal(t, "u", got.BasicAuthUser)
 	require.Equal(t, "p", got.BasicAuthPass)
 
 	// Step C: PATCH basic_auth_pass set to a new value.
 	patchSubscription(mux, t, id, `{"basic_auth_pass":"newpass"}`)
-	got, _ = db.GetSubscription(context.Background(), d, id)
+	got, _ = db.GetSubscription(context.Background(), d, id, uid)
 	require.Empty(t, got.Cookie)
 	require.Equal(t, "u", got.BasicAuthUser)
 	require.Equal(t, "newpass", got.BasicAuthPass)
 
 	// Step D: PATCH extract:true — does NOT clobber any credential.
 	patchSubscription(mux, t, id, `{"extract":true}`)
-	got, _ = db.GetSubscription(context.Background(), d, id)
+	got, _ = db.GetSubscription(context.Background(), d, id, uid)
 	require.True(t, got.Extract)
 	require.Equal(t, "u", got.BasicAuthUser)
 	require.Equal(t, "newpass", got.BasicAuthPass)
 
 	// Step E: PATCH cookie:"x" — does NOT clobber extract or basic_auth_*.
 	patchSubscription(mux, t, id, `{"cookie":"x"}`)
-	got, _ = db.GetSubscription(context.Background(), d, id)
+	got, _ = db.GetSubscription(context.Background(), d, id, uid)
 	require.True(t, got.Extract)
 	require.Equal(t, "x", got.Cookie)
 	require.Equal(t, "u", got.BasicAuthUser)

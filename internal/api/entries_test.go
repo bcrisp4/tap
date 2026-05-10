@@ -16,13 +16,13 @@ import (
 
 func TestEntries_ListAndPatchRead(t *testing.T) {
 	t.Parallel()
-	mux, d := newAPI(t)
+	mux, d, uid := newAPIWithUser(t)
 
 	subID, _ := db.InsertSubscription(context.Background(), d, db.NewSubscription{
-		Title: "x", FeedURL: "https://example.com/feed", NextPoll: 0, Created: 0,
+		UserID: uid, Title: "x", FeedURL: "https://example.com/feed", NextPoll: 0, Created: 0,
 	})
 	_, err := db.UpdateAfterPoll(context.Background(), d, subID, db.PollResult{
-		NowUnix: 100, Floor: 15 * time.Minute, Ceiling: 24 * time.Hour, NewEntries: []db.NewEntry{
+		UserID: uid, NowUnix: 100, Floor: 15 * time.Minute, Ceiling: 24 * time.Hour, NewEntries: []db.NewEntry{
 			{Hash: "h1", Title: "A", URL: "https://e.com/a", Content: "<p>a</p>", PublishedAt: 50},
 		},
 	})
@@ -63,16 +63,16 @@ func toStr(i int64) string {
 
 func TestEntries_ListIncludesExtractFailed(t *testing.T) {
 	t.Parallel()
-	mux, d := newAPI(t)
+	mux, d, uid := newAPIWithUser(t)
 
 	subID, err := db.InsertSubscription(context.Background(), d, db.NewSubscription{
-		Title: "x", FeedURL: "https://x.example/feed", NextPoll: 0, Created: 0,
+		UserID: uid, Title: "x", FeedURL: "https://x.example/feed", NextPoll: 0, Created: 0,
 	})
 	require.NoError(t, err)
 	_, err = d.ExecContext(context.Background(), `
-		INSERT INTO entries (subscription_id, hash, title, url, content, published_at, fetched_at, extract_failed)
-		VALUES (?, 'h', 'T', 'https://x/1', '<p>x</p>', 0, 0, 1)
-	`, subID)
+		INSERT INTO entries (user_id, subscription_id, hash, title, url, content, published_at, fetched_at, extract_failed)
+		VALUES (?, ?, 'h', 'T', 'https://x/1', '<p>x</p>', 0, 0, 1)
+	`, uid, subID)
 	require.NoError(t, err)
 
 	rr := httptest.NewRecorder()
@@ -83,16 +83,16 @@ func TestEntries_ListIncludesExtractFailed(t *testing.T) {
 
 func TestGetEntry_IncludesExtractFailed(t *testing.T) {
 	t.Parallel()
-	mux, d := newAPI(t)
+	mux, d, uid := newAPIWithUser(t)
 
 	subID, err := db.InsertSubscription(context.Background(), d, db.NewSubscription{
-		Title: "x", FeedURL: "https://x.example/feed", NextPoll: 0, Created: 0,
+		UserID: uid, Title: "x", FeedURL: "https://x.example/feed", NextPoll: 0, Created: 0,
 	})
 	require.NoError(t, err)
 	res, err := d.ExecContext(context.Background(), `
-		INSERT INTO entries (subscription_id, hash, title, url, content, published_at, fetched_at, extract_failed)
-		VALUES (?, 'h', 'T', 'https://x/1', '<p>x</p>', 0, 0, 1)
-	`, subID)
+		INSERT INTO entries (user_id, subscription_id, hash, title, url, content, published_at, fetched_at, extract_failed)
+		VALUES (?, ?, 'h', 'T', 'https://x/1', '<p>x</p>', 0, 0, 1)
+	`, uid, subID)
 	require.NoError(t, err)
 	entryID, err := res.LastInsertId()
 	require.NoError(t, err)

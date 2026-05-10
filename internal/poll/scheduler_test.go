@@ -37,9 +37,9 @@ func TestScheduler_TickDispatchesDueFeeds(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	d := newDB(t)
-	id1, _ := db.InsertSubscription(context.Background(), d, db.NewSubscription{Title: "a", FeedURL: srv.URL + "/a", NextPoll: 0, Created: 0})
-	id2, _ := db.InsertSubscription(context.Background(), d, db.NewSubscription{Title: "b", FeedURL: srv.URL + "/b", NextPoll: 0, Created: 0})
+	d, uid := newDBUser(t)
+	id1, _ := db.InsertSubscription(context.Background(), d, db.NewSubscription{UserID: uid, Title: "a", FeedURL: srv.URL + "/a", NextPoll: 0, Created: 0})
+	id2, _ := db.InsertSubscription(context.Background(), d, db.NewSubscription{UserID: uid, Title: "b", FeedURL: srv.URL + "/b", NextPoll: 0, Created: 0})
 
 	sch := NewScheduler(context.Background(), d, http.DefaultClient, SchedulerOpts{Workers: 2})
 	t.Cleanup(sch.Stop)
@@ -52,7 +52,7 @@ func TestScheduler_TickDispatchesDueFeeds(t *testing.T) {
 	require.True(t, ok2, "feed b should have been polled")
 
 	for _, id := range []int64{id1, id2} {
-		s, _ := db.GetSubscription(context.Background(), d, id)
+		s, _ := db.GetSubscription(context.Background(), d, id, uid)
 		require.True(t, s.LastPollAt.Valid)
 	}
 }
@@ -60,8 +60,8 @@ func TestScheduler_TickDispatchesDueFeeds(t *testing.T) {
 func TestScheduler_SkipsInflight(t *testing.T) {
 	t.Parallel()
 
-	d := newDB(t)
-	id, _ := db.InsertSubscription(context.Background(), d, db.NewSubscription{Title: "a", FeedURL: "http://invalid.invalid", NextPoll: 0, Created: 0})
+	d, uid := newDBUser(t)
+	id, _ := db.InsertSubscription(context.Background(), d, db.NewSubscription{UserID: uid, Title: "a", FeedURL: "http://invalid.invalid", NextPoll: 0, Created: 0})
 
 	sch := NewScheduler(context.Background(), d, http.DefaultClient, SchedulerOpts{Workers: 1})
 	t.Cleanup(sch.Stop)

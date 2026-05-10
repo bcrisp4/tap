@@ -191,6 +191,7 @@ func (w *Worker) Run(ctx context.Context, sub db.DueSubscription) {
 	}
 
 	inserted, perr := db.UpdateAfterPoll(ctx, w.db, sub.ID, db.PollResult{
+		UserID:          sub.UserID,
 		NewETag:         nullStr(res.ETag),
 		NewLastModified: nullStr(res.LastModified),
 		NowUnix:         now.Unix(),
