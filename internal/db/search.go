@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"math"
 )
 
 type SearchResult struct {
@@ -20,10 +19,9 @@ type SearchResult struct {
 }
 
 // SearchEntries performs an FTS5 full-text search across the caller's entries.
-// Returns matching results ordered by BM25 rank (most relevant first) then by
-// entry ID descending. cursor is an exclusive upper bound on entry ID for
-// keyset pagination; pass math.MaxInt64 for the first page.
-func SearchEntries(ctx context.Context, d *sql.DB, userID int64, query string, limit int, cursor int64) ([]SearchResult, int64, error) {
+// Returns up to limit results ordered by BM25 rank (most relevant first).
+// No cursor pagination — the spec caps M9 search at 50 results.
+func SearchEntries(ctx context.Context, d *sql.DB, userID int64, query string, limit int) ([]SearchResult, error) {
 	rows, err := d.QueryContext(ctx, `
 		SELECT e.id, e.subscription_id, e.title, e.url, e.author,
 		       e.published_at, e.read, e.saved,
@@ -33,12 +31,11 @@ func SearchEntries(ctx context.Context, d *sql.DB, userID int64, query string, l
 		JOIN   subscriptions s  ON s.id = e.subscription_id
 		WHERE  entries_fts MATCH ?
 		  AND  s.user_id = ?
-		  AND  e.id < ?
-		ORDER  BY rank, e.id DESC
+		ORDER  BY rank
 		LIMIT  ?
-	`, query, userID, cursor, limit)
+	`, query, userID, limit)
 	if err != nil {
-		return nil, 0, fmt.Errorf("search entries: %w", err)
+		return nil, fmt.Errorf("search entries: %w", err)
 	}
 	defer rows.Close()
 
@@ -48,21 +45,11 @@ func SearchEntries(ctx context.Context, d *sql.DB, userID int64, query string, l
 		var readInt, savedInt int
 		if err := rows.Scan(&r.ID, &r.SubscriptionID, &r.Title, &r.URL, &r.Author,
 			&r.PublishedAt, &readInt, &savedInt, &r.Rank); err != nil {
-			return nil, 0, fmt.Errorf("scan search result: %w", err)
+			return nil, fmt.Errorf("scan search result: %w", err)
 		}
 		r.Read = readInt != 0
 		r.Saved = savedInt != 0
 		out = append(out, r)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, 0, err
-	}
-
-	var nextCursor int64
-	if len(out) == limit {
-		nextCursor = out[len(out)-1].ID
-	} else {
-		nextCursor = math.MaxInt64
-	}
-	return out, nextCursor, nil
+	return out, rows.Err()
 }

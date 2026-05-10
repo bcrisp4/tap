@@ -12,6 +12,7 @@
   let inputEl = $state<HTMLInputElement | null>(null);
 
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  let currentController: AbortController | null = null;
 
   function syncURL(q: string) {
     const url = new URL(window.location.href);
@@ -28,16 +29,27 @@
       results = [];
       return;
     }
+    // Cancel any previous in-flight request.
+    currentController?.abort();
+    currentController = new AbortController();
+    const { signal } = currentController;
+
     loading = true;
     error = '';
     try {
       const resp = await api.searchEntries(q);
-      results = resp.data;
+      if (!signal.aborted) {
+        results = resp.data;
+      }
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Search failed';
-      results = [];
+      if (!signal.aborted) {
+        error = e instanceof Error ? e.message : 'Search failed';
+        results = [];
+      }
     } finally {
-      loading = false;
+      if (!signal.aborted) {
+        loading = false;
+      }
     }
   }
 

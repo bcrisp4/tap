@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
   import Sidebar from '../components/Sidebar.svelte';
   import EntryRow from '../components/EntryRow.svelte';
   import { api } from '../lib/api';
@@ -46,7 +45,14 @@
     }
   }
 
-  onMount(() => { void load(); });
+  // Re-load when id prop changes so navigating category-to-category works correctly.
+  $effect(() => {
+    category = null;
+    entries = [];
+    confirmOpen = false;
+    error = '';
+    void load();
+  });
 </script>
 
 <div class="layout">

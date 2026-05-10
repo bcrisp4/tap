@@ -10,6 +10,7 @@
   let newCatName = $state('');
   let creating = $state(false);
   let createError = $state('');
+  let actionError = $state(''); // rename/delete errors rendered outside the create form
   let newCatInputEl = $state<HTMLInputElement | null>(null);
   let editInputEl = $state<HTMLInputElement | null>(null);
 
@@ -58,22 +59,24 @@
   }
 
   async function renameCategory(id: number, name: string) {
+    actionError = '';
     try {
       await api.renameCategory(id, name);
       editingCatId = null;
       await categories.load();
     } catch (e) {
-      createError = e instanceof Error ? e.message : 'Failed to rename';
+      actionError = e instanceof Error ? e.message : 'Failed to rename';
     }
   }
 
   async function deleteCategory(id: number) {
+    actionError = '';
     try {
       await api.deleteCategory(id);
       confirmDeleteId = null;
       await Promise.all([categories.load(), subscriptions.load()]);
     } catch (e) {
-      createError = e instanceof Error ? e.message : 'Failed to delete';
+      actionError = e instanceof Error ? e.message : 'Failed to delete';
     }
   }
 </script>
@@ -86,10 +89,14 @@
   <a class="navitem" class:active={$route.name === 'saved'} href="/saved" onclick={(e) => { e.preventDefault(); navigate('/saved'); }}>Saved</a>
   <a class="navitem" class:active={$route.name === 'search'} href="/search" onclick={(e) => { e.preventDefault(); navigate('/search'); }}>Search</a>
 
+  {#if actionError}
+    <span class="cat-error" role="alert">{actionError}</span>
+  {/if}
+
   <div class="group-header">
     <div class="group-title">FEEDS</div>
     <button class="add-cat-btn" title="New category" aria-label="Create category"
-      onclick={() => { creating = !creating; createError = ''; }}>+</button>
+      onclick={() => { creating = !creating; createError = ''; actionError = ''; }}>+</button>
   </div>
 
   {#if creating}

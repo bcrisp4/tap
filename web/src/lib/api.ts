@@ -245,15 +245,20 @@ export const api = {
     request<void>(`/categories/${id}/mark-read`, { method: 'POST', body: '{}' }),
 
   // --- Search (M9) ---
-  searchEntries: (q: string, limit = 50, cursor?: number) => {
+  searchEntries: (q: string, limit = 50) => {
     const qs = new URLSearchParams({ q, limit: String(limit) });
-    if (cursor !== undefined) qs.set('cursor', String(cursor));
-    return request<{ data: EntryListItem[]; next_cursor?: number }>(`/search?${qs}`);
+    return request<{ data: EntryListItem[] }>(`/search?${qs}`);
   },
 
   // --- OPML (M9) ---
   exportOPML: () =>
-    fetch('/api/v1/opml').then(r => r.blob()),
+    fetch('/api/v1/opml').then(async r => {
+      if (!r.ok) {
+        const detail: ApiError | null = await r.json().catch(() => null);
+        throw new Error(detail?.error?.message ?? `${r.status} ${r.statusText}`);
+      }
+      return r.blob();
+    }),
 
   importOPML: (data: ArrayBuffer) => {
     const csrf = get(auth).csrfToken ?? '';

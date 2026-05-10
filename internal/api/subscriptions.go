@@ -60,6 +60,20 @@ func toDTO(s db.Subscription) subscriptionDTO {
 	return d
 }
 
+// validateCategoryOwnership checks that categoryID belongs to the given user.
+// Returns (true, nil) when valid, (false, nil) when the category doesn't exist,
+// and (false, err) on a DB error.
+func validateCategoryOwnership(r *http.Request, d *sql.DB, categoryID, userID int64) (bool, error) {
+	_, err := db.GetCategory(r.Context(), d, categoryID, userID)
+	if err != nil {
+		if errors.Is(err, db.ErrCategoryNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
 func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 	m.HandleFunc("GET /api/v1/subscriptions", func(w http.ResponseWriter, r *http.Request) {
 		u, ok := userFromContext(r.Context())
@@ -112,6 +126,17 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 		if feedURL.Scheme != "http" && feedURL.Scheme != "https" {
 			writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "feed_url must use http or https")
 			return
+		}
+		if body.CategoryID != nil {
+			ok, err := validateCategoryOwnership(r, d, *body.CategoryID, u.ID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())
+				return
+			}
+			if !ok {
+				writeError(w, http.StatusBadRequest, ErrCodeCategoryNotFound, "category not found")
+				return
+			}
 		}
 		title := body.Title
 		if title == "" {
@@ -184,19 +209,24 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 			BasicAuthUser   *string `json:"basic_auth_user"`
 			BasicAuthPass   *string `json:"basic_auth_pass"`
 		}
-		// Re-decode typed fields from map values.
+		// Re-decode typed fields from map values; return 400 on type mismatch.
 		for k, v := range rawMap {
+			var unmarshalErr error
 			switch k {
 			case "extract":
-				_ = json.Unmarshal(v, &body.Extract)
+				unmarshalErr = json.Unmarshal(v, &body.Extract)
 			case "extract_selector":
-				_ = json.Unmarshal(v, &body.ExtractSelector)
+				unmarshalErr = json.Unmarshal(v, &body.ExtractSelector)
 			case "cookie":
-				_ = json.Unmarshal(v, &body.Cookie)
+				unmarshalErr = json.Unmarshal(v, &body.Cookie)
 			case "basic_auth_user":
-				_ = json.Unmarshal(v, &body.BasicAuthUser)
+				unmarshalErr = json.Unmarshal(v, &body.BasicAuthUser)
 			case "basic_auth_pass":
-				_ = json.Unmarshal(v, &body.BasicAuthPass)
+				unmarshalErr = json.Unmarshal(v, &body.BasicAuthPass)
+			}
+			if unmarshalErr != nil {
+				writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "invalid value for field "+k)
+				return
 			}
 		}
 
@@ -256,9 +286,21 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 			var catID *int64
 			if string(raw) != "null" {
 				var cid int64
-				if err := json.Unmarshal(raw, &cid); err == nil {
-					catID = &cid
+				if err := json.Unmarshal(raw, &cid); err != nil {
+					writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "category_id must be an integer or null")
+					return
 				}
+				// Validate the category belongs to this user.
+				owned, err := validateCategoryOwnership(r, d, cid, u.ID)
+				if err != nil {
+					writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())
+					return
+				}
+				if !owned {
+					writeError(w, http.StatusBadRequest, ErrCodeCategoryNotFound, "category not found")
+					return
+				}
+				catID = &cid
 			}
 			if err := db.UpdateSubscriptionCategory(r.Context(), d, id, u.ID, catID); err != nil && !errors.Is(err, sql.ErrNoRows) {
 				writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())

@@ -131,7 +131,6 @@ func TestDiscover_MalformedURL_Error(t *testing.T) {
 	t.Parallel()
 	client := testClient()
 	_, err := discover.Discover(context.Background(), client, "not-a-url")
-	var urlErr error
 	require.True(t, err != nil && !errors.Is(err, discover.ErrNoFeeds),
-		"malformed URL must return an error that is not ErrNoFeeds, got: %v", urlErr)
+		"malformed URL must return an error that is not ErrNoFeeds, got: %v", err)
 }

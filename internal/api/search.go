@@ -2,7 +2,6 @@ package api
 
 import (
 	"database/sql"
-	"math"
 	"net/http"
 	"strconv"
 
@@ -42,14 +41,7 @@ func registerSearchRoutes(m *http.ServeMux, d *sql.DB) {
 			}
 		}
 
-		cursor := int64(math.MaxInt64)
-		if cs := r.URL.Query().Get("cursor"); cs != "" {
-			if n, err := strconv.ParseInt(cs, 10, 64); err == nil {
-				cursor = n
-			}
-		}
-
-		results, nextCursor, err := db.SearchEntries(r.Context(), d, u.ID, q, limit, cursor)
+		results, err := db.SearchEntries(r.Context(), d, u.ID, q, limit)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())
 			return
@@ -70,10 +62,6 @@ func registerSearchRoutes(m *http.ServeMux, d *sql.DB) {
 			})
 		}
 
-		resp := map[string]any{"data": out}
-		if nextCursor != math.MaxInt64 {
-			resp["next_cursor"] = nextCursor
-		}
-		writeJSON(w, http.StatusOK, resp)
+		writeJSON(w, http.StatusOK, map[string]any{"data": out})
 	})
 }
