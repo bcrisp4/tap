@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Tap is a self-hosted RSS / Atom / JSON Feed reader. It ships as **one static Go binary** with an embedded SQLite database, an embedded Svelte SPA, and no external services. See `docs/concept.md` for the full design and `docs/roadmap.md` for the milestone plan; **M4 in review** (polling discipline implemented, awaiting merge — spec at `docs/specs/2026-05-09-m4-polling-discipline.md`; M3 media proxy merged — spec at `docs/specs/2026-05-09-m3-media-proxy.md`; M2 sanitisation pipeline merged — spec at `docs/specs/2026-05-08-m2-sanitisation.md`; M1 walking-skeleton spec at `docs/specs/2026-05-08-m1-walking-skeleton.md`).
+Tap is a self-hosted RSS / Atom / JSON Feed reader. It ships as **one static Go binary** with an embedded SQLite database, an embedded Svelte SPA, and no external services. See `docs/concept.md` for the full design and `docs/roadmap.md` for the milestone plan; **M5 in progress** (article extraction landing — spec at `docs/specs/2026-05-09-m5-article-extraction.md`; M4 polling discipline merged — spec at `docs/specs/2026-05-09-m4-polling-discipline.md`; M3 media proxy merged — spec at `docs/specs/2026-05-09-m3-media-proxy.md`; M2 sanitisation pipeline merged — spec at `docs/specs/2026-05-08-m2-sanitisation.md`; M1 walking-skeleton spec at `docs/specs/2026-05-08-m1-walking-skeleton.md`).
 
 ## Commands
 
@@ -69,6 +69,8 @@ Single-process server with three concerns living alongside each other (M11 will 
 Feed HTML is sanitised on the server before storage by `internal/sanitise.Policy.Sanitise` (M2 — bluemonday-based allowlist + `golang.org/x/net/html` post-pass for iframe-host allowlisting, pixel-tracker drop, URL tracking-param stripping). The SPA renders the stored HTML directly without a runtime sanitiser, so anything that bypasses the worker's `policy.Sanitise(content)` call lands raw in the DB and gets rendered.
 
 The shared HTTP client is constructed via `httpx.NewClient(opts)` (M4) and is used by both polling and the media proxy. SSRF is enforced by `internal/httpx/ssrf.go` (`SSRFPolicy.AllowAddr` for the dialer, `CheckRedirect` for redirects re-checked independently from the initial URL). Per-host concurrency is capped at 4 by default in `internal/httpx/hostlimit.go`. The polling cadence is adaptive (`internal/cadence/`), driven by the `velocity_24h_x100` column on `subscriptions`: floor 15min, ceiling 24h, with origin-mandated `Retry-After` and `Cache-Control: max-age` honoured as floors. Error backoff is exponential (5m × 2^(n-1), capped 24h, 25% jitter).
+
+Subscriptions opted into M5 article extraction (`extract = true`) fetch each new entry's article URL via the shared client (SSRF, per-host cap, `--http-timeout` all apply). Readability mode by default; per-feed `extract_selector` CSS override available via PATCH /api/v1/subscriptions/:id (validated through `cascadia.Compile` at write time). Extracted HTML flows through `processor.Process` so M2 sanitisation and M3 image proxying still apply. Per-entry failures set `entries.extract_failed = 1` and degrade to the feed-provided summary; they never abort the poll. Bounded by `--extract-concurrency` (default 4) inside each feed worker.
 
 Defence-in-depth defaults that should not be weakened lightly:
 
