@@ -158,9 +158,11 @@ Exports one function: `warmCache(userId: number): Promise<void>`.
 3. Cap extracted URLs per entry at 20 (guards against pathological entries with hundreds of images).
 4. Deduplicate URLs across all entries.
 5. Cap the total warm list at 200 URLs.
-6. Fire `fetch(url, { cache: 'force-cache' })` for each URL. A `force-cache` fetch is a pure cache hit if the URL is already in the SW cache; a cold miss causes one round-trip to the Go proxy. This is deliberate — the warm-cache driver's job is to populate the cache, not just hit it.
+6. Fire `fetch(url)` for each URL. A plain same-origin fetch routes through the SW's fetch handler, which applies the CacheFirst strategy and populates `tap-proxy-{userId}`. If the URL is already in the SW cache it is a pure cache hit; a cold miss causes one round-trip to the Go proxy and the response is stored in the SW cache. Using `fetch(url, { cache: 'force-cache' })` would populate the browser's HTTP cache instead of the Workbox SW cache and is deliberately not used here.
 7. Run fetches with concurrency 4 (matches the Go server's per-host default from concept §6.4).
-8. Errors are swallowed silently — warm-cache failures must never surface to the user.
+8. Errors (including 401 responses if the session has expired) are swallowed silently — warm-cache failures must never surface to the user and must never trigger re-authentication. A 401 from warm-cache is distinct from a 401 during mutation drain: warm-cache is opportunistic and best-effort; the drain's 401 handling is the authoritative re-auth path.
+
+**Session cookie note:** warm-cache fetches are same-origin GETs; the browser attaches the `tap_session` cookie automatically (`SameSite=Lax` allows this). No explicit credential handling is needed. If the session has expired the proxy endpoint returns 401, which is silently swallowed.
 
 ### PWA manifest
 
@@ -187,7 +189,7 @@ Exports one function: `warmCache(userId: number): Promise<void>`.
 
 **Icons:** `icon-192.png` and `icon-512.png` follow the junction-dot motif from concept §12. Both are maskable (subject centered with safe-zone padding). These are the minimum required for PWA installability.
 
-**`background_color`:** `#fafaf7` matches the light theme's background token from M8's design system.
+**`background_color`:** `#fafaf7` is the expected light-theme background token from M8's design system. M8's spec is not yet landed at M10 spec time — m8-author must verify this value matches the actual design token before M10 implementation ships, and update `vite.config.ts` if it differs. A mismatch causes a flash of the wrong background colour during app launch before the first paint.
 
 ### SPA wiring changes
 
@@ -323,7 +325,7 @@ M10 follows the test-first discipline of M1–M9. Pure scaffolding (Vite config 
 - Respects per-entry cap of 20 URLs.
 - Respects total cap of 200 URLs across all entries.
 - Deduplicates URLs before fetching.
-- Fires fetches with `cache: 'force-cache'`.
+- Fires plain `fetch(url)` calls (no `cache` option override) so requests route through the SW fetch handler and populate the Workbox cache.
 - Runs at concurrency 4 (assert no more than 4 in-flight at once).
 - Swallows fetch errors silently.
 - No-ops gracefully when the entries response is empty.
