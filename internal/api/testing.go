@@ -55,24 +55,44 @@ func NewTestMux(d *sql.DB, opts TestMuxOpts) *http.ServeMux {
 	registerSubscriptionRoutes(subsMux, d, opts.Poke)
 	entriesMux := http.NewServeMux()
 	registerEntryRoutes(entriesMux, d)
+	catsMux := http.NewServeMux()
+	registerCategoryRoutes(catsMux, d)
+	searchMux := http.NewServeMux()
+	registerSearchRoutes(searchMux, d)
+	opmlMux := http.NewServeMux()
+	registerOPMLRoutes(opmlMux, d)
 
 	for _, p := range []struct {
 		method, path string
 		handler      http.Handler
 	}{
 		{"GET", "/api/v1/subscriptions", inject(subsMux)},
+		{"GET", "/api/v1/subscriptions/{id}", inject(subsMux)},
 		{"POST", "/api/v1/subscriptions", inject(subsMux)},
 		{"PATCH", "/api/v1/subscriptions/{id}", inject(subsMux)},
 		{"DELETE", "/api/v1/subscriptions/{id}", inject(subsMux)},
 		{"GET", "/api/v1/entries", inject(entriesMux)},
 		{"GET", "/api/v1/entries/{id}", inject(entriesMux)},
 		{"PATCH", "/api/v1/entries/{id}", inject(entriesMux)},
+		{"GET", "/api/v1/categories", inject(catsMux)},
+		{"POST", "/api/v1/categories", inject(catsMux)},
+		{"PATCH", "/api/v1/categories/{id}", inject(catsMux)},
+		{"DELETE", "/api/v1/categories/{id}", inject(catsMux)},
+		{"POST", "/api/v1/categories/{id}/mark-read", inject(catsMux)},
+		{"GET", "/api/v1/search", inject(searchMux)},
+		{"GET", "/api/v1/opml", inject(opmlMux)},
+		{"POST", "/api/v1/opml", inject(opmlMux)},
 	} {
 		m.Handle(p.method+" "+p.path, p.handler)
 	}
 
 	if opts.ProxyHandler != nil {
 		m.Handle("GET /api/v1/proxy/{token}", inject(opts.ProxyHandler))
+	}
+	if opts.DiscoverClient != nil {
+		discoverMux := http.NewServeMux()
+		registerDiscoverRoutes(discoverMux, opts.DiscoverClient)
+		m.Handle("POST /api/v1/discover", inject(discoverMux))
 	}
 	return m
 }

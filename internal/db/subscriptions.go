@@ -52,6 +52,7 @@ type NewSubscription struct {
 	Cookie        string
 	BasicAuthUser string
 	BasicAuthPass string
+	CategoryID    *int64
 }
 
 type DueSubscription struct {
@@ -71,13 +72,17 @@ type DueSubscription struct {
 // PollResult and UpdateAfterPoll live in entries.go because they reference db.NewEntry.
 
 func InsertSubscription(ctx context.Context, d *sql.DB, s NewSubscription) (int64, error) {
+	var catVal interface{}
+	if s.CategoryID != nil {
+		catVal = *s.CategoryID
+	}
 	res, err := d.ExecContext(ctx, `
 		INSERT INTO subscriptions
 		    (user_id, title, feed_url, site_url, next_poll_at, created_at, extract,
-		     cookie, basic_auth_user, basic_auth_pass)
-		VALUES (?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?)
+		     cookie, basic_auth_user, basic_auth_pass, category_id)
+		VALUES (?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?)
 	`, s.UserID, s.Title, s.FeedURL, s.SiteURL, s.NextPoll, s.Created, boolToInt(s.Extract),
-		s.Cookie, s.BasicAuthUser, s.BasicAuthPass)
+		s.Cookie, s.BasicAuthUser, s.BasicAuthPass, catVal)
 	if err != nil {
 		// modernc.org/sqlite reports unique violations through the standard
 		// SQLite error text. We match on substring rather than the typed

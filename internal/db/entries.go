@@ -55,6 +55,7 @@ type ListEntriesParams struct {
 	UserID            int64
 	UnreadOnly        bool
 	SubscriptionID    int64 // 0 means all
+	CategoryID        int64 // 0 means all
 	Limit             int
 	CursorPublishedAt int64 // 0 means no cursor (paired with CursorID)
 	CursorID          int64 // 0 means no cursor (paired with CursorPublishedAt)
@@ -88,6 +89,10 @@ func ListEntries(ctx context.Context, d *sql.DB, p ListEntriesParams) (entries [
 	if p.SubscriptionID > 0 {
 		clauses = append(clauses, "subscription_id = ?")
 		args = append(args, p.SubscriptionID)
+	}
+	if p.CategoryID > 0 {
+		clauses = append(clauses, "subscription_id IN (SELECT id FROM subscriptions WHERE category_id = ? AND user_id = ?)")
+		args = append(args, p.CategoryID, p.UserID)
 	}
 	if p.CursorPublishedAt > 0 {
 		clauses = append(clauses, "(published_at, id) < (?, ?)")
