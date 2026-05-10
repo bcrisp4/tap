@@ -84,7 +84,7 @@ Every instrument is defined in `instruments.go` with a Go variable, a metric nam
 |---|---|---|---|---|
 | `tap_proxy_cache_hits_total` | Counter | `{requests}` | — | Number of media proxy requests served from the local filesystem cache without fetching the origin. |
 | `tap_proxy_cache_misses_total` | Counter | `{requests}` | — | Number of media proxy requests that required fetching the origin (cache cold or expired). |
-| `tap_proxy_cache_evictions_total` | Counter | `{files}` | `reason={size_cap,age_sweep}` | Number of cached media files evicted. `size_cap` = inline eviction triggered by the configured byte cap; `age_sweep` = daily archival sweep. **M11 note:** M11's `fsPass` must increment this counter with `reason="age_sweep"` for each file pair unlinked during the daily sweep. M11 uses the global instruments (same package) rather than threading a counter through `ArchiverOpts`. |
+| `tap_proxy_cache_evictions_total` | Counter | `{files}` | `reason={size_cap,age_sweep}` | Number of cached media files evicted. `size_cap` = inline eviction triggered by the configured byte cap; `age_sweep` = daily archival sweep. M11 exposes an `OnEvict func(n int)` callback on `ArchiverOpts`; M12 wires it in `cmd/tap/main.go` to increment this counter with `reason="age_sweep"` (see wire-up section below). |
 | `tap_proxy_cache_bytes` | Gauge | `By` | — | Current total size of the media proxy filesystem cache in bytes. Updated after each eviction pass and each new cache write. |
 
 **Auth metrics:**
@@ -685,6 +685,85 @@ All pure-Go, no CGO. All compatible with `CGO_ENABLED=0`.
 | `--lockout-base` | `TAP_LOCKOUT_BASE` | `30s` | Lockout |
 | `--lockout-max` | `TAP_LOCKOUT_MAX` | `1h` | Lockout |
 | `--trusted-proxy` | `TAP_TRUSTED_PROXY` | `false` | Rate limit / Logging |
+
+---
+
+### `cmd/tap/main.go` wire-up additions
+
+M12 adds the following to the server startup block in `cmd/tap/main.go`, before the HTTP server starts:
+
+```go
+// 1. Initialise metrics and tracing providers (both shut down after sched.Stop in reverse order).
+if err := metrics.Init(metrics.MetricsOpts{
+    OTLPEndpoint: *otlpEndpoint,
+    OTLPHeaders:  parseHeaders(*otlpHeaders),
+}); err != nil {
+    slog.Error("init metrics", "err", err); os.Exit(1)
+}
+defer metrics.Shutdown(shutdownCtx)
+
+if err := tracing.Init(tracing.TracingOpts{
+    OTLPEndpoint: *otlpEndpoint,
+    OTLPHeaders:  parseHeaders(*otlpHeaders),
+    SampleRate:   *traceSampleRate,
+    ServiceName:  "tap",
+    Version:      version,
+}); err != nil {
+    slog.Error("init tracing", "err", err); os.Exit(1)
+}
+defer tracing.Shutdown(shutdownCtx)
+
+// 2. Wrap the slog default handler with the ring buffer handler.
+ringBuf := ring.NewBuffer(100)
+slog.SetDefault(slog.New(ring.NewHandler(slog.Default().Handler(), ringBuf)))
+
+// 3. Wire the Archiver's OnEvict callback to the proxy cache evictions counter.
+archiver := archival.NewArchiver(d, archival.ArchiverOpts{
+    Horizon:     *archiveHorizon,
+    CacheAgeCap: *cacheAgeCap,
+    Interval:    *archiveInterval,
+    CacheDir:    cacheDir,
+    OnEvict: func(n int) {
+        metrics.ProxyCacheEvictions.Add(context.Background(), int64(n),
+            metric.WithAttributes(attribute.String("reason", "age_sweep")))
+    },
+})
+
+// 4. Pass the ring buffer and rate limiter into the API mux.
+limiter := ratelimit.NewLimiter(ratelimit.Opts{
+    SourceRate:      parseRate(*loginRate),
+    SourceBurst:     *loginBurst,
+    FailThreshold:   *lockoutThreshold,
+    LockoutBase:     *lockoutBase,
+    LockoutMax:      *lockoutMax,
+    CleanupInterval: 5 * time.Minute,
+})
+defer limiter.Stop()
+
+apiMux := api.NewMux(d, api.MuxOpts{
+    // ... existing fields ...
+    RingBuffer:    ringBuf,
+    Limiter:       limiter,
+    TrustedProxy:  *trustedProxy,
+    MetricsEnabled: *metricsEnabled,
+    StartTime:     startTime,
+    Version:       version,
+})
+```
+
+Shutdown ordering (additions to the existing reverse-order sequence):
+
+```
+srv.Shutdown(ctx)   // drain HTTP first
+archiver.Stop()     // let any in-progress sweep finish
+sched.Stop()        // let in-flight polls finish
+limiter.Stop()      // stop cleanup goroutine
+tracing.Shutdown()  // flush traces
+metrics.Shutdown()  // flush metrics
+db.Close()          // close DB last
+```
+
+`metrics.Shutdown` and `tracing.Shutdown` are deferred immediately after `Init` so they run in LIFO order relative to `db.Close`. The `defer` ordering means `db.Close` runs after both flush — correct.
 
 ---
 
