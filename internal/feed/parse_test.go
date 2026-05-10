@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bcrisp4/tap/internal/httpx"
 	"github.com/stretchr/testify/require"
 )
 
@@ -116,4 +117,24 @@ func TestFetch_PopulatesCacheMaxAgeOnSuccess(t *testing.T) {
 	res, err := Fetch(context.Background(), srv.Client(), srv.URL, FetchOpts{})
 	require.NoError(t, err)
 	require.Equal(t, 3600*time.Second, res.CacheMaxAge)
+}
+
+func TestFetchAppliesFeedCreds(t *testing.T) {
+	t.Parallel()
+	gotCookie := ""
+	gotAuth := ""
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotCookie = r.Header.Get("Cookie")
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/atom+xml")
+		_, _ = w.Write([]byte(`<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"><title>x</title></feed>`))
+	}))
+	defer srv.Close()
+
+	_, err := Fetch(context.Background(), srv.Client(), srv.URL, FetchOpts{
+		Creds: httpx.FeedCreds{Cookie: "c", BasicAuthUser: "u", BasicAuthPass: "p"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "c", gotCookie)
+	require.NotEmpty(t, gotAuth)
 }
