@@ -29,13 +29,21 @@ func postSubscription(t *testing.T, mux http.Handler, body string) int64 {
 	return got.ID
 }
 
+// newAPI returns an UNAUTHENTICATED mux for unit-test handlers — the real
+// NewMux now wraps every /api/v1/* route in requireSession + (where
+// applicable) requireCSRF. End-to-end auth coverage lives in
+// cmd/tap/main_test.go; package-level handler tests bypass the chain by
+// mounting the route registrars directly.
 func newAPI(t *testing.T) (*http.ServeMux, *sql.DB) {
 	t.Helper()
 	d, err := db.Open(context.Background(), ":memory:")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = d.Close() })
 	require.NoError(t, db.Migrate(context.Background(), d))
-	return NewMux(d, MuxOpts{}), d
+	m := http.NewServeMux()
+	registerSubscriptionRoutes(m, d, nil)
+	registerEntryRoutes(m, d)
+	return m, d
 }
 
 func TestSubscriptions_PostThenList(t *testing.T) {
