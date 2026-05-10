@@ -93,7 +93,7 @@ func startTestServerInDir(t *testing.T, dir string) *testServer {
 		pass := os.Getenv("TAP_ADMIN_PASSWORD")
 		switch {
 		case user != "" && pass != "":
-			require.NoError(t, bootstrapAdmin(ctx, d, user, pass, testHashParams, io.Discard))
+			require.NoError(t, bootstrapAdmin(ctx, d, user, pass, testHashParams))
 		case user != "" || pass != "":
 			t.Fatal("partial admin bootstrap: both TAP_ADMIN_USERNAME and TAP_ADMIN_PASSWORD must be set")
 		}

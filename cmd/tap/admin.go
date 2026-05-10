@@ -269,13 +269,9 @@ func timeNowUnix() int64 { return timeNow().Unix() }
 // bootstrapAdmin creates an admin user from the supplied credentials. Used
 // by the env-var first-launch shortcut after migrations. Validates the
 // password (so a too-short bootstrap password aborts loudly rather than
-// producing an unusable account) and inserts the user atomically.
-//
-// logs is reserved for future use (an audit-style log line). The current
-// caller already emits an INFO log on success at the call site, so this
-// helper stays quiet.
-func bootstrapAdmin(ctx context.Context, d *sql.DB, username, password string, hashParams auth.Params, logs io.Writer) error {
-	_ = logs // reserved for future audit logging
+// producing an unusable account) and inserts the user atomically. The
+// caller already emits an INFO log on success, so this helper stays quiet.
+func bootstrapAdmin(ctx context.Context, d *sql.DB, username, password string, hashParams auth.Params) error {
 	if err := auth.ValidatePassword(password); err != nil {
 		return err
 	}

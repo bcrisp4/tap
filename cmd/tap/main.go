@@ -130,7 +130,7 @@ func runServer() {
 		pass := os.Getenv("TAP_ADMIN_PASSWORD")
 		switch {
 		case user != "" && pass != "":
-			if err := bootstrapAdmin(ctx, d, user, pass, auth.DefaultParams, os.Stderr); err != nil {
+			if err := bootstrapAdmin(ctx, d, user, pass, auth.DefaultParams); err != nil {
 				slog.Error("bootstrap admin", "err", err)
 				os.Exit(1)
 			}

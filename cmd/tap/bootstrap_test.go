@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"path/filepath"
 	"testing"
@@ -22,8 +21,7 @@ func TestBootstrapAdminCreatesUser(t *testing.T) {
 	require.NoError(t, db.Migrate(context.Background(), d))
 	defer d.Close()
 
-	logs := &bytes.Buffer{}
-	require.NoError(t, bootstrapAdmin(context.Background(), d, "ben", "supersecret", testHashParams, logs))
+	require.NoError(t, bootstrapAdmin(context.Background(), d, "ben", "supersecret", testHashParams))
 
 	u, err := db.GetUserByUsername(context.Background(), d, "ben")
 	require.NoError(t, err)
@@ -45,7 +43,7 @@ func TestBootstrapAdminRejectsTooShortPassword(t *testing.T) {
 	require.NoError(t, db.Migrate(context.Background(), d))
 	defer d.Close()
 
-	err = bootstrapAdmin(context.Background(), d, "ben", "short", testHashParams, &bytes.Buffer{})
+	err = bootstrapAdmin(context.Background(), d, "ben", "short", testHashParams)
 	require.ErrorIs(t, err, auth.ErrPasswordTooShort)
 
 	n, err := db.CountUsers(context.Background(), d)
