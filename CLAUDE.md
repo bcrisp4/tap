@@ -108,6 +108,13 @@ populated DBs) or `tap admin create` interactively from the host.
 force-logs-out that user's active sessions. There is no SPA-visible
 bootstrap path.
 
+**Multi-user data isolation is M7 work**, not M6. The `users` table
+exists; subscriptions and entries do not yet carry a `user_id` column
+or per-user query filters. M6 deployments are effectively single-admin
+via env-var bootstrap; do not light up the non-admin role until M7
+closes the isolation gap. The intended posture is strict per-user
+privacy with no admin override on feed visibility.
+
 Defence-in-depth defaults that should not be weakened lightly:
 
 - The binary still defaults to `-addr 127.0.0.1:8080` (concept §6.11). Container binds `0.0.0.0:8080` because the network namespace is the boundary there.

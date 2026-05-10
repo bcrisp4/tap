@@ -28,7 +28,7 @@ These are locked in before M1 begins.
 | M4 | Polling discipline | Adaptive cadence, per-host concurrency cap, SSRF guard with allowlist + redirect re-check, retry/backoff. | [`specs/2026-05-09-m4-polling-discipline.md`](specs/2026-05-09-m4-polling-discipline.md) |
 | M5 | Article extraction | Readability-style extractor + per-feed CSS rules, opt-in flag, graceful degradation. | [`specs/2026-05-09-m5-article-extraction.md`](specs/2026-05-09-m5-article-extraction.md) |
 | M6 | Auth foundations | Password login, sessions (cookie, hashed-at-rest, idle + absolute expiry), CSRF, admin bootstrap (CLI + env-var), credential redaction. | [`specs/2026-05-10-m6-auth-foundations.md`](specs/2026-05-10-m6-auth-foundations.md) |
-| M7 | 2FA + passkeys | TOTP enrolment, recovery codes, WebAuthn, session listing/revocation, admin reset paths. | TBD |
+| M7 | 2FA + passkeys + per-user data isolation | TOTP enrolment, recovery codes, WebAuthn, session listing/revocation, admin reset paths, **user_id on subscriptions/entries with strict per-user query filters (privacy: even admins see only their own feeds)**. | TBD |
 | M8 | SPA polish | Three themes, serif/sans toggle, density toggle, keyboard shortcuts, mobile breakpoints, swipe gestures, animations, accessibility pass. | TBD |
 | M9 | Categories, OPML, search, add-feed flow | The organisational and ingest UX. SQLite FTS5 for full-text search. Discover-feeds-from-page-URL. | TBD |
 | M10 | Offline + PWA | Service worker, mutation queue persisted to local storage, warm-cache driver, manifest, status-bar theming. | TBD |

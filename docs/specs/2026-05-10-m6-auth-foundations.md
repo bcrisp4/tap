@@ -531,6 +531,7 @@ M6 follows the test-first discipline of M1–M5 (`docs/roadmap.md` §"Working ca
 | `user_agent` / `address` columns on `sessions` | M7 (lands with the list-sessions UI that needs them) |
 | Admin "reset password" / "disable 2FA" actions in the SPA | M7 |
 | Admin user-creation from the SPA | M7 |
+| Per-user data isolation on subscriptions and entries (`user_id` columns + filtered queries) | M7 |
 | Per-source / per-account brute-force lockout, login rate-limit | M12 |
 | Re-hash-on-verify for argon2 param drift | M12 (paired with any future bump of `auth.DefaultParams`) |
 | Per-feed `outbound_proxy_url` (concept §4) | Won't ship in M6 — needs per-feed `http.Transport`. Future milestone or follow-up. |
@@ -568,6 +569,8 @@ M6 follows the test-first discipline of M1–M5 (`docs/roadmap.md` §"Working ca
 
 - **Migration column count.** 0005 lands two tables and three columns in one file. Same M5 rationale: one milestone = one logical change = one migration.
 
+- **Multi-user data isolation is not yet enforced.** The `subscriptions` and `entries` tables have no `user_id` column; any logged-in user can read, modify, or delete any subscription. M6 ships with one admin user via env-var bootstrap and no SPA admin-add-user flow, so the gap is theoretical for the typical M6 deployment. M7 owns the migration that adds `user_id` columns, the per-user query filters across the API surface, and the admin user-management UI that lights up the `user` role meaningfully. **The intended posture is strict per-user isolation — even the admin sees only their own subscriptions.** There is no admin-override on subscription privacy.
+
 ## Definition of done
 
 1. `make test` passes (`go test ./... -race`) including the new packages, the migration, the middleware, the API extensions, the worker + extract extensions, and the SPA tests.
@@ -595,5 +598,6 @@ M6 follows the test-first discipline of M1–M5 (`docs/roadmap.md` §"Working ca
 - That per-feed `outbound_proxy_url` works — deferred.
 - That CSRF tokens rotate aggressively — they don't, by design.
 - That an audit log exists in the database — concept §10's "stdout is the audit log" stands.
+- That subscriptions and entries are isolated per user — M7 (subscriptions / entries are currently global-to-the-deployment).
 
 If you find yourself adding TOTP enrolment, a session-list UI, admin reset paths in the SPA, login rate-limiting, an audit log table, password complexity rules, or per-feed `outbound_proxy_url`, push back. M6's job is the smallest authentication surface that closes the open-API gap, with clean seams for M7 (passkeys, 2FA, session-list UI, admin reset paths) and M12 (lockout, observability, argon2 tuning) to plug into.

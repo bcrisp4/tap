@@ -91,6 +91,15 @@ The binary still defaults to `-addr 127.0.0.1:8080` as defence in depth
 (concept §6.11). The container variant binds `0.0.0.0:8080` because
 Docker port mapping requires it.
 
+**Multi-user note:** M6 establishes the user-account schema but does
+NOT yet enforce per-user data isolation on subscriptions and entries.
+With the M6 default deployment (one admin via env-var bootstrap), this
+gap is theoretical. **Do not create non-admin users via
+`tap admin create --role user` until M7 lands** — they will currently
+see the admin's subscriptions. M7 adds `user_id` columns + per-user
+query filters with the documented posture: every user, including admins,
+sees only their own feeds.
+
 ## Configuration knobs added by M4
 
 - `--http-timeout` (env `TAP_HTTP_TIMEOUT`, default `30s`) — total
