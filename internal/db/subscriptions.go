@@ -38,6 +38,7 @@ type Subscription struct {
 	Cookie          string
 	BasicAuthUser   string
 	BasicAuthPass   string
+	CategoryID      sql.NullInt64
 }
 
 type NewSubscription struct {
@@ -95,12 +96,12 @@ func GetSubscription(ctx context.Context, d *sql.DB, id, userID int64) (Subscrip
 		SELECT id, user_id, title, feed_url, site_url, last_poll_at, next_poll_at,
 		       etag, last_modified, error_count, last_error, created_at,
 		       extract, extract_selector,
-		       cookie, basic_auth_user, basic_auth_pass
+		       cookie, basic_auth_user, basic_auth_pass, category_id
 		FROM subscriptions WHERE id = ? AND user_id = ?
 	`, id, userID).Scan(&s.ID, &s.UserID, &s.Title, &s.FeedURL, &s.SiteURL, &s.LastPollAt, &s.NextPollAt,
 		&s.ETag, &s.LastModified, &s.ErrorCount, &s.LastError, &s.CreatedAt,
 		&s.Extract, &s.ExtractSelector,
-		&s.Cookie, &s.BasicAuthUser, &s.BasicAuthPass)
+		&s.Cookie, &s.BasicAuthUser, &s.BasicAuthPass, &s.CategoryID)
 	if err != nil {
 		return Subscription{}, fmt.Errorf("get subscription %d: %w", id, err)
 	}
@@ -112,7 +113,7 @@ func ListSubscriptions(ctx context.Context, d *sql.DB, userID int64) ([]Subscrip
 		SELECT id, user_id, title, feed_url, site_url, last_poll_at, next_poll_at,
 		       etag, last_modified, error_count, last_error, created_at,
 		       extract, extract_selector,
-		       cookie, basic_auth_user, basic_auth_pass
+		       cookie, basic_auth_user, basic_auth_pass, category_id
 		FROM subscriptions WHERE user_id = ? ORDER BY title COLLATE NOCASE
 	`, userID)
 	if err != nil {
@@ -126,7 +127,7 @@ func ListSubscriptions(ctx context.Context, d *sql.DB, userID int64) ([]Subscrip
 		if err := rows.Scan(&s.ID, &s.UserID, &s.Title, &s.FeedURL, &s.SiteURL, &s.LastPollAt, &s.NextPollAt,
 			&s.ETag, &s.LastModified, &s.ErrorCount, &s.LastError, &s.CreatedAt,
 			&s.Extract, &s.ExtractSelector,
-			&s.Cookie, &s.BasicAuthUser, &s.BasicAuthPass); err != nil {
+			&s.Cookie, &s.BasicAuthUser, &s.BasicAuthPass, &s.CategoryID); err != nil {
 			return nil, fmt.Errorf("scan subscription: %w", err)
 		}
 		out = append(out, s)
@@ -228,6 +229,56 @@ func QueryVelocity(ctx context.Context, d *sql.DB, subID int64, now time.Time) (
 		return 0, fmt.Errorf("query velocity: %w", err)
 	}
 	return velocity, nil
+}
+
+// UpdateSubscriptionCategory sets the category_id on a subscription.
+// Pass nil to uncategorise. Returns sql.ErrNoRows if the subscription does not exist for the user.
+func UpdateSubscriptionCategory(ctx context.Context, d *sql.DB, id, userID int64, categoryID *int64) error {
+	var v interface{}
+	if categoryID != nil {
+		v = *categoryID
+	}
+	res, err := d.ExecContext(ctx,
+		`UPDATE subscriptions SET category_id = ? WHERE id = ? AND user_id = ?`, v, id, userID)
+	if err != nil {
+		return fmt.Errorf("update subscription category %d: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// ListSubscriptionsByCategory returns all subscriptions in a category for a given user.
+func ListSubscriptionsByCategory(ctx context.Context, d *sql.DB, categoryID, userID int64) ([]Subscription, error) {
+	rows, err := d.QueryContext(ctx, `
+		SELECT id, user_id, title, feed_url, site_url, last_poll_at, next_poll_at,
+		       etag, last_modified, error_count, last_error, created_at,
+		       extract, extract_selector,
+		       cookie, basic_auth_user, basic_auth_pass, category_id
+		FROM subscriptions WHERE category_id = ? AND user_id = ? ORDER BY title COLLATE NOCASE
+	`, categoryID, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list subscriptions by category: %w", err)
+	}
+	defer rows.Close()
+
+	var out []Subscription
+	for rows.Next() {
+		var s Subscription
+		if err := rows.Scan(&s.ID, &s.UserID, &s.Title, &s.FeedURL, &s.SiteURL, &s.LastPollAt, &s.NextPollAt,
+			&s.ETag, &s.LastModified, &s.ErrorCount, &s.LastError, &s.CreatedAt,
+			&s.Extract, &s.ExtractSelector,
+			&s.Cookie, &s.BasicAuthUser, &s.BasicAuthPass, &s.CategoryID); err != nil {
+			return nil, fmt.Errorf("scan subscription: %w", err)
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
 }
 
 // UpdateSubscriptionPatch sets extract + extract_selector + cookie +

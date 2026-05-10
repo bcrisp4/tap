@@ -12,11 +12,13 @@ CREATE TRIGGER entries_fts_insert AFTER INSERT ON entries BEGIN
 END;
 
 CREATE TRIGGER entries_fts_delete AFTER DELETE ON entries BEGIN
-    INSERT INTO entries_fts(entries_fts, rowid) VALUES ('delete', old.id);
+    INSERT INTO entries_fts(entries_fts, rowid, title, content_text, author)
+    VALUES ('delete', old.id, old.title, tap_strip_html(old.content), old.author);
 END;
 
 CREATE TRIGGER entries_fts_update AFTER UPDATE ON entries BEGIN
-    INSERT INTO entries_fts(entries_fts, rowid) VALUES ('delete', old.id);
+    INSERT INTO entries_fts(entries_fts, rowid, title, content_text, author)
+    VALUES ('delete', old.id, old.title, tap_strip_html(old.content), old.author);
     INSERT INTO entries_fts(rowid, title, content_text, author)
     VALUES (new.id, new.title, tap_strip_html(new.content), new.author);
 END;
