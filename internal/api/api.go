@@ -100,6 +100,15 @@ func NewMux(db *sql.DB, opts MuxOpts) *http.ServeMux {
 	m.Handle("GET /api/v1/me/passkeys", authed(listPasskeysHandler(db)))
 	m.Handle("DELETE /api/v1/me/passkeys/{id}", authedCSRF(deletePasskeyHandler(db)))
 
+	// System status endpoint (admin-only, M12).
+	m.Handle("GET /api/v1/status", authed(statusHandler(statusDeps{
+		db:          db,
+		buf:         opts.RingBuffer,
+		startTime:   opts.StartTime,
+		version:     opts.Version,
+		pollsActive: opts.PollsActive,
+	})))
+
 	// Admin endpoints.
 	m.Handle("GET /api/v1/admin/users", authedAdmin(listUsersHandler(db)))
 	m.Handle("POST /api/v1/admin/users", authedAdminCSRF(createUserHandler(db, opts.HashParams)))
