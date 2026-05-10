@@ -54,6 +54,20 @@ exponentially (5m → 10m → 20m → 40m … capped at 24h, with 25% jitter).
 Set `--ssrf-disabled` only on fully-trusted networks; the binary logs a
 startup WARN when this flag is on.
 
+Subscriptions can opt into full-article extraction (M5):
+`POST /api/v1/subscriptions {..., "extract": true}` or
+`PATCH /api/v1/subscriptions/:id {"extract": true}`. When enabled, the
+worker fetches each new entry's article URL through the shared HTTP
+client (so the M4 SSRF guard, per-host cap, and `--http-timeout` apply)
+and runs the response through Readability — or, if the subscription
+has an `extract_selector` CSS rule set, through that selector.
+Extracted HTML flows through the same M2 sanitiser and M3 image proxy
+as feed-provided HTML. Per-entry extraction failures degrade to the
+feed-provided summary with `extract_failed = 1`; they never abort the
+poll or count against the subscription's error budget. Toggling
+extract from off→on affects future polls only — existing entries are
+not re-fetched.
+
 The binary still defaults to `-addr 127.0.0.1:8080` as defence in depth
 (concept §6.11). The container variant binds `0.0.0.0:8080` because
 Docker port mapping requires it.
@@ -74,6 +88,16 @@ Docker port mapping requires it.
   cadence and error-backoff tuning.
 - `--user-agent` (env `TAP_USER_AGENT`) — set centrally on the shared
   client.
+
+## Configuration knobs added by M5
+
+- `--extract-concurrency` (env `TAP_EXTRACT_CONCURRENCY`, default `4`)
+  — per-worker parallel article fetches when a subscription has
+  `extract=true`. The M4 per-host cap further serialises same-host
+  bursts.
+- `--extract-body-cap-bytes` (env `TAP_EXTRACT_BODY_CAP_BYTES`,
+  default `5242880` (5 MiB)) — per-article HTTP body cap before the
+  extractor parses it.
 
 ## Data layout
 
@@ -110,3 +134,10 @@ onwards get proxied URLs. To proxy all entries' images, delete `tap.db`
 No destructive change required. M4 adds one column to `subscriptions`:
 `velocity_24h_x100`. Existing rows start at velocity 0 (24h ceiling) and
 back-fill on their next successful poll or 304.
+
+## Upgrading from M4
+
+No destructive change required. Migration 0004 adds three columns:
+`subscriptions.extract`, `subscriptions.extract_selector`, and
+`entries.extract_failed`. All default to off/empty; existing
+subscriptions stay non-extract until opted in via PATCH.
