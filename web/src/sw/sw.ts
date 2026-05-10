@@ -42,8 +42,8 @@ function getApiStrategy(uid: number): StaleWhileRevalidate {
 }
 
 // Receive user context and logout signals from the app.
-self.addEventListener('message', (event: MessageEvent<SWMessage | { type: string }>) => {
-  const data = event.data;
+self.addEventListener('message', (event: ExtendableMessageEvent) => {
+  const data = event.data as SWMessage | { type: string };
   if (data.type === 'SKIP_WAITING') {
     self.skipWaiting();
   } else if (data.type === 'set-user') {

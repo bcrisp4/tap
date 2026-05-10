@@ -1,7 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 
-const PROXY_REGEX = /\/api\/v1\/proxy\/[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g;
-
 // Helper to build fake entry content with N proxy URLs.
 function makeContent(count: number, prefix = 'entry'): string {
   return Array.from({ length: count }, (_, i) =>
@@ -130,17 +128,17 @@ describe('warmCache — error handling', () => {
   });
 
   it('uses plain fetch (no cache option) so SW CacheFirst strategy is populated', async () => {
-    const fetchMock = vi.fn().mockImplementation((url: string) => {
+    const fetchMock = vi.fn().mockImplementation((_url: string) => {
       return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({
         data: [{ id: 1, content: makeContent(1) }],
       }) });
     });
     vi.stubGlobal('fetch', fetchMock);
     await warmCache(1);
-    const proxyCalls = fetchMock.mock.calls.filter(([u]: [string]) => u.includes('/proxy/'));
+    const proxyCalls = fetchMock.mock.calls.filter((call: unknown[]) => (call[0] as string).includes('/proxy/'));
     // Each proxy fetch must have NO second argument, or second arg with no 'cache' key.
-    for (const [, init] of proxyCalls) {
-      expect((init as RequestInit | undefined)?.cache).toBeUndefined();
+    for (const call of proxyCalls) {
+      expect((call[1] as RequestInit | undefined)?.cache).toBeUndefined();
     }
   });
 });

@@ -46,19 +46,19 @@ describe('SW cache naming', () => {
   });
 });
 
-import { readFileSync, existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import fs from 'fs';
+import path from 'path';
 
 describe('PWA manifest', () => {
-  // web/src/sw/__tests__/ is 4 dirs deep from web/ — four ../ reaches web/dist/
-  const manifestPath = resolve(__dirname, '../../../../dist/manifest.webmanifest');
+  // Vitest runs from the web/ directory; dist/ is a sibling of src/.
+  const manifestPath = path.resolve(process.cwd(), 'dist/manifest.webmanifest');
 
   it('manifest exists after build', () => {
-    if (!existsSync(manifestPath)) {
+    if (!fs.existsSync(manifestPath)) {
       console.warn('manifest.webmanifest not found — run pnpm build first');
       return;
     }
-    const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8'));
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
     expect(manifest.name).toBe('Tap');
     expect(manifest.display).toBe('standalone');
     expect(manifest.theme_color).toBe('#002FA7');
