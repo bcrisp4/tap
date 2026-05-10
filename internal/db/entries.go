@@ -46,6 +46,7 @@ type Entry struct {
 	FetchedAt      int64
 	Read           bool
 	Saved          bool
+	ExtractFailed  bool
 }
 
 type ListEntriesParams struct {
@@ -97,7 +98,7 @@ func ListEntries(ctx context.Context, d *sql.DB, p ListEntriesParams) (entries [
 
 	q := fmt.Sprintf(`
 		SELECT id, subscription_id, hash, title, author, url, '' AS content,
-		       published_at, fetched_at, read, saved
+		       published_at, fetched_at, read, saved, extract_failed
 		FROM entries %s
 		ORDER BY published_at DESC, id DESC
 		LIMIT ?
@@ -113,7 +114,8 @@ func ListEntries(ctx context.Context, d *sql.DB, p ListEntriesParams) (entries [
 	for rows.Next() {
 		var e Entry
 		if err := rows.Scan(&e.ID, &e.SubscriptionID, &e.Hash, &e.Title, &e.Author,
-			&e.URL, &e.Content, &e.PublishedAt, &e.FetchedAt, &e.Read, &e.Saved); err != nil {
+			&e.URL, &e.Content, &e.PublishedAt, &e.FetchedAt, &e.Read, &e.Saved,
+			&e.ExtractFailed); err != nil {
 			return nil, 0, 0, fmt.Errorf("scan entry: %w", err)
 		}
 		entries = append(entries, e)
@@ -135,10 +137,11 @@ func GetEntry(ctx context.Context, d *sql.DB, id int64) (Entry, error) {
 	var e Entry
 	err := d.QueryRowContext(ctx, `
 		SELECT id, subscription_id, hash, title, author, url, content,
-		       published_at, fetched_at, read, saved
+		       published_at, fetched_at, read, saved, extract_failed
 		FROM entries WHERE id = ?
 	`, id).Scan(&e.ID, &e.SubscriptionID, &e.Hash, &e.Title, &e.Author,
-		&e.URL, &e.Content, &e.PublishedAt, &e.FetchedAt, &e.Read, &e.Saved)
+		&e.URL, &e.Content, &e.PublishedAt, &e.FetchedAt, &e.Read, &e.Saved,
+		&e.ExtractFailed)
 	if err != nil {
 		return Entry{}, fmt.Errorf("get entry %d: %w", id, err)
 	}
