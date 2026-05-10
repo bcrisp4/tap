@@ -2,7 +2,12 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/base64"
+	"encoding/hex"
 	"net/http"
+	"time"
 
 	"github.com/bcrisp4/tap/internal/db"
 )
@@ -36,4 +41,60 @@ func chain(mws ...func(http.Handler) http.Handler) func(http.Handler) http.Handl
 		}
 		return h
 	}
+}
+
+// requireSession reads the tap_session cookie, looks up the row by
+// sha256(cookie), validates idle + absolute expiries, refreshes idle on
+// success, and injects the user + session into the request context.
+// 401 invalid_session on any failure.
+func requireSession(d *sql.DB, idleTTL time.Duration) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			c, err := r.Cookie("tap_session")
+			if err != nil || c.Value == "" {
+				writeError(w, http.StatusUnauthorized, ErrCodeInvalidSession, "no session")
+				return
+			}
+			tokenHash, ok := hashCookie(c.Value)
+			if !ok {
+				writeError(w, http.StatusUnauthorized, ErrCodeInvalidSession, "bad session cookie")
+				return
+			}
+			s, err := db.GetSessionByTokenHash(r.Context(), d, tokenHash)
+			if err != nil {
+				writeError(w, http.StatusUnauthorized, ErrCodeInvalidSession, "no such session")
+				return
+			}
+			now := time.Now().Unix()
+			if now > s.AbsoluteExpiresAt || now > s.IdleExpiresAt {
+				_ = db.DeleteSession(r.Context(), d, s.ID)
+				writeError(w, http.StatusUnauthorized, ErrCodeInvalidSession, "session expired")
+				return
+			}
+			u, err := db.GetUserByID(r.Context(), d, s.UserID)
+			if err != nil {
+				writeError(w, http.StatusUnauthorized, ErrCodeInvalidSession, "user not found")
+				return
+			}
+			// Best-effort idle refresh. A failure here doesn't break the
+			// request — worst case the session expires sooner than expected.
+			_ = db.RefreshSessionIdle(r.Context(), d, s.ID, now, now+int64(idleTTL.Seconds()))
+
+			ctx := context.WithValue(r.Context(), ctxKeyUser, u)
+			ctx = context.WithValue(ctx, ctxKeySession, s)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+// hashCookie decodes the base64url cookie value and returns its sha256-hex.
+// Returns ok=false if the cookie is not valid base64url (which would never
+// match a stored token_hash anyway).
+func hashCookie(cookieValue string) (string, bool) {
+	raw, err := base64.RawURLEncoding.DecodeString(cookieValue)
+	if err != nil {
+		return "", false
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:]), true
 }
