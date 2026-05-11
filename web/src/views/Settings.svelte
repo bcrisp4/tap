@@ -58,7 +58,9 @@
             </div>
           </section>
         {:else}
-          <Security />
+          <section aria-labelledby="security-heading">
+            <Security />
+          </section>
         {/if}
       </div>
     </div>
