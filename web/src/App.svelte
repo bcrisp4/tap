@@ -119,14 +119,13 @@
   </div>
 {/if}
 
-<HotkeysModal open={hotkeysOpen} onClose={() => hotkeysOpen = false} />
-<SearchOverlay />
-
 {#if !$auth.bootstrapped}
   <!-- empty during bootstrap window -->
 {:else if $route.name === 'signin' || $auth.user == null}
   <Login />
 {:else}
+  <HotkeysModal open={hotkeysOpen} onClose={() => hotkeysOpen = false} />
+  <SearchOverlay />
   <AppShell>
     {#if $route.name === 'reader'}
       <Reader id={$route.params.id} />
