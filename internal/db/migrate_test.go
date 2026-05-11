@@ -3,6 +3,9 @@ package db
 import (
 	"context"
 	"database/sql"
+	"fmt"
+	"io/fs"
+	"sort"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -17,10 +20,10 @@ func TestMigrate_AppliesAllMigrationsExactlyOnce(t *testing.T) {
 
 	require.NoError(t, Migrate(context.Background(), d))
 
-	// schema_migrations should have version 11 recorded (0001 through 0011).
+	// schema_migrations should have version 12 recorded (0001 through 0012).
 	var version int
 	require.NoError(t, d.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version))
-	require.Equal(t, 11, version)
+	require.Equal(t, 12, version)
 
 	// subscriptions table should exist (introduced in 0001).
 	// user_id is NOT NULL after 0006, so we need a user first.
@@ -35,7 +38,7 @@ func TestMigrate_AppliesAllMigrationsExactlyOnce(t *testing.T) {
 	// Re-running Migrate must be a no-op.
 	require.NoError(t, Migrate(context.Background(), d))
 	require.NoError(t, d.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version))
-	require.Equal(t, 11, version)
+	require.Equal(t, 12, version)
 }
 
 func TestMigrate_AddsAuthTables(t *testing.T) {
@@ -136,10 +139,10 @@ func TestMigrate_AddsExtractionColumns(t *testing.T) {
 		require.Equal(t, c.def, defaultVal.String, "%s.%s default", c.table, c.column)
 	}
 
-	// schema_migrations should be at the latest version (0011 added fetched_at index).
+	// schema_migrations should be at the latest version (0012 = category_position).
 	var version int
 	require.NoError(t, d.QueryRowContext(ctx, `SELECT MAX(version) FROM schema_migrations`).Scan(&version))
-	require.Equal(t, 11, version)
+	require.Equal(t, 12, version)
 }
 
 func TestMigrate_0006_UserDataIsolation(t *testing.T) {
@@ -179,6 +182,88 @@ func TestMigrate_0006_UserDataIsolation(t *testing.T) {
 		 VALUES (?, 'Feed', 'http://shared.example/feed', 0, 0)`, uid1)
 	require.Error(t, err, "same user subscribing to the same URL twice must fail")
 	require.Contains(t, err.Error(), "UNIQUE constraint failed")
+}
+
+func TestMigrate_0012_CategoryPosition_OnPopulatedDB(t *testing.T) {
+	t.Parallel()
+	// Apply migrations through 0011 only, insert two categories with the
+	// pre-0012 schema, then apply 0012 and verify position column exists with
+	// default 0 on both rows.
+	d, err := Open(context.Background(), ":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = d.Close() })
+
+	require.NoError(t, applyMigrationsUpTo(t, d, 11))
+
+	res, err := d.ExecContext(context.Background(),
+		`INSERT INTO users (username, password_hash, role, created_at) VALUES ('alice0012', 'x', 'admin', 0)`)
+	require.NoError(t, err)
+	uid, _ := res.LastInsertId()
+	_, err = d.ExecContext(context.Background(),
+		`INSERT INTO categories (user_id, name, created_at) VALUES (?, 'A', 0), (?, 'B', 0)`,
+		uid, uid)
+	require.NoError(t, err)
+
+	// Now apply remaining migrations (0012).
+	require.NoError(t, Migrate(context.Background(), d))
+
+	var pa, pb int64
+	require.NoError(t, d.QueryRowContext(context.Background(),
+		`SELECT position FROM categories WHERE name = 'A'`).Scan(&pa))
+	require.NoError(t, d.QueryRowContext(context.Background(),
+		`SELECT position FROM categories WHERE name = 'B'`).Scan(&pb))
+	require.Equal(t, int64(0), pa)
+	require.Equal(t, int64(0), pb)
+}
+
+// applyMigrationsUpTo applies migrations with numeric version <= maxVersion.
+// Reuses the same logic as Migrate but stops after the given version number.
+func applyMigrationsUpTo(t *testing.T, d *sql.DB, maxVersion int) error {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := d.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS schema_migrations (
+			version    INTEGER PRIMARY KEY,
+			applied_at INTEGER NOT NULL
+		)`); err != nil {
+		return fmt.Errorf("create schema_migrations: %w", err)
+	}
+
+	files, err := fs.Glob(migrationsFS, "migrations/*.sql")
+	if err != nil {
+		return fmt.Errorf("glob migrations: %w", err)
+	}
+	sort.Strings(files)
+
+	for _, name := range files {
+		v, err := versionFromFilename(name)
+		if err != nil {
+			return err
+		}
+		if v > maxVersion {
+			break
+		}
+		body, err := migrationsFS.ReadFile(name)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", name, err)
+		}
+		tx, err := d.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("begin tx for %s: %w", name, err)
+		}
+		if _, err := tx.ExecContext(ctx, string(body)); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("apply %s: %w", name, err)
+		}
+		if _, err := tx.ExecContext(ctx, "INSERT INTO schema_migrations (version, applied_at) VALUES (?, 0)", v); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("record %s: %w", name, err)
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit %s: %w", name, err)
+		}
+	}
+	return nil
 }
 
 func TestMigrate_0007_2FAAndPasskeys(t *testing.T) {

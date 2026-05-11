@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { get } from 'svelte/store';
 import type { EntryListItem } from '../types';
 
 // We mock the api module so tests don't make real network calls.
@@ -8,6 +9,14 @@ vi.mock('../api', () => ({
     patchEntry: vi.fn(),
     listSubscriptions: vi.fn(),
     addSubscription: vi.fn(),
+    listCategories: vi.fn(),
+    createCategory: vi.fn(),
+    renameCategory: vi.fn(),
+    deleteCategory: vi.fn(),
+    markCategoryRead: vi.fn(),
+    reorderCategories: vi.fn(),
+    markSubscriptionRead: vi.fn(),
+    patchSubscription: vi.fn(),
   },
 }));
 
@@ -333,5 +342,80 @@ describe('entriesStore.loadSaved', () => {
     expect(state.items).toHaveLength(0);
     expect(state.loading).toBe(false);
     expect(state.error).toBe('boom');
+  });
+});
+
+describe('categories store', () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('reassignSubscription PATCHes the subscription and reloads', async () => {
+    const { api } = await import('../api');
+    const { categories } = await import('../store');
+    const patchSpy = vi.spyOn(api, 'patchSubscription').mockResolvedValueOnce(undefined as any);
+    const loadSubs = vi.spyOn(api, 'listSubscriptions').mockResolvedValueOnce([] as any);
+    await categories.reassignSubscription(5, 7);
+    expect(patchSpy).toHaveBeenCalledWith(5, { category_id: 7 });
+    expect(loadSubs).toHaveBeenCalled();
+  });
+
+  it('reorder calls api.reorderCategories with the new order and reloads', async () => {
+    const { api } = await import('../api');
+    const { categories } = await import('../store');
+    const reorderSpy = vi.spyOn(api, 'reorderCategories').mockResolvedValueOnce(undefined as any);
+    const listSpy = vi.spyOn(api, 'listCategories').mockResolvedValueOnce([] as any);
+    await categories.reorder([3, 1, 2]);
+    expect(reorderSpy).toHaveBeenCalledWith([3, 1, 2]);
+    expect(listSpy).toHaveBeenCalled();
+  });
+
+  it('markRead(id) calls api.markCategoryRead and reloads entries', async () => {
+    const { api } = await import('../api');
+    const { categories } = await import('../store');
+    const markSpy = vi.spyOn(api, 'markCategoryRead').mockResolvedValueOnce(undefined as any);
+    const entriesSpy = vi.spyOn(api, 'listEntries').mockResolvedValueOnce({ data: [] } as any);
+    vi.spyOn(api, 'listCategories').mockResolvedValueOnce([] as any);
+    await categories.markRead(7);
+    expect(markSpy).toHaveBeenCalledWith(7);
+    expect(entriesSpy).toHaveBeenCalled();
+  });
+
+  it('markRead(null) calls api.markSubscriptionRead for each uncategorised subscription', async () => {
+    const { api } = await import('../api');
+    const { categories, subscriptions } = await import('../store');
+    const markFeed = vi.spyOn(api, 'markSubscriptionRead').mockResolvedValue(undefined as any);
+    vi.spyOn(api, 'listSubscriptions').mockResolvedValueOnce([
+      { id: 1, category_id: null }, { id: 2, category_id: null }, { id: 3, category_id: 4 },
+    ] as any);
+    vi.spyOn(api, 'listEntries').mockResolvedValueOnce({ data: [] } as any);
+    vi.spyOn(api, 'listCategories').mockResolvedValueOnce([] as any);
+    await subscriptions.load();
+    await categories.markRead(null);
+    expect(markFeed).toHaveBeenCalledTimes(2);
+    expect(markFeed).toHaveBeenCalledWith(1);
+    expect(markFeed).toHaveBeenCalledWith(2);
+  });
+
+  it('reorder rolls back the in-memory order when the API rejects', async () => {
+    const { api } = await import('../api');
+    const { categories } = await import('../store');
+    vi.spyOn(api, 'listCategories').mockResolvedValueOnce([
+      { id: 1, name: 'A', unread: 0, created_at: 0, position: 0 },
+      { id: 2, name: 'B', unread: 0, created_at: 0, position: 1 },
+      { id: 3, name: 'C', unread: 0, created_at: 0, position: 2 },
+    ] as any);
+    await categories.load();
+
+    vi.spyOn(api, 'reorderCategories').mockRejectedValueOnce(new Error('boom'));
+
+    await expect(categories.reorder([3, 1, 2])).rejects.toThrow('boom');
+
+    const after = get(categories);
+    expect(after.map((c: any) => c.id)).toEqual([1, 2, 3]);
   });
 });

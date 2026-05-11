@@ -20,6 +20,7 @@ export type Category = {
   name: string;
   unread: number;
   created_at: number;
+  position: number;
 };
 
 export type DiscoverCandidate = {

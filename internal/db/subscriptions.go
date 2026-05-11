@@ -289,6 +289,25 @@ func ListSubscriptionsByCategory(ctx context.Context, d *sql.DB, categoryID, use
 // UpdateSubscriptionPatch sets extract + extract_selector + cookie +
 // basic_auth_user + basic_auth_pass on one row in a single atomic UPDATE.
 // Returns sql.ErrNoRows if no subscription with that id and userID exists.
+// MarkSubscriptionRead sets read = 1 on every unread entry under the given
+// subscription, scoped to userID. Silent no-op when the subscription does not
+// belong to userID. The handler layer is responsible for translating
+// "no matching subscription" into a 404 by calling GetSubscription first.
+func MarkSubscriptionRead(ctx context.Context, d *sql.DB, subscriptionID, userID int64) error {
+	_, err := d.ExecContext(ctx, `
+		UPDATE entries SET read = 1
+		WHERE read = 0
+		  AND subscription_id = ?
+		  AND subscription_id IN (
+		      SELECT id FROM subscriptions WHERE id = ? AND user_id = ?
+		  )
+	`, subscriptionID, subscriptionID, userID)
+	if err != nil {
+		return fmt.Errorf("mark subscription read %d: %w", subscriptionID, err)
+	}
+	return nil
+}
+
 func UpdateSubscriptionPatch(ctx context.Context, d *sql.DB, id, userID int64,
 	extract bool, selector, cookie, basicAuthUser, basicAuthPass string) error {
 	res, err := d.ExecContext(ctx, `

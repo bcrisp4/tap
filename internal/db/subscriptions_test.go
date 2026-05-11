@@ -345,6 +345,67 @@ func TestUpdateAfterPoll_PreservesUserSetTitle(t *testing.T) {
 	require.Equal(t, "My Custom Name", s.Title)
 }
 
+func TestMarkSubscriptionRead_ScopedToUser(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	u1 := insertTestUser(t, d, "msr-alice")
+	u2 := insertTestUser(t, d, "msr-bob")
+	// u1: subscription + unread entry.
+	sub1, err := InsertSubscription(context.Background(), d, NewSubscription{
+		UserID: u1, Title: "F1", FeedURL: "https://u1/feed", Created: time.Now().Unix(),
+	})
+	require.NoError(t, err)
+	_, err = d.ExecContext(context.Background(),
+		`INSERT INTO entries (subscription_id, hash, title, author, url, content, published_at, fetched_at, read, saved, user_id)
+		 VALUES (?, 'h1', 'E1', '', 'https://u1/1', '<p>x</p>', ?, ?, 0, 0, ?)`,
+		sub1, time.Now().Unix(), time.Now().Unix(), u1)
+	require.NoError(t, err)
+	// u2: subscription + unread entry.
+	sub2, err := InsertSubscription(context.Background(), d, NewSubscription{
+		UserID: u2, Title: "F2", FeedURL: "https://u2/feed", Created: time.Now().Unix(),
+	})
+	require.NoError(t, err)
+	_, err = d.ExecContext(context.Background(),
+		`INSERT INTO entries (subscription_id, hash, title, author, url, content, published_at, fetched_at, read, saved, user_id)
+		 VALUES (?, 'h2', 'E2', '', 'https://u2/1', '<p>x</p>', ?, ?, 0, 0, ?)`,
+		sub2, time.Now().Unix(), time.Now().Unix(), u2)
+	require.NoError(t, err)
+
+	require.NoError(t, MarkSubscriptionRead(context.Background(), d, sub1, u1))
+
+	var u1Read, u2Read int
+	require.NoError(t, d.QueryRowContext(context.Background(),
+		`SELECT read FROM entries WHERE subscription_id = ?`, sub1).Scan(&u1Read))
+	require.NoError(t, d.QueryRowContext(context.Background(),
+		`SELECT read FROM entries WHERE subscription_id = ?`, sub2).Scan(&u2Read))
+	require.Equal(t, 1, u1Read)
+	require.Equal(t, 0, u2Read)
+}
+
+func TestMarkSubscriptionRead_WrongUser_NoOp(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	u1 := insertTestUser(t, d, "msr-u1")
+	u2 := insertTestUser(t, d, "msr-u2")
+	sub, err := InsertSubscription(context.Background(), d, NewSubscription{
+		UserID: u1, Title: "F", FeedURL: "https://u1/feed", Created: time.Now().Unix(),
+	})
+	require.NoError(t, err)
+	_, err = d.ExecContext(context.Background(),
+		`INSERT INTO entries (subscription_id, hash, title, author, url, content, published_at, fetched_at, read, saved, user_id)
+		 VALUES (?, 'h', 'E', '', 'https://u1/1', '<p>x</p>', ?, ?, 0, 0, ?)`,
+		sub, time.Now().Unix(), time.Now().Unix(), u1)
+	require.NoError(t, err)
+
+	// u2 cannot mark u1's subscription read — must be a silent no-op.
+	require.NoError(t, MarkSubscriptionRead(context.Background(), d, sub, u2))
+
+	var n int
+	require.NoError(t, d.QueryRowContext(context.Background(),
+		`SELECT read FROM entries WHERE subscription_id = ?`, sub).Scan(&n))
+	require.Equal(t, 0, n, "u1's entry must remain unread when u2 tried to mark it read")
+}
+
 func TestListDuePollsCarriesCreds(t *testing.T) {
 	t.Parallel()
 	d, uid := newTestUserAndDB(t)

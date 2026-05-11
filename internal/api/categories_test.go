@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -118,4 +119,82 @@ func TestCategoriesAPI_MarkRead(t *testing.T) {
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/v1/categories/"+itoa(catID)+"/mark-read", nil))
 	require.Equal(t, http.StatusNoContent, w.Code)
+}
+
+func TestCategoriesAPI_DTOIncludesPosition(t *testing.T) {
+	t.Parallel()
+	mux, _ := newCatTestSetup(t)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/v1/categories",
+		strings.NewReader(`{"name":"Tech"}`)))
+	require.Equal(t, http.StatusCreated, w.Code)
+	var cat categoryDTO
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &cat))
+	require.Equal(t, int64(0), cat.Position)
+	// Ensure the JSON wire key is present.
+	require.Contains(t, w.Body.String(), `"position"`)
+}
+
+func TestCategoriesAPI_Reorder_Happy(t *testing.T) {
+	t.Parallel()
+	mux, _ := newCatTestSetup(t)
+
+	mkCat := func(name string) int64 {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/v1/categories",
+			strings.NewReader(`{"name":"`+name+`"}`)))
+		require.Equal(t, http.StatusCreated, w.Code)
+		var c categoryDTO
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &c))
+		return c.ID
+	}
+	a, b, c := mkCat("A"), mkCat("B"), mkCat("C")
+
+	body := fmt.Sprintf(`{"order":[%d,%d,%d]}`, c, a, b)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/v1/categories/reorder",
+		strings.NewReader(body)))
+	require.Equal(t, http.StatusNoContent, w.Code)
+
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/v1/categories", nil))
+	var listResp struct{ Data []categoryDTO `json:"data"` }
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &listResp))
+	require.Len(t, listResp.Data, 3)
+	require.Equal(t, c, listResp.Data[0].ID)
+	require.Equal(t, a, listResp.Data[1].ID)
+	require.Equal(t, b, listResp.Data[2].ID)
+}
+
+func TestCategoriesAPI_Reorder_Mismatch(t *testing.T) {
+	t.Parallel()
+	mux, _ := newCatTestSetup(t)
+
+	// Create one category.
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/v1/categories",
+		strings.NewReader(`{"name":"A"}`)))
+	require.Equal(t, http.StatusCreated, w.Code)
+	var c categoryDTO
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &c))
+
+	// Submit reorder with an extra (non-existent) ID.
+	body := fmt.Sprintf(`{"order":[%d,9999]}`, c.ID)
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/v1/categories/reorder",
+		strings.NewReader(body)))
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	var resp ErrorEnvelope
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Equal(t, ErrCodeReorderMismatch, resp.Error.Code)
+}
+
+func TestCategoriesAPI_Reorder_BadJSON(t *testing.T) {
+	t.Parallel()
+	mux, _ := newCatTestSetup(t)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/v1/categories/reorder",
+		strings.NewReader(`{not json`)))
+	require.Equal(t, http.StatusBadRequest, w.Code)
 }
