@@ -17,7 +17,7 @@
   <div class="empty">No recent events</div>
 {:else}
   <div class="table">
-    {#each events as e (e.time + e.event)}
+    {#each events as e, i (e.time + e.level + e.event + i)}
       <div class="err level-{e.level}">
         <span class="t" data-testid="err-time">{fmtTime(e.time)}</span>
         <span class="lvl lvl-{e.level}">{e.level}</span>

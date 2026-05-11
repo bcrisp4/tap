@@ -15,6 +15,7 @@ describe('getStatus', () => {
       recent_errors: [
         { time: '2026-05-11T10:42:14Z', level: 'error', event: 'phoronix.com 502', attrs: {} },
       ],
+      metrics_ok: true,
       feeds_total: 24,
       feeds_ok: 22,
       feeds_with_errors: 2,
@@ -26,6 +27,7 @@ describe('getStatus', () => {
     const s = await getStatus();
     expect(s.version).toBe('v1.4.2');
     expect(s.db).toBe('ok');
+    expect(s.metrics_ok).toBe(true);
     expect(s.feeds_total).toBe(24);
     expect(s.feeds_ok).toBe(22);
     expect(s.feeds_with_errors).toBe(2);

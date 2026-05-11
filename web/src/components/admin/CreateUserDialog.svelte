@@ -16,9 +16,11 @@
 
   function generatePassword(): string {
     const words = ['summer','deck','quiet','spark','river','amber','loop','shadow','calm','willow','aspen','ember'];
-    const pick = () => words[Math.floor(Math.random() * words.length)];
-    const n = Math.floor(1000 + Math.random() * 9000);
-    return `${pick()}-${pick()}-${pick()}-${n}`;
+    const arr = new Uint32Array(4);
+    crypto.getRandomValues(arr);
+    const pick = (i: number) => words[arr[i] % words.length];
+    const n = 1000 + (arr[3] % 9000);
+    return `${pick(0)}-${pick(1)}-${pick(2)}-${n}`;
   }
 
   function regenerate() { password = generatePassword(); }

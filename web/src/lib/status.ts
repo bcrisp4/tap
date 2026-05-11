@@ -13,6 +13,7 @@ export type StatusResponse = {
   polls_total: number;
   last_poll_at: number | null;
   recent_errors: StatusEvent[];
+  metrics_ok: boolean;
   feeds_total: number;
   feeds_ok: number;
   feeds_with_errors: number;

@@ -106,6 +106,32 @@ func TestStatus_RecentErrors(t *testing.T) {
 	assert.Equal(t, "poll.failure", body.RecentErrors[0]["event"])
 }
 
+func TestStatus_LevelNormalisedToLowercase(t *testing.T) {
+	buf := ring.NewBuffer(10)
+	// slog.LevelWarn.String() returns "WARN" (uppercase); handler must normalise.
+	buf.Add(ring.Event{Time: time.Now(), Level: "WARN", Event: "test"})
+	buf.Add(ring.Event{Time: time.Now(), Level: "ERROR", Event: "test2"})
+
+	deps := makeStatusDeps(t, buf)
+	adminUser := db.User{ID: 1, Username: "admin", Role: "admin"}
+	sess := db.Session{ID: 1, CSRFToken: "csrf"}
+	handler := withFakeAuth(t, adminUser, sess, statusHandler(deps))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	var body struct {
+		RecentErrors []map[string]any `json:"recent_errors"`
+	}
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
+	require.Len(t, body.RecentErrors, 2)
+	// Recent() returns newest-first; ERROR was added second so it is [0].
+	assert.Equal(t, "error", body.RecentErrors[0]["level"])
+	assert.Equal(t, "warn", body.RecentErrors[1]["level"])
+}
+
 func TestStatus_AdminMetricsFields(t *testing.T) {
 	d := newTestDB(t)
 	ctx := context.Background()
@@ -151,6 +177,7 @@ func TestStatus_AdminMetricsFields(t *testing.T) {
 
 	var body struct {
 		Version         string   `json:"version"`
+		MetricsOK       bool     `json:"metrics_ok"`
 		FeedsTotal      int      `json:"feeds_total"`
 		FeedsOK         int      `json:"feeds_ok"`
 		FeedsWithErrors int      `json:"feeds_with_errors"`
@@ -160,6 +187,7 @@ func TestStatus_AdminMetricsFields(t *testing.T) {
 	}
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
 	assert.NotEmpty(t, body.Version, "existing fields must still serialise")
+	assert.True(t, body.MetricsOK, "metrics_ok must be true when DB is healthy")
 	assert.Equal(t, 2, body.FeedsTotal)
 	assert.Equal(t, 1, body.FeedsOK)
 	assert.Equal(t, 1, body.FeedsWithErrors)

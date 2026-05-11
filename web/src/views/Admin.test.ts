@@ -29,7 +29,7 @@ vi.mock('../lib/status', () => ({
     version: 'v1', uptime_seconds: 0, db: 'ok',
     polls_active: 0, polls_total: 0, last_poll_at: null,
     recent_errors: [],
-    feeds_total: 0, feeds_ok: 0, feeds_with_errors: 0, offending_feeds: [],
+    metrics_ok: true, feeds_total: 0, feeds_ok: 0, feeds_with_errors: 0, offending_feeds: [],
     entries_total: 0, entries_24h: 0,
   }),
 }));
@@ -62,7 +62,7 @@ describe('Admin (admin role)', () => {
       recent_errors: [
         { time: '2026-05-11T10:42:14Z', level: 'error', event: 'phoronix.com 502', attrs: {} },
       ],
-      feeds_total: 12, feeds_ok: 11, feeds_with_errors: 1, offending_feeds: ['Phoronix'],
+      metrics_ok: true, feeds_total: 12, feeds_ok: 11, feeds_with_errors: 1, offending_feeds: ['Phoronix'],
       entries_total: 1500, entries_24h: 80,
     });
   });
@@ -109,7 +109,7 @@ describe('Admin (mutations)', () => {
       version: 'v1', uptime_seconds: 0, db: 'ok',
       polls_active: 0, polls_total: 0, last_poll_at: null,
       recent_errors: [],
-      feeds_total: 0, feeds_ok: 0, feeds_with_errors: 0, offending_feeds: [],
+      metrics_ok: true, feeds_total: 0, feeds_ok: 0, feeds_with_errors: 0, offending_feeds: [],
       entries_total: 0, entries_24h: 0,
     });
   });
@@ -189,7 +189,7 @@ describe('Admin (status polling)', () => {
       version: 'v1', uptime_seconds: 0, db: 'ok',
       polls_active: 0, polls_total: 0, last_poll_at: null,
       recent_errors: [],
-      feeds_total: 1, feeds_ok: 1, feeds_with_errors: 0, offending_feeds: [],
+      metrics_ok: true, feeds_total: 1, feeds_ok: 1, feeds_with_errors: 0, offending_feeds: [],
       entries_total: 0, entries_24h: 0,
     });
   });

@@ -20,6 +20,7 @@
   let users = $state<AdminUser[]>([]);
   let status = $state<StatusResponse | null>(null);
   let loadError = $state('');
+  let statusError = $state('');
   let pollInterval: ReturnType<typeof setInterval> | null = null;
   let nowSec = $state(Math.floor(Date.now() / 1000));
 
@@ -71,8 +72,9 @@
   async function loadStatus() {
     try {
       status = await getStatus();
+      statusError = '';
     } catch (e) {
-      if (!status) loadError = e instanceof Error ? e.message : 'status load failed';
+      statusError = e instanceof Error ? e.message : 'status load failed';
     }
   }
 
@@ -188,7 +190,7 @@
         <span>System status</span>
         <span class="rule" aria-hidden="true"></span>
       </div>
-      <SysGrid status={status} nextPollAt={null} now={nowSec} />
+      <SysGrid status={status} nextPollAt={null} now={nowSec} error={statusError} />
       <div class="errors-head">
         <span>Recent events</span>
         <span class="rule" aria-hidden="true"></span>

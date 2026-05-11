@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/bcrisp4/tap/internal/db"
@@ -19,6 +20,7 @@ type statusResponse struct {
 	PollsTotal      int64         `json:"polls_total"`
 	LastPollAt      *int64        `json:"last_poll_at"`
 	RecentErrors    []statusEvent `json:"recent_errors"`
+	MetricsOK       bool          `json:"metrics_ok"`
 	FeedsTotal      int           `json:"feeds_total"`
 	FeedsOK         int           `json:"feeds_ok"`
 	FeedsWithErrors int           `json:"feeds_with_errors"`
@@ -79,19 +81,20 @@ func statusHandler(deps statusDeps) http.Handler {
 		for i, e := range events {
 			recent[i] = statusEvent{
 				Time:  e.Time.UTC().Format(time.RFC3339),
-				Level: e.Level,
+				Level: strings.ToLower(e.Level),
 				Event: e.Event,
 				Attrs: e.Attrs,
 			}
 		}
 
-		// Aggregates — keep zero values on error; SPA renders "—" for zeros.
 		var metrics db.AdminMetrics
+		metricsOK := false
 		if deps.db != nil && dbStatus == "ok" {
 			if m, err := db.GetAdminMetrics(r.Context(), deps.db, time.Now()); err != nil {
 				slog.Warn("admin metrics aggregate failed", "err", err)
 			} else {
 				metrics = m
+				metricsOK = true
 			}
 		}
 		offending := metrics.OffendingFeeds
@@ -107,6 +110,7 @@ func statusHandler(deps statusDeps) http.Handler {
 			PollsTotal:      total,
 			LastPollAt:      lastAt,
 			RecentErrors:    recent,
+			MetricsOK:       metricsOK,
 			FeedsTotal:      metrics.FeedsTotal,
 			FeedsOK:         metrics.FeedsOK,
 			FeedsWithErrors: metrics.FeedsWithErrors,

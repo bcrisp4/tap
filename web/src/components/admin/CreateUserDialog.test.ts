@@ -10,13 +10,12 @@ describe('CreateUserDialog', () => {
     expect(screen.getByRole('button', { name: 'User' })).toHaveAttribute('aria-pressed', 'true');
   });
 
-  it('regenerate-password button replaces password value', async () => {
+  it('regenerate-password button produces a word-number passphrase', async () => {
     render(CreateUserDialog, { props: { open: true } });
     const pwInput = screen.getByLabelText(/initial password/i) as HTMLInputElement;
-    const original = pwInput.value;
     await fireEvent.click(screen.getByRole('button', { name: /regenerate password/i }));
-    expect(pwInput.value).not.toBe(original);
-    expect(pwInput.value.length).toBeGreaterThan(0);
+    // word-number format: three lowercase words separated by hyphens + a 4-digit number
+    expect(pwInput.value).toMatch(/^[a-z]+-[a-z]+-[a-z]+-\d{4}$/);
   });
 
   it('submit fires onSubmit with username, password, role', async () => {

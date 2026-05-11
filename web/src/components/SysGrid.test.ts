@@ -11,6 +11,7 @@ const baseStatus: StatusResponse = {
   polls_total: 0,
   last_poll_at: 1_700_000_000,
   recent_errors: [],
+  metrics_ok: true,
   feeds_total: 24,
   feeds_ok: 22,
   feeds_with_errors: 2,
@@ -68,6 +69,13 @@ describe('SysGrid', () => {
   it('null status renders skeleton dashes in all cells', () => {
     render(SysGrid, { props: { status: null, nextPollAt: null, now: 0 } });
     expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(4);
+  });
+
+  it('metrics_ok=false renders dashes in metric cells even when status present', () => {
+    render(SysGrid, { props: { status: { ...baseStatus, metrics_ok: false }, nextPollAt: null, now: 1_700_000_840 } });
+    expect(screen.getByTestId('sys-feeds-v')).toHaveTextContent('—');
+    expect(screen.getByTestId('sys-entries-v')).toHaveTextContent('—');
+    expect(screen.getByTestId('sys-errors-v')).toHaveTextContent('—');
   });
 
   it('error prop renders error message in place of grid', () => {

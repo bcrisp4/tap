@@ -41,28 +41,28 @@
     <div class="cell">
       <span class="l">FEEDS</span>
       <span class="v" data-testid="sys-feeds-v">
-        {#if !status}—{:else}{fmtCount(status.feeds_total)}{/if}
+        {#if !status || !status.metrics_ok}—{:else}{fmtCount(status.feeds_total)}{/if}
       </span>
       <span class="sub" data-testid="sys-feeds-sub">
-        {#if !status}—{:else}{fmtCount(status.feeds_ok)} ok{/if}
+        {#if !status || !status.metrics_ok}—{:else}{fmtCount(status.feeds_ok)} ok{/if}
       </span>
     </div>
     <div class="cell">
       <span class="l">ENTRIES</span>
       <span class="v" data-testid="sys-entries-v">
-        {#if !status}—{:else}{fmtCount(status.entries_total)}{/if}
+        {#if !status || !status.metrics_ok}—{:else}{fmtCount(status.entries_total)}{/if}
       </span>
       <span class="sub" data-testid="sys-entries-sub">
-        {#if !status}—{:else}{fmtCount(status.entries_24h)} 24h{/if}
+        {#if !status || !status.metrics_ok}—{:else}{fmtCount(status.entries_24h)} 24h{/if}
       </span>
     </div>
     <div class="cell">
       <span class="l">ERRORS</span>
-      <span class="v" class:warn={status && status.feeds_with_errors > 0} data-testid="sys-errors-v">
-        {#if !status}—{:else}{status.feeds_with_errors}{/if}
+      <span class="v" class:warn={status && status.metrics_ok && status.feeds_with_errors > 0} data-testid="sys-errors-v">
+        {#if !status || !status.metrics_ok}—{:else}{status.feeds_with_errors}{/if}
       </span>
       <span class="sub" data-testid="sys-errors-sub">
-        {#if !status}—
+        {#if !status || !status.metrics_ok}—
         {:else if status.offending_feeds.length === 0}all clear
         {:else}{status.offending_feeds[0]}{#if status.offending_feeds.length > 1} +{status.offending_feeds.length - 1}{/if}
         {/if}
