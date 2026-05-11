@@ -1,5 +1,6 @@
 <script lang="ts">
   import Sidebar from '../components/Sidebar.svelte';
+  import Security from './settings/Security.svelte';
   import { theme, font, density } from '../lib/preferences.svelte';
 
   type Section = 'appearance' | 'security';
@@ -57,10 +58,7 @@
             </div>
           </section>
         {:else}
-          <section aria-labelledby="security-heading">
-            <h2 id="security-heading" class="section-heading">Security</h2>
-            <p class="placeholder-text">Security settings will appear here.</p>
-          </section>
+          <Security />
         {/if}
       </div>
     </div>
@@ -93,8 +91,6 @@
     background: var(--bg-soft); border: 1px solid var(--rule);
     border-radius: 4px; padding: 4px 8px; cursor: pointer;
   }
-  .placeholder-text { font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
-
   :global(.session-table) { width: 100%; border-collapse: collapse; font-family: var(--sans); font-size: 12px; }
   :global(.session-table td) { padding: 8px 0; border-bottom: 1px solid var(--rule); color: var(--ink-2); }
   :global(.session-badge) { font-family: var(--mono); font-size: 10px; color: var(--accent); }
