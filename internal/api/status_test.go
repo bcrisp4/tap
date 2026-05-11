@@ -1,9 +1,11 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -103,4 +105,83 @@ func TestStatus_RecentErrors(t *testing.T) {
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
 	require.Len(t, body.RecentErrors, 1)
 	assert.Equal(t, "poll.failure", body.RecentErrors[0]["event"])
+}
+
+func TestStatus_AdminMetricsFields(t *testing.T) {
+	d := newTestDB(t)
+	ctx := context.Background()
+
+	// create admin user
+	adminUID, err := db.InsertUser(ctx, d, db.NewUser{Username: "admin1", PasswordHash: "x", Role: "admin", CreatedAt: 0})
+	require.NoError(t, err)
+
+	// seed 2 feeds: 1 OK, 1 erroring
+	feedAID, err := db.InsertSubscription(ctx, d, db.NewSubscription{UserID: adminUID, Title: "Feed A", FeedURL: "https://a.example/feed"})
+	require.NoError(t, err)
+	_, err = db.InsertSubscription(ctx, d, db.NewSubscription{UserID: adminUID, Title: "Phoronix", FeedURL: "https://phoronix.com/feed"})
+	require.NoError(t, err)
+	_, err = d.ExecContext(ctx, `UPDATE subscriptions SET error_count=5 WHERE title='Phoronix'`)
+	require.NoError(t, err)
+
+	// seed 1 entry fetched now
+	now := time.Now().Unix()
+	_, err = d.ExecContext(ctx,
+		`INSERT INTO entries (user_id, subscription_id, hash, title, author, url, content, published_at, fetched_at, extract_failed)
+		 VALUES (?, ?, 'hash-now', 'Fresh', '', '', '', ?, ?, 0)`,
+		adminUID, feedAID, now, now,
+	)
+	require.NoError(t, err)
+
+	buf := ring.NewBuffer(10)
+	deps := statusDeps{
+		db:        d,
+		buf:       buf,
+		startTime: time.Now().Add(-time.Hour),
+		version:   "test",
+	}
+
+	adminUser := db.User{ID: adminUID, Username: "admin1", Role: "admin"}
+	sess := db.Session{ID: 1, CSRFToken: "csrf"}
+	handler := withFakeAuth(t, adminUser, sess, statusHandler(deps))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+
+	var body struct {
+		Version         string   `json:"version"`
+		FeedsTotal      int      `json:"feeds_total"`
+		FeedsOK         int      `json:"feeds_ok"`
+		FeedsWithErrors int      `json:"feeds_with_errors"`
+		OffendingFeeds  []string `json:"offending_feeds"`
+		EntriesTotal    int      `json:"entries_total"`
+		Entries24h      int      `json:"entries_24h"`
+	}
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
+	assert.NotEmpty(t, body.Version, "existing fields must still serialise")
+	assert.Equal(t, 2, body.FeedsTotal)
+	assert.Equal(t, 1, body.FeedsOK)
+	assert.Equal(t, 1, body.FeedsWithErrors)
+	assert.Equal(t, []string{"Phoronix"}, body.OffendingFeeds)
+	assert.Equal(t, 1, body.EntriesTotal)
+	assert.Equal(t, 1, body.Entries24h)
+}
+
+func TestStatus_OffendingFeeds_AlwaysArray(t *testing.T) {
+	buf := ring.NewBuffer(10)
+	deps := makeStatusDeps(t, buf)
+
+	adminUser := db.User{ID: 1, Username: "admin1", Role: "admin"}
+	sess := db.Session{ID: 1, CSRFToken: "csrf"}
+
+	handler := withFakeAuth(t, adminUser, sess, statusHandler(deps))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	assert.True(t, strings.Contains(rr.Body.String(), `"offending_feeds":[]`),
+		"offending_feeds must serialise as [] not null, got: %s", rr.Body.String())
 }
