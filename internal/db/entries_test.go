@@ -133,6 +133,39 @@ func TestEntry_CompositeCursorPaginationDoesNotDropEntries(t *testing.T) {
 
 func ptrBool(b bool) *bool { return &b }
 
+func TestListEntries_SavedOnly(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	ctx := context.Background()
+	subID, uid := seedSub(t, d)
+
+	// Insert two entries via direct SQL so we can control saved state.
+	var e1ID int64
+	res, err := d.ExecContext(ctx, `
+		INSERT INTO entries (user_id, subscription_id, hash, title, url, content, published_at, fetched_at)
+		VALUES (?, ?, 'h-saved', 'saved one', 'https://x/1', 'c', 100, 0)
+	`, uid, subID)
+	require.NoError(t, err)
+	e1ID, err = res.LastInsertId()
+	require.NoError(t, err)
+
+	_, err = d.ExecContext(ctx, `
+		INSERT INTO entries (user_id, subscription_id, hash, title, url, content, published_at, fetched_at)
+		VALUES (?, ?, 'h-unsaved', 'unsaved', 'https://x/2', 'c', 90, 0)
+	`, uid, subID)
+	require.NoError(t, err)
+
+	// Mark first entry saved.
+	require.NoError(t, UpdateEntry(ctx, d, e1ID, uid, EntryUpdate{Saved: ptrBool(true)}))
+
+	out, _, _, err := ListEntries(ctx, d, ListEntriesParams{
+		UserID: uid, SavedOnly: true, Limit: 50,
+	})
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	require.Equal(t, "saved one", out[0].Title)
+}
+
 func TestUpdateAfterPoll_ComputesVelocityAndNextPoll(t *testing.T) {
 	t.Parallel()
 	d, uid := newTestUserAndDB(t)
