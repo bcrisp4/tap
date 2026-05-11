@@ -111,6 +111,7 @@ export const api = {
   // --- Entries ---
   listEntries: (params: {
     unread?: boolean;
+    saved?: boolean;
     feed?: number;
     category?: number;
     limit?: number;
@@ -118,6 +119,7 @@ export const api = {
   } = {}) => {
     const qs = new URLSearchParams();
     if (params.unread)    qs.set('unread', '1');
+    if (params.saved)     qs.set('saved', '1');
     if (params.feed)      qs.set('feed', String(params.feed));
     if (params.category)  qs.set('category', String(params.category));
     if (params.limit)     qs.set('limit', String(params.limit));
