@@ -324,4 +324,12 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ url }),
     }),
+
+  // Wrapper around /healthz for SPA-side display only. Public endpoint;
+  // does not flow through request() because /healthz lives outside /api/v1.
+  health: async (): Promise<{ polls_active: number; last_poll_at?: number }> => {
+    const r = await fetch('/healthz');
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    return r.json();
+  },
 };
