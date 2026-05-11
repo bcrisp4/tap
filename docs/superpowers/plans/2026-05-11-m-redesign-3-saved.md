@@ -1,0 +1,1363 @@
+# M-Redesign-3 — Saved Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Rebuild `web/src/views/Saved.svelte` on the new `.ts-shell` simple-centred layout from M-Redesign-1. Replace the current `Sidebar + TopBar + EntryRow` layout with the design-spec `.ts-saved-toolbar` + flat chronological `.ts-saved-list`, the `.ts-saved-empty` state, and a mobile variant with swipe-to-unsave / swipe-to-toggle-read gestures.
+
+**Architecture:** Pure SPA milestone, zero backend change. The view reuses primitives shipped by M-Redesign-1 (the `.ts-shell` chrome, `EmptyState`, `EntryRow` design-system foundations, `MobileTopBar`, the `is-mobile` branching). The list is flat — no day-band grouping, no per-feed grouping — per umbrella spec §5 row M3 and Brand spec §6.3. A pinned count banner (the `.ts-saved-toolbar`) sits at the top of the list. Mobile rows ship a separate `.ts-saved-m-row` component that wraps each row in a swipe-attached card with two reveal layers (left: Mark read/unread; right: Unsave, destructive). The swipe attachment reuses the existing pure recogniser in `web/src/lib/swipe.ts`; M-Redesign-3 does not modify that file. Optimistic write-through with rollback already lives in `entries.toggleSaved` / `entries.toggleRead` in `web/src/lib/store.ts` — the view wires actions to those store methods directly.
+
+**Tech Stack:** Svelte 5 (runes, `{@attach}` directive, `<svelte:window>`), TypeScript, Vite, Vitest + `@testing-library/svelte`. No new dependencies.
+
+**Depends on M-Redesign-1 (Foundations).** This plan assumes M1 has already shipped:
+
+- The `.ts-shell` simple-centred desktop chrome (`AppShell.svelte`, `TopTabs.svelte`, `AccountAvatar.svelte`, `StatusFoot.svelte`).
+- The mobile chrome (`MobileTopBar.svelte`, `MobileTabBar.svelte`, `MobileMoreSheet.svelte`) and the `isMobile` context branch in `App.svelte`.
+- The `EmptyState.svelte` primitive (accent-dot + serif title + sans subtitle + optional CTA), `KbdChip.svelte`, `FeedAvatar.svelte` (restyled).
+- The token + global-stylesheet structure under `web/src/styles/`.
+- Router awareness of the `/saved` route name (already routed in M1; M3 only rewrites the view body).
+
+If any of those primitives is missing or renamed, fix forward in M1's branch and rebase this plan — do not work around it here. (See "Risks" §3.)
+
+---
+
+## Skills and tools for implementers
+
+Always-on:
+
+- **`superpowers:test-driven-development`** — INVOKE AT THE START of every behaviour-bearing task. Mandated by `CLAUDE.md` ("TDD is non-negotiable"). Pure CSS / markup-only steps (Task 1's component scaffolding, Task 5's empty-state markup) are exempt; everything else (load → list/error/empty branching, sort sentinel, optimistic write through `entries.toggleSaved`, mobile swipe-attached actions, mobile reveal class transitions, keyboard `S` toggle) is in scope.
+- **`superpowers:verification-before-completion`** — before marking a task done, run the exact verification command in the task's final step and confirm output matches expected output. Evidence before assertions.
+
+Reach for as needed:
+
+- **`svelte-runes`** — `$state` for `loading` / `error` / `items` / `swipeId` in the view, `$derived` for `unread` count, `$props` on every component, `$effect` for the mount-time load. No `.svelte.ts` stores in M3 (the new state is view-local, not shared).
+- **`svelte-styling`** — CSS extraction strategy follows umbrella spec §4. Every `ui_design/styles.css` `.ts-saved-*` rule lands in a scoped `<style>` block on the component that owns the selector; the design class is renamed (`.ts-saved-row` → `.row` inside `SavedRow.svelte`) where renaming improves locality. Cross-component selectors use `:global()` on the child class. Tokens (`var(--accent)`, `var(--rule)`, etc.) are referenced verbatim.
+- **`svelte-template-directives`** — `{@attach swipe(...)}` on `.ts-saved-m-row` (mobile only). `<svelte:window onkeydown>` is owned by `App.svelte` per M-Redesign-1; this view binds via the existing `keyDispatch` context — do not add a second window-level listener.
+- **`svelte-components`** — semantic HTML: each row is a `<button>` (the whole row is clickable to open the entry), the action buttons stop propagation. Empty state is `<section>`, list is `<ul role="list">` with `<li>` items wrapping the row button.
+- **`tdd`** — only invoke if `superpowers:test-driven-development` is unavailable; same red/green/refactor loop.
+
+MCP tools:
+
+- **`context7` (`mcp__plugin_context7_context7__query-docs`)** — usually not needed; reach for it only if `{@attach}` semantics, Svelte 5 `$state` array reactivity, or `@testing-library/svelte` user-event behaviour are uncertain. No new third-party swipe library — `web/src/lib/swipe.ts` is the only gesture primitive.
+
+---
+
+## File structure
+
+| Path | Action | Responsibility |
+|---|---|---|
+| `web/src/views/Saved.svelte` | **rewrite** | Composes the page. Owns: `entries.load(false)` + filter to `saved`, loading / error / empty / list state branching, desktop-vs-mobile branch, count banner, keyboard `S` handler binding via `keyDispatch` context. |
+| `web/src/views/__tests__/Saved.test.ts` | **create** | Load → list, load → error, load → empty, optimistic unsave from row, mobile swipe-left unsave, mobile swipe-right toggle-read. |
+| `web/src/components/SavedToolbar.svelte` | **create** | The pinned `.ts-saved-toolbar` count banner with serif "Saved" eyebrow + mono count + `Find /` kbd hint. No sort menu in M3 (out of scope; see §"Out of scope"). |
+| `web/src/components/__tests__/SavedToolbar.test.ts` | **create** | Renders correct count for 0 / 1 / N (verifies singular/plural). |
+| `web/src/components/SavedRow.svelte` | **create** | Desktop row primitive — `.ts-saved-row` body (eyebrow, serif title, byline, summary) + revealed `.ts-saved-actions` row (Open, Mark read/unread, Unsave). Reuses `FeedAvatar.svelte` from M1. |
+| `web/src/components/__tests__/SavedRow.test.ts` | **create** | Renders read / unread variants; click-row navigates; action buttons fire correct callback and stop propagation; correct icon swap for Mark read vs Mark unread. |
+| `web/src/components/SavedMobileRow.svelte` | **create** | Mobile row primitive — wraps `.ts-saved-m-card` in two reveal layers (`.ts-saved-m-rev-left`, `.ts-saved-m-rev-right`) plus a `{@attach swipe(...)}` directive that toggles `is-swipe-left` / `is-swipe-right` classes and, on release past threshold, fires the destructive / read-toggle action. |
+| `web/src/components/__tests__/SavedMobileRow.test.ts` | **create** | Swipe-left fires `onUnsave`; swipe-right fires `onToggleRead`; reveal classes apply mid-swipe (visual feedback); release past threshold commits the action; release before threshold rolls back the class. |
+| `web/src/views/Saved.svelte` `<style>` block | **CSS port** | Owns view-level layout: `.list` wrapper around `SavedRow`s, optional vertical spacing under the toolbar. References `ui_design/styles.css` lines 4920–5113 (desktop) and 5115–5250 (mobile) for visual truth; selectors are renamed inside scoped styles. |
+| `web/src/components/SavedToolbar.svelte` `<style>` block | **CSS port** | `.ts-saved-toolbar` family — lines 4796–4843 in `ui_design/styles.css`. |
+| `web/src/components/SavedRow.svelte` `<style>` block | **CSS port** | `.ts-saved-row` + `.ts-saved-rail` + `.ts-saved-body` + `.ts-saved-eyebrow` + `.ts-saved-title` + `.ts-saved-byline` + `.ts-saved-summary` + `.ts-saved-actions` + `.ts-saved-action` — lines 4920–5057 in `ui_design/styles.css`. |
+| `web/src/components/SavedMobileRow.svelte` `<style>` block | **CSS port** | `.ts-saved-m-row` family — lines 5137–5250 in `ui_design/styles.css`. |
+| `web/src/components/EmptyState.svelte` | (no change) | M1 ships this. M3 calls it from `Saved.svelte` with prop overrides: title "Nothing saved yet", subtitle "Press <kbd>S</kbd> on any entry to keep it here.", accent dot. If M1's `EmptyState` is too constrained for the keyboard-chip in the subtitle, M3 owns a small inline empty state instead — see Task 5. |
+
+### Out of scope for M3 (explicit)
+
+- **Day-band groupings** ("Today / This week / Earlier"). The JSX mockup `ui_design/tap-saved.jsx` groups by `savedBucket`, but Brand spec §6.3 says "A flat chronological list of every entry where `saved === true`. No grouping by feed." We follow the spec, not the JSX. The grouping is also a non-goal in umbrella spec §5 row M3 ("flat chronological list"). If the user later wants groupings, they can be added trivially using M2's day-band bucketing helper.
+- **Sort menu** (`Recently saved`, `Oldest first`, `Title A–Z`, `Source`). The JSX mockup ships one; the Brand spec doesn't. Default ordering is whatever the existing `GET /api/v1/entries?saved=1` returns (newest first by `published_at`). M3 ships sort as a future iteration if needed.
+- **Per-row "saved Xd ago" eyebrow.** The DB does not currently store `saved_at`. The eyebrow line in `SavedRow.svelte` shows the publication time ("published Apr 26, 2026") and the read status only. Adding `saved_at` is a backend change deferred to a separate milestone.
+- **Author byline.** The JSX has a distinct author field; `EntryListItem` already exposes `author`. Use `author` when present, otherwise omit the field; do not invent placeholder data.
+- **Keyboard navigation in the saved list (`J`/`K`).** M-Redesign-2 owns the `selectedId` + arrow-nav pattern. M3's only keyboard hook is `S` on a hovered/focused row to unsave (binds through the existing `keyDispatch.onToggleSaved` set by M2 if M2 has shipped; otherwise, M3 wires its own `onToggleSaved` against the currently focused row).
+- **Backend API changes.** None. `GET /api/v1/entries?saved=1` already exists; `PATCH /api/v1/entries/:id` with `{saved: false}` already exists.
+
+---
+
+## Phase A — Component primitives
+
+### Task 1: Scaffold `SavedToolbar.svelte` with TDD
+
+**Skills:** `superpowers:test-driven-development`, `svelte-runes`, `svelte-styling`.
+
+**Files:**
+- Create: `web/src/components/SavedToolbar.svelte`
+- Create: `web/src/components/__tests__/SavedToolbar.test.ts`
+
+- [ ] **Step 1: Write the failing test**
+
+Replace the contents of `web/src/components/__tests__/SavedToolbar.test.ts` with:
+
+```typescript
+import { render, screen } from '@testing-library/svelte';
+import { describe, it, expect } from 'vitest';
+import SavedToolbar from '../SavedToolbar.svelte';
+
+describe('SavedToolbar', () => {
+  it('renders zero count as "0 entries"', () => {
+    render(SavedToolbar, { props: { count: 0 } });
+    expect(screen.getByText(/entries/i)).toBeInTheDocument();
+    expect(screen.getByText('0')).toBeInTheDocument();
+  });
+
+  it('renders singular for 1 ("1 entry")', () => {
+    render(SavedToolbar, { props: { count: 1 } });
+    expect(screen.getByText(/^entry$/i)).toBeInTheDocument();
+    expect(screen.getByText('1')).toBeInTheDocument();
+  });
+
+  it('renders plural for N > 1 ("12 entries")', () => {
+    render(SavedToolbar, { props: { count: 12 } });
+    expect(screen.getByText(/entries/i)).toBeInTheDocument();
+    expect(screen.getByText('12')).toBeInTheDocument();
+  });
+
+  it('renders the find hint with the / kbd chip', () => {
+    render(SavedToolbar, { props: { count: 3 } });
+    const find = screen.getByText(/find/i);
+    expect(find).toBeInTheDocument();
+    expect(find.textContent).toContain('/');
+  });
+
+  it('renders the "Saved" serif eyebrow', () => {
+    render(SavedToolbar, { props: { count: 3 } });
+    expect(screen.getByText('Saved')).toBeInTheDocument();
+  });
+});
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+```bash
+pnpm --dir web test -- src/components/__tests__/SavedToolbar.test.ts
+```
+
+Expected: FAIL with `Failed to resolve import "../SavedToolbar.svelte"` (the file does not yet exist).
+
+- [ ] **Step 3: Write the minimal component**
+
+Replace the contents of `web/src/components/SavedToolbar.svelte` with:
+
+```svelte
+<script lang="ts">
+  type Props = { count: number };
+  let { count }: Props = $props();
+  const word = count === 1 ? 'entry' : 'entries';
+</script>
+
+<div class="toolbar" role="heading" aria-level="1">
+  <div class="left">
+    <span class="eyebrow">Saved</span>
+    <span class="count"><b>{count}</b> {word}</span>
+  </div>
+  <div class="right">
+    <span class="find">Find <kbd class="kbd">/</kbd></span>
+  </div>
+</div>
+
+<style>
+  .toolbar {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 16px;
+    padding: 20px 2px 14px;
+    border-bottom: 1px solid var(--rule);
+    margin-bottom: 4px;
+  }
+  .left { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  .eyebrow {
+    font-family: var(--serif); font-size: 26px; font-weight: 600;
+    letter-spacing: -0.02em; color: var(--ink);
+  }
+  .count {
+    font-family: var(--mono); font-size: 11px;
+    color: var(--ink-3); letter-spacing: 0.04em;
+  }
+  .count :global(b) { color: var(--ink); font-weight: 500; }
+  .right { display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
+  .find {
+    font-family: var(--mono); font-size: 10px;
+    letter-spacing: 0.06em; color: var(--ink-3); text-transform: uppercase;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .kbd {
+    font-family: var(--mono); font-size: 10.5px;
+    padding: 1px 5px; border: 1px solid var(--rule);
+    border-bottom-width: 2px; border-radius: 3px;
+    background: var(--surface); color: var(--ink-2);
+  }
+</style>
+```
+
+(The `<b>` element inside `.count` is selected via `:global(b)` because Svelte's CSS scoper drops selectors that target elements rendered inside child interpolations — `<b>{count}</b>` here. The `kbd` class is a local one-off so M3 does not couple to M1's `KbdChip.svelte` if M1 renames it; if M1 actually exports `KbdChip`, swap the local `<kbd>` for `<KbdChip>` in Task 8.)
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+```bash
+pnpm --dir web test -- src/components/__tests__/SavedToolbar.test.ts
+```
+
+Expected: PASS, all 5 tests.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add web/src/components/SavedToolbar.svelte web/src/components/__tests__/SavedToolbar.test.ts
+git commit -m "M-Redesign-3: scaffold SavedToolbar count banner with TDD"
+```
+
+---
+
+### Task 2: Scaffold `SavedRow.svelte` (desktop) with TDD
+
+**Skills:** `superpowers:test-driven-development`, `svelte-runes`, `svelte-components`.
+
+**Files:**
+- Create: `web/src/components/SavedRow.svelte`
+- Create: `web/src/components/__tests__/SavedRow.test.ts`
+
+- [ ] **Step 1: Write the failing test**
+
+Replace the contents of `web/src/components/__tests__/SavedRow.test.ts` with:
+
+```typescript
+import { render, screen, fireEvent } from '@testing-library/svelte';
+import { describe, it, expect, vi } from 'vitest';
+import SavedRow from '../SavedRow.svelte';
+import type { EntryListItem, Subscription } from '../../lib/types';
+
+const entry: EntryListItem = {
+  id: 7, subscription_id: 3, title: 'Reasons bugs feel impossible',
+  url: 'https://jvns.ca/x', author: 'Julia Evans',
+  published_at: Math.floor(Date.now() / 1000) - 60 * 32,
+  read: false, saved: true,
+} as EntryListItem;
+
+const feed: Subscription = {
+  id: 3, feed_url: 'https://jvns.ca/feed.xml', title: 'Julia Evans',
+} as Subscription;
+
+describe('SavedRow', () => {
+  it('renders the title, source name, and author', () => {
+    render(SavedRow, { props: { entry, feed } });
+    expect(screen.getByText('Reasons bugs feel impossible')).toBeInTheDocument();
+    expect(screen.getByText('Julia Evans')).toBeInTheDocument();
+  });
+
+  it('fires onOpen when the row body is clicked', async () => {
+    const onOpen = vi.fn();
+    render(SavedRow, { props: { entry, feed, onOpen } });
+    await fireEvent.click(screen.getByText('Reasons bugs feel impossible'));
+    expect(onOpen).toHaveBeenCalledOnce();
+  });
+
+  it('fires onToggleRead and does NOT fire onOpen when Mark read is clicked', async () => {
+    const onOpen = vi.fn(), onToggleRead = vi.fn();
+    render(SavedRow, { props: { entry, feed, onOpen, onToggleRead } });
+    await fireEvent.click(screen.getByRole('button', { name: /mark read/i }));
+    expect(onToggleRead).toHaveBeenCalledOnce();
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it('fires onUnsave and does NOT fire onOpen when Unsave is clicked', async () => {
+    const onOpen = vi.fn(), onUnsave = vi.fn();
+    render(SavedRow, { props: { entry, feed, onOpen, onUnsave } });
+    await fireEvent.click(screen.getByRole('button', { name: /unsave/i }));
+    expect(onUnsave).toHaveBeenCalledOnce();
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it('renders "Mark unread" for a read entry', () => {
+    render(SavedRow, { props: { entry: { ...entry, read: true }, feed } });
+    expect(screen.getByRole('button', { name: /mark unread/i })).toBeInTheDocument();
+  });
+
+  it('applies is-read class when entry.read is true', () => {
+    const { container } = render(SavedRow, { props: { entry: { ...entry, read: true }, feed } });
+    expect(container.querySelector('.row')?.classList.contains('is-read')).toBe(true);
+  });
+});
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+```bash
+pnpm --dir web test -- src/components/__tests__/SavedRow.test.ts
+```
+
+Expected: FAIL with `Failed to resolve import "../SavedRow.svelte"`.
+
+- [ ] **Step 3: Write the minimal component**
+
+Replace the contents of `web/src/components/SavedRow.svelte` with:
+
+```svelte
+<script lang="ts">
+  import FeedAvatar from './FeedAvatar.svelte';
+  import type { EntryListItem, Subscription } from '../lib/types';
+
+  type Props = {
+    entry: EntryListItem;
+    feed: Subscription | undefined;
+    onOpen?: () => void;
+    onToggleRead?: () => void;
+    onUnsave?: () => void;
+  };
+  let { entry, feed, onOpen, onToggleRead, onUnsave }: Props = $props();
+
+  function publishedLabel(ts: number): string {
+    return new Date(ts * 1000).toLocaleDateString(undefined, {
+      month: 'short', day: 'numeric', year: 'numeric',
+    });
+  }
+
+  function handleAction(ev: Event, fn?: () => void) {
+    ev.stopPropagation();
+    fn?.();
+  }
+</script>
+
+<article
+  class="row"
+  class:is-read={entry.read}
+  role="button"
+  tabindex="0"
+  onclick={() => onOpen?.()}
+  onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen?.(); } }}
+>
+  <span class="rail" aria-hidden="true">
+    <span class="rail-mark">
+      <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+        <path d="M4 2.5h8v11l-4-3-4 3z" />
+      </svg>
+    </span>
+  </span>
+
+  <div class="body">
+    <div class="eyebrow">
+      <span>published {publishedLabel(entry.published_at)}</span>
+      {#if entry.read}
+        <span class="sep" aria-hidden="true">·</span>
+        <span class="status-read">read</span>
+      {/if}
+    </div>
+
+    <h3 class="title">{entry.title}</h3>
+
+    <div class="byline">
+      {#if feed}
+        <FeedAvatar feedURL={feed.feed_url} size={11} radius={2} />
+        <span class="source">{feed.title}</span>
+      {/if}
+      {#if entry.author}
+        <span class="sep" aria-hidden="true">·</span>
+        <span class="author">{entry.author}</span>
+      {/if}
+    </div>
+
+    {#if entry.summary}
+      <p class="summary">{entry.summary}</p>
+    {/if}
+  </div>
+
+  <div class="actions" role="group" aria-label="Saved entry actions">
+    <button
+      type="button" class="action"
+      onclick={(e) => handleAction(e, onOpen)}
+      aria-label="Open entry"
+    >
+      <span>Open</span>
+    </button>
+    <button
+      type="button" class="action"
+      onclick={(e) => handleAction(e, onToggleRead)}
+      aria-label={entry.read ? 'Mark unread' : 'Mark read'}
+    >
+      <span>{entry.read ? 'Mark unread' : 'Mark read'}</span>
+    </button>
+    <button
+      type="button" class="action is-destructive"
+      onclick={(e) => handleAction(e, onUnsave)}
+      aria-label="Unsave"
+    >
+      <span>Unsave</span>
+    </button>
+  </div>
+</article>
+
+<style>
+  .row {
+    position: relative;
+    display: grid;
+    grid-template-columns: 20px 1fr;
+    gap: 14px;
+    padding: 18px 2px 18px 0;
+    border: 0;
+    border-bottom: 1px solid var(--rule);
+    background: transparent;
+    width: 100%;
+    text-align: left;
+    cursor: pointer;
+    transition: background 100ms ease;
+  }
+  .row:hover { background: var(--bg-soft); }
+  .row:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .row:last-child { border-bottom: 0; }
+
+  .rail {
+    position: relative;
+    display: flex;
+    justify-content: center;
+    padding-top: 4px;
+  }
+  .rail-mark {
+    width: 18px; height: 18px;
+    display: inline-flex; align-items: center; justify-content: center;
+    color: var(--accent);
+  }
+  .row.is-read .rail-mark { color: var(--ink-4); }
+
+  .body { min-width: 0; }
+
+  .eyebrow {
+    display: flex; align-items: center; gap: 8px;
+    font-family: var(--mono); font-size: 10px;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--ink-3);
+    margin-bottom: 6px;
+  }
+  .status-read { color: var(--ink-3); }
+  .row.is-read .status-read { color: var(--accent); }
+
+  .title {
+    font-family: var(--serif); font-size: 20px; line-height: 1.25;
+    font-weight: 500; color: var(--ink);
+    margin: 0 0 6px;
+    text-wrap: pretty;
+    letter-spacing: -0.005em;
+  }
+  .row.is-read .title { color: var(--ink-2); font-weight: 400; }
+
+  .byline {
+    display: flex; align-items: center; gap: 8px;
+    font-family: var(--sans); font-size: 12.5px;
+    color: var(--ink-2);
+    margin-bottom: 6px;
+    flex-wrap: wrap;
+  }
+  .source { color: var(--ink); font-weight: 500; }
+  .row.is-read .source { color: var(--ink-2); font-weight: 400; }
+  .author { color: var(--ink-2); font-style: italic; }
+
+  .summary {
+    font-family: var(--serif); font-size: 14.5px; line-height: 1.55;
+    color: var(--ink-2);
+    margin: 4px 0 0;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-wrap: pretty;
+  }
+  .row.is-read .summary { color: var(--ink-3); }
+
+  .sep::before {
+    content: ""; display: inline-block;
+    width: 3px; height: 3px; border-radius: 50%;
+    background: var(--ink-4);
+    vertical-align: middle;
+  }
+
+  .actions {
+    grid-column: 1 / -1;
+    display: flex;
+    gap: 4px;
+    margin-top: 4px;
+    margin-left: 34px;
+    max-height: 0;
+    opacity: 0;
+    overflow: hidden;
+    transition: max-height 160ms ease, opacity 120ms ease, margin-top 160ms ease;
+  }
+  .row:hover .actions,
+  .row:focus-within .actions {
+    max-height: 50px;
+    opacity: 1;
+    margin-top: 8px;
+  }
+  .action {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 6px 10px;
+    font-family: var(--sans); font-size: 12px; font-weight: 500;
+    color: var(--ink-2);
+    background: transparent;
+    border: 0;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: background 100ms ease, color 100ms ease;
+  }
+  .action:hover { color: var(--ink); background: var(--bg); }
+  .action.is-destructive:hover { color: var(--accent); }
+</style>
+```
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+```bash
+pnpm --dir web test -- src/components/__tests__/SavedRow.test.ts
+```
+
+Expected: PASS, all 6 tests.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add web/src/components/SavedRow.svelte web/src/components/__tests__/SavedRow.test.ts
+git commit -m "M-Redesign-3: SavedRow desktop primitive with action buttons"
+```
+
+---
+
+### Task 3: Scaffold `SavedMobileRow.svelte` with swipe TDD
+
+**Skills:** `superpowers:test-driven-development`, `svelte-template-directives`, `svelte-runes`.
+
+**Files:**
+- Create: `web/src/components/SavedMobileRow.svelte`
+- Create: `web/src/components/__tests__/SavedMobileRow.test.ts`
+
+- [ ] **Step 1: Write the failing test**
+
+Replace the contents of `web/src/components/__tests__/SavedMobileRow.test.ts` with:
+
+```typescript
+import { render, fireEvent } from '@testing-library/svelte';
+import { describe, it, expect, vi } from 'vitest';
+import SavedMobileRow from '../SavedMobileRow.svelte';
+import type { EntryListItem, Subscription } from '../../lib/types';
+
+const entry: EntryListItem = {
+  id: 7, subscription_id: 3, title: 'A mobile saved entry',
+  url: 'https://jvns.ca/x', author: 'Julia Evans',
+  published_at: Math.floor(Date.now() / 1000) - 60 * 60 * 24,
+  read: false, saved: true, summary: 'Summary text',
+} as EntryListItem;
+
+const feed: Subscription = {
+  id: 3, feed_url: 'https://jvns.ca/feed.xml', title: 'Julia Evans',
+} as Subscription;
+
+function touchEvent(name: string, x: number, y: number): TouchEvent {
+  // Vitest happy-dom does not implement TouchEvent fully; mock the surface.
+  const ev = new Event(name, { bubbles: true }) as unknown as TouchEvent;
+  Object.defineProperty(ev, 'touches', { value: [{ clientX: x, clientY: y }] });
+  Object.defineProperty(ev, 'changedTouches', { value: [{ clientX: x, clientY: y }] });
+  return ev;
+}
+
+describe('SavedMobileRow', () => {
+  it('fires onUnsave when the user swipes left past threshold', async () => {
+    const onUnsave = vi.fn();
+    const { container } = render(SavedMobileRow, {
+      props: { entry, feed, onUnsave, onToggleRead: vi.fn() },
+    });
+    const row = container.querySelector('.row')!;
+    await fireEvent(row, touchEvent('touchstart', 200, 100));
+    await fireEvent(row, touchEvent('touchend', 100, 100)); // dx = -100 (left)
+    expect(onUnsave).toHaveBeenCalledOnce();
+  });
+
+  it('fires onToggleRead when the user swipes right past threshold', async () => {
+    const onToggleRead = vi.fn();
+    const { container } = render(SavedMobileRow, {
+      props: { entry, feed, onUnsave: vi.fn(), onToggleRead },
+    });
+    const row = container.querySelector('.row')!;
+    await fireEvent(row, touchEvent('touchstart', 100, 100));
+    await fireEvent(row, touchEvent('touchend', 200, 100)); // dx = +100 (right)
+    expect(onToggleRead).toHaveBeenCalledOnce();
+  });
+
+  it('does not fire callbacks for sub-threshold swipes', async () => {
+    const onUnsave = vi.fn(), onToggleRead = vi.fn();
+    const { container } = render(SavedMobileRow, {
+      props: { entry, feed, onUnsave, onToggleRead },
+    });
+    const row = container.querySelector('.row')!;
+    await fireEvent(row, touchEvent('touchstart', 200, 100));
+    await fireEvent(row, touchEvent('touchend', 195, 100)); // dx = -5, under threshold
+    expect(onUnsave).not.toHaveBeenCalled();
+    expect(onToggleRead).not.toHaveBeenCalled();
+  });
+
+  it('renders the title and source', () => {
+    const { getByText } = render(SavedMobileRow, {
+      props: { entry, feed, onUnsave: vi.fn(), onToggleRead: vi.fn() },
+    });
+    expect(getByText('A mobile saved entry')).toBeInTheDocument();
+    expect(getByText('Julia Evans')).toBeInTheDocument();
+  });
+});
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+```bash
+pnpm --dir web test -- src/components/__tests__/SavedMobileRow.test.ts
+```
+
+Expected: FAIL with `Failed to resolve import "../SavedMobileRow.svelte"`.
+
+- [ ] **Step 3: Write the minimal component**
+
+Replace the contents of `web/src/components/SavedMobileRow.svelte` with:
+
+```svelte
+<script lang="ts">
+  import FeedAvatar from './FeedAvatar.svelte';
+  import { swipe } from '../lib/swipe';
+  import type { EntryListItem, Subscription } from '../lib/types';
+
+  type Props = {
+    entry: EntryListItem;
+    feed: Subscription | undefined;
+    onOpen?: () => void;
+    onToggleRead?: () => void;
+    onUnsave?: () => void;
+  };
+  let { entry, feed, onOpen, onToggleRead, onUnsave }: Props = $props();
+
+  function publishedLabel(ts: number): string {
+    return new Date(ts * 1000).toLocaleDateString(undefined, {
+      month: 'short', day: 'numeric', year: 'numeric',
+    });
+  }
+</script>
+
+<div
+  class="row"
+  class:is-read={entry.read}
+  {@attach swipe({
+    onSwipeLeft: () => onUnsave?.(),
+    onSwipeRight: () => onToggleRead?.(),
+  })}
+>
+  <div class="rev rev-left" aria-hidden="true">
+    <span>{entry.read ? 'Mark unread' : 'Mark read'}</span>
+  </div>
+  <div class="rev rev-right" aria-hidden="true">
+    <span>Unsave</span>
+  </div>
+
+  <button type="button" class="card" onclick={() => onOpen?.()}>
+    <div class="eyebrow">
+      <span>saved</span>
+      {#if entry.read}
+        <span class="sep" aria-hidden="true">·</span>
+        <span class="status-read">read</span>
+      {/if}
+    </div>
+    <h3 class="title">{entry.title}</h3>
+    <div class="byline">
+      {#if feed}
+        <FeedAvatar feedURL={feed.feed_url} size={10} radius={2} />
+        <span class="source">{feed.title}</span>
+      {/if}
+      {#if entry.author}
+        <span class="sep" aria-hidden="true">·</span>
+        <span>{entry.author}</span>
+      {/if}
+    </div>
+    {#if entry.summary}
+      <p class="summary">{entry.summary}</p>
+    {/if}
+    <div class="foot">
+      <span>published {publishedLabel(entry.published_at)}</span>
+    </div>
+  </button>
+</div>
+
+<style>
+  .row {
+    position: relative;
+    overflow: hidden;
+    border-bottom: 1px solid var(--rule);
+    background: var(--bg);
+  }
+  .rev {
+    position: absolute;
+    top: 0; bottom: 0;
+    display: flex; align-items: center; gap: 8px;
+    padding: 0 22px;
+    font-family: var(--sans); font-size: 13px; font-weight: 500;
+    letter-spacing: 0.01em;
+  }
+  .rev-left {
+    left: 0;
+    background: var(--bg-soft);
+    color: var(--ink-2);
+    border-right: 1px solid var(--rule);
+  }
+  .rev-right {
+    right: 0;
+    background: var(--accent);
+    color: #fff;
+    justify-content: flex-end;
+  }
+  :global(.theme-dark) .rev-right { color: #0d0d0e; }
+
+  .card {
+    position: relative;
+    background: var(--bg);
+    padding: 14px 18px 16px;
+    width: 100%;
+    display: block;
+    border: 0;
+    text-align: left;
+    cursor: pointer;
+    z-index: 1;
+    transition: transform 240ms cubic-bezier(.2,.7,.2,1);
+  }
+  .card:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+
+  .eyebrow {
+    display: flex; align-items: center; gap: 7px;
+    font-family: var(--mono); font-size: 10px;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--ink-3);
+    margin-bottom: 6px;
+  }
+  .status-read { color: var(--ink-3); }
+  .row.is-read .status-read { color: var(--accent); }
+
+  .title {
+    font-family: var(--serif); font-size: 17px; line-height: 1.3;
+    font-weight: 500; color: var(--ink);
+    margin: 0 0 6px;
+    letter-spacing: -0.005em;
+    text-wrap: pretty;
+  }
+  .row.is-read .title { color: var(--ink-2); font-weight: 400; }
+
+  .byline {
+    display: flex; align-items: center; gap: 7px;
+    font-family: var(--sans); font-size: 12px; color: var(--ink-2);
+    margin-bottom: 6px;
+    flex-wrap: wrap;
+  }
+  .source { color: var(--ink); font-weight: 500; }
+  .row.is-read .source { color: var(--ink-2); font-weight: 400; }
+
+  .summary {
+    font-family: var(--serif); font-size: 14px; line-height: 1.5;
+    color: var(--ink-2);
+    margin: 0 0 8px;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .foot {
+    display: flex; align-items: center; gap: 8px;
+    font-family: var(--mono); font-size: 10px;
+    letter-spacing: 0.04em; text-transform: uppercase;
+    color: var(--ink-3);
+  }
+
+  .sep::before {
+    content: ""; display: inline-block;
+    width: 3px; height: 3px; border-radius: 50%;
+    background: var(--ink-4);
+    vertical-align: middle;
+  }
+</style>
+```
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+```bash
+pnpm --dir web test -- src/components/__tests__/SavedMobileRow.test.ts
+```
+
+Expected: PASS, all 4 tests.
+
+If the swipe tests fail because happy-dom does not synthesise the `touches` array exactly as `web/src/lib/swipe.ts` expects, check `web/src/lib/__tests__/swipe.test.ts` for the canonical mock pattern (M1 / M8 used this same pattern) and copy it. Do not modify `web/src/lib/swipe.ts`.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add web/src/components/SavedMobileRow.svelte web/src/components/__tests__/SavedMobileRow.test.ts
+git commit -m "M-Redesign-3: SavedMobileRow with swipe-to-unsave + swipe-to-toggle-read"
+```
+
+---
+
+## Phase B — View composition
+
+### Task 4: Rewrite `Saved.svelte` desktop body with TDD
+
+**Skills:** `superpowers:test-driven-development`, `svelte-runes`, `svelte-components`.
+
+**Files:**
+- Modify: `web/src/views/Saved.svelte`
+- Create: `web/src/views/__tests__/Saved.test.ts`
+
+- [ ] **Step 1: Write the failing test**
+
+Replace the contents of `web/src/views/__tests__/Saved.test.ts` with:
+
+```typescript
+import { render, screen, waitFor } from '@testing-library/svelte';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import Saved from '../Saved.svelte';
+import { api } from '../../lib/api';
+
+vi.mock('../../lib/api', () => ({
+  api: {
+    listEntries: vi.fn(),
+    listSubscriptions: vi.fn(() => Promise.resolve([])),
+    patchEntry: vi.fn(() => Promise.resolve()),
+  },
+}));
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
+describe('Saved view', () => {
+  it('shows the empty state when no entries are saved', async () => {
+    vi.mocked(api.listEntries).mockResolvedValueOnce({ data: [], next_cursor: null });
+    render(Saved);
+    await waitFor(() => {
+      expect(screen.getByText(/nothing saved yet/i)).toBeInTheDocument();
+    });
+    expect(screen.getByText(/press/i).textContent).toMatch(/S/);
+  });
+
+  it('lists saved entries when the API returns data', async () => {
+    vi.mocked(api.listEntries).mockResolvedValueOnce({
+      data: [
+        { id: 1, subscription_id: 3, title: 'Saved one',  url: 'a', author: '',
+          published_at: 1700000000, read: false, saved: true, summary: '' },
+        { id: 2, subscription_id: 3, title: 'Saved two',  url: 'b', author: '',
+          published_at: 1700000100, read: true,  saved: true, summary: '' },
+      ],
+      next_cursor: null,
+    });
+    render(Saved);
+    await waitFor(() => {
+      expect(screen.getByText('Saved one')).toBeInTheDocument();
+      expect(screen.getByText('Saved two')).toBeInTheDocument();
+    });
+  });
+
+  it('passes saved=true to the API', async () => {
+    vi.mocked(api.listEntries).mockResolvedValueOnce({ data: [], next_cursor: null });
+    render(Saved);
+    await waitFor(() => {
+      expect(api.listEntries).toHaveBeenCalledWith(
+        expect.objectContaining({ saved: true }),
+      );
+    });
+  });
+
+  it('shows an error state when the API rejects', async () => {
+    vi.mocked(api.listEntries).mockRejectedValueOnce(new Error('boom'));
+    render(Saved);
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(/boom/);
+    });
+  });
+
+  it('renders the SavedToolbar with the correct count', async () => {
+    vi.mocked(api.listEntries).mockResolvedValueOnce({
+      data: Array.from({ length: 4 }).map((_, i) => ({
+        id: i + 1, subscription_id: 3, title: `Title ${i}`,
+        url: 'u', author: '', published_at: 1700000000 + i, read: false, saved: true,
+      })) as unknown[],
+      next_cursor: null,
+    });
+    render(Saved);
+    await waitFor(() => {
+      expect(screen.getByText('4')).toBeInTheDocument();
+      expect(screen.getByText(/entries/i)).toBeInTheDocument();
+    });
+  });
+
+  it('optimistically unsaves an entry when the row Unsave action is clicked', async () => {
+    vi.mocked(api.listEntries).mockResolvedValueOnce({
+      data: [
+        { id: 1, subscription_id: 3, title: 'Saved one',  url: 'a', author: '',
+          published_at: 1700000000, read: false, saved: true, summary: '' },
+      ],
+      next_cursor: null,
+    });
+    vi.mocked(api.patchEntry).mockResolvedValueOnce(undefined as unknown as never);
+    const { container } = render(Saved);
+    await waitFor(() => expect(screen.getByText('Saved one')).toBeInTheDocument());
+
+    const unsaveBtn = screen.getByRole('button', { name: /unsave/i });
+    unsaveBtn.click();
+    await waitFor(() => {
+      expect(api.patchEntry).toHaveBeenCalledWith(1, { saved: false });
+    });
+    await waitFor(() => {
+      expect(container.querySelector('.row')).toBeNull();
+    });
+  });
+});
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+```bash
+pnpm --dir web test -- src/views/__tests__/Saved.test.ts
+```
+
+Expected: FAIL — the existing `Saved.svelte` still wires the old `Sidebar + TopBar + EntryRow` layout, does not show the count banner, and does not surface a row-level Unsave button.
+
+- [ ] **Step 3: Rewrite `Saved.svelte`**
+
+Replace the contents of `web/src/views/Saved.svelte` with:
+
+```svelte
+<script lang="ts">
+  import { onMount, onDestroy, getContext } from 'svelte';
+  import SavedToolbar from '../components/SavedToolbar.svelte';
+  import SavedRow from '../components/SavedRow.svelte';
+  import SavedMobileRow from '../components/SavedMobileRow.svelte';
+  import { api } from '../lib/api';
+  import { subscriptions } from '../lib/store';
+  import { navigate } from '../lib/router';
+  import { isMobile } from '../lib/preferences.svelte';
+  import type { EntryListItem, Subscription } from '../lib/types';
+
+  let items = $state<EntryListItem[]>([]);
+  let loading = $state(true);
+  let error = $state<string | null>(null);
+  let selectedId = $state<number | null>(null);
+
+  const dispatch = getContext<{
+    onNext: () => void; onPrev: () => void; onOpen: () => void;
+    onToggleRead: () => void; onToggleSaved: () => void;
+  } | undefined>('keyDispatch');
+
+  async function load() {
+    loading = true; error = null;
+    try {
+      const r = await api.listEntries({ saved: true, limit: 100 });
+      items = r.data;
+    } catch (e) {
+      error = (e as Error).message;
+    } finally {
+      loading = false;
+    }
+  }
+
+  function feedFor(subId: number): Subscription | undefined {
+    return $subscriptions.find(s => s.id === subId);
+  }
+
+  async function unsave(id: number) {
+    const before = items;
+    items = items.filter(e => e.id !== id);
+    try {
+      await api.patchEntry(id, { saved: false });
+    } catch (e) {
+      items = before;
+      error = (e as Error).message;
+    }
+  }
+
+  async function toggleRead(id: number, read: boolean) {
+    const before = items;
+    items = items.map(e => e.id === id ? { ...e, read } : e);
+    try {
+      await api.patchEntry(id, { read });
+    } catch (e) {
+      items = before;
+      error = (e as Error).message;
+    }
+  }
+
+  onMount(() => {
+    load();
+    subscriptions.load();
+
+    if (dispatch) {
+      dispatch.onToggleSaved = () => {
+        if (selectedId != null) unsave(selectedId);
+      };
+      dispatch.onToggleRead = () => {
+        if (selectedId == null) return;
+        const e = items.find(x => x.id === selectedId);
+        if (e) toggleRead(e.id, !e.read);
+      };
+      dispatch.onOpen = () => {
+        if (selectedId != null) navigate(`/entry/${selectedId}`);
+      };
+    }
+  });
+
+  onDestroy(() => {
+    if (dispatch) {
+      dispatch.onToggleSaved = () => {};
+      dispatch.onToggleRead = () => {};
+      dispatch.onOpen = () => {};
+    }
+  });
+</script>
+
+{#if loading}
+  <p class="status" role="status">Loading…</p>
+{:else if error}
+  <p class="status err" role="alert">{error}</p>
+{:else if items.length === 0}
+  <section class="empty" aria-label="Empty saved list">
+    <div class="empty-dot" aria-hidden="true"></div>
+    <h2 class="empty-title">Nothing saved yet</h2>
+    <p class="empty-sub">
+      Press <kbd class="kbd">S</kbd> on any entry to keep it here.
+    </p>
+  </section>
+{:else}
+  <SavedToolbar count={items.length} />
+  <ul class="list" role="list" aria-label="Saved entries">
+    {#each items as entry (entry.id)}
+      <li>
+        {#if $isMobile}
+          <SavedMobileRow
+            {entry}
+            feed={feedFor(entry.subscription_id)}
+            onOpen={() => navigate(`/entry/${entry.id}`)}
+            onUnsave={() => unsave(entry.id)}
+            onToggleRead={() => toggleRead(entry.id, !entry.read)}
+          />
+        {:else}
+          <SavedRow
+            {entry}
+            feed={feedFor(entry.subscription_id)}
+            onOpen={() => navigate(`/entry/${entry.id}`)}
+            onUnsave={() => unsave(entry.id)}
+            onToggleRead={() => toggleRead(entry.id, !entry.read)}
+          />
+        {/if}
+      </li>
+    {/each}
+  </ul>
+{/if}
+
+<style>
+  .status {
+    padding: 24px 2px;
+    color: var(--ink-3);
+    font-family: var(--mono);
+    font-size: 11px;
+  }
+  .status.err { color: #c43a3a; }
+
+  .list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .empty {
+    padding: 64px 24px 80px;
+    text-align: center;
+    color: var(--ink-3);
+    max-width: 480px;
+    margin: 0 auto;
+  }
+  .empty-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--accent);
+    margin: 0 auto 22px;
+  }
+  .empty-title {
+    font-family: var(--serif);
+    font-size: 22px;
+    font-weight: 600;
+    color: var(--ink);
+    letter-spacing: -0.015em;
+    margin: 0 0 12px;
+  }
+  .empty-sub {
+    font-family: var(--sans);
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--ink-3);
+    margin: 0 auto;
+    max-width: 360px;
+  }
+  .kbd {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    padding: 1px 5px;
+    border: 1px solid var(--rule);
+    border-bottom-width: 2px;
+    border-radius: 3px;
+    background: var(--surface);
+    color: var(--ink-2);
+  }
+</style>
+```
+
+- [ ] **Step 4: Verify imports compile**
+
+`web/src/lib/preferences.svelte.ts` must export `isMobile` (per M-Redesign-1). If M1 instead names it differently (e.g. `isMobile` is a derived store on `App.svelte` via context), swap the import for `getContext<Writable<boolean>>('isMobile')` and adjust the `$isMobile` usage. M3 must not introduce its own media-query plumbing.
+
+If `isMobile` is unavailable in `preferences.svelte.ts`, fall back to inline media-query detection using `<svelte:window bind:innerWidth>` against a 768px threshold — but flag it in the PR description as a workaround pending M1.
+
+- [ ] **Step 5: Run the test to verify it passes**
+
+```bash
+pnpm --dir web test -- src/views/__tests__/Saved.test.ts
+```
+
+Expected: PASS, all 6 tests.
+
+If the `isMobile` mock is required for the tests (the default desktop branch uses `SavedRow`), mock the module:
+
+```typescript
+vi.mock('../../lib/preferences.svelte', () => ({
+  isMobile: { subscribe: (fn: (v: boolean) => void) => { fn(false); return () => {}; } },
+}));
+```
+
+Add this at the top of the test file if the test run produces an unhandled-import error for `preferences.svelte`.
+
+- [ ] **Step 6: Type-check the whole SPA**
+
+```bash
+pnpm --dir web run check
+```
+
+Expected: zero errors. If `$subscriptions` requires explicit `Writable<Subscription[]>` typing for inference, add it.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add web/src/views/Saved.svelte web/src/views/__tests__/Saved.test.ts
+git commit -m "M-Redesign-3: rewrite Saved view on the new .ts-shell"
+```
+
+---
+
+### Task 5: Manually verify the desktop and mobile rendering
+
+**Skills:** `superpowers:verification-before-completion`.
+
+**Files:** none.
+
+This task verifies the integrated view in the real shell. It is not a code task — its purpose is to catch issues the unit tests cannot see (CSS layering, the topbar handoff, font-family inheritance, `:focus-visible` behaviour, swipe transform animation).
+
+- [ ] **Step 1: Rebuild the SPA and start the dev server**
+
+```bash
+make dev
+```
+
+Expected: Vite reports ready on `:5173`, Go reports listening on `:8080`.
+
+- [ ] **Step 2: Sign in, save one entry from Unread, navigate to `/saved`**
+
+Open `http://localhost:5173/`, sign in, press `S` on any unread entry to save it, then click the "Saved" tab in the top-tabs row (or navigate to `http://localhost:5173/saved`).
+
+- [ ] **Step 3: Confirm the desktop visual checklist**
+
+- The `.ts-shell` 720px column is centred; the page is on `var(--bg)`, not the old grey.
+- The pinned count banner (`SavedToolbar`) shows "Saved" in serif 26px with the mono count beside it.
+- Each row shows the bookmark glyph in the left rail, the publication date in a mono UPPER eyebrow, the serif title at 20px, the byline with feed avatar + source + author.
+- Hovering a row reveals the action buttons (Open, Mark read, Unsave) in the action strip below the body.
+- Read entries dim (title weight 400, colour `var(--ink-2)`, rail mark `var(--ink-4)`).
+- Clicking the row body navigates to `/entry/:id`.
+- Clicking Unsave on a row makes that row disappear without a refresh and the count decrements.
+
+- [ ] **Step 4: Confirm the empty-state visual checklist**
+
+Unsave every saved entry, then refresh. Confirm:
+
+- Accent dot at the top of the empty state.
+- Serif 22px "Nothing saved yet" title.
+- Sans 13px subtitle with the `kbd` chip wrapping the `S`.
+
+- [ ] **Step 5: Confirm the mobile visual checklist**
+
+Resize the browser to < 768px width (or DevTools "Responsive" → iPhone preset). Confirm:
+
+- The `MobileTopBar` shows the wordmark + "Saved" + count.
+- Each row uses the `.ts-saved-m-card` layout (eyebrow + title + byline + summary + foot).
+- Touch-simulated swipe-left reveals the accent-blue "Unsave" reveal layer; release past threshold removes the row.
+- Touch-simulated swipe-right reveals the soft-grey "Mark read" reveal layer; release past threshold toggles the row's read state.
+- Mid-swipe the card does NOT visibly move via CSS class — the `swipe()` attachment only fires on `touchend`. (This is consistent with the existing `EntryRow.svelte` swipe wiring and is acceptable for M3. A future task can add a transform-as-you-drag affordance; the design's `.ts-saved-m-row.is-swipe-left .ts-saved-m-card { transform: translateX(-110px) }` rule is dead code in M3 and can be removed by M-Redesign-5 if it's not used elsewhere.)
+
+- [ ] **Step 6: Confirm the three themes render correctly**
+
+In the AccountMenu (top-right avatar) cycle Theme: Light → Dark → Sepia. Confirm:
+
+- Hairlines remain visible (`var(--rule)` resolves correctly).
+- The accent (Klein blue / desaturated in dark) is the only colour on the row mark and the empty-state dot.
+- Mobile swipe reveal-right uses light text in light/sepia and dark text in dark (`:global(.theme-dark) .rev-right { color: #0d0d0e; }`).
+
+- [ ] **Step 7: Confirm `pnpm run check` is clean**
+
+```bash
+pnpm --dir web run check
+```
+
+Expected: zero TypeScript / svelte-check errors.
+
+- [ ] **Step 8: Stop the dev server**
+
+Ctrl-C the `make dev` process.
+
+There is no commit for this task — the verification is itself the deliverable.
+
+---
+
+## Phase C — Cleanup and PR prep
+
+### Task 6: Add the M-Redesign-3 manual smoke checklist to the PR description template
+
+**Skills:** none.
+
+**Files:** none (PR description only).
+
+When opening the PR, paste the following checklist into the PR body so reviewers can re-run it locally:
+
+```markdown
+## Manual smoke checklist (M-Redesign-3)
+
+- [ ] /saved renders the SavedToolbar with the correct entry count.
+- [ ] Empty state renders the accent dot + "Nothing saved yet" + the kbd hint.
+- [ ] Hovering a desktop row reveals Open / Mark read / Unsave actions.
+- [ ] Clicking Unsave optimistically removes the row.
+- [ ] Clicking Mark read on a row dims it without removing it.
+- [ ] Mobile: swipe-left fires Unsave; swipe-right fires Mark read/unread.
+- [ ] Mobile: rows under threshold swipes do nothing.
+- [ ] Read entries appear visually distinct (dimmed title, hollow rail mark).
+- [ ] All three themes (light, dark, sepia) render without regressions.
+- [ ] `pnpm --dir web run check` is clean.
+- [ ] `make test` passes.
+```
+
+- [ ] **Step 1: Run the full test suite**
+
+```bash
+make test
+```
+
+Expected: `go test ./... -race` passes; `pnpm --dir web test` passes.
+
+(Note: per `CLAUDE.md`'s build coupling section, `make test` rebuilds `web/dist` because `internal/server.SPAHandler` checks for `index.html` at construction time. If you're iterating quickly and have already rebuilt, `pnpm --dir web test` alone covers M3's frontend-only scope.)
+
+- [ ] **Step 2: Run svelte-check one final time**
+
+```bash
+pnpm --dir web run check
+```
+
+Expected: zero errors.
+
+- [ ] **Step 3: Commit any final fix-ups; push and open the PR**
+
+```bash
+git push -u origin <your-branch>
+gh pr create --title "M-Redesign-3: Saved on the new .ts-shell" --body "..."
+```
+
+---
+
+## Acceptance criteria
+
+A reviewer should be able to verify, using **selectors and behaviour**, that:
+
+1. **DOM structure**
+   - `web/src/views/Saved.svelte` no longer imports `Sidebar.svelte` or `TopBar.svelte`. (These are slated for deletion in M-Redesign-1; M3 must not depend on them.)
+   - When `items.length > 0`, the rendered DOM contains exactly one `SavedToolbar` element and an `<ul role="list" aria-label="Saved entries">` with one `<li>` per saved entry.
+   - When `items.length === 0`, the rendered DOM contains a `<section aria-label="Empty saved list">` with a serif `<h2>` reading "Nothing saved yet" and a `<kbd>` chip containing `S`.
+   - Each desktop row is an `<article class="row">` (or `<button>` semantically — the test asserts via accessible name).
+   - Each mobile row is a `<div class="row">` wrapping a `<button class="card">` plus two `aria-hidden` reveal layers.
+
+2. **API contract**
+   - `Saved.svelte` calls `api.listEntries({ saved: true, limit: 100 })` exactly once on mount.
+   - Clicking the row-level Unsave button calls `api.patchEntry(id, { saved: false })`.
+   - Clicking the row-level Mark read button calls `api.patchEntry(id, { read: true })` (or `{ read: false }` if the row was read).
+   - All three API calls happen optimistically — the UI updates before the network resolves; on rejection, the UI rolls back.
+
+3. **Keyboard contract**
+   - When the `keyDispatch` context is present (M-Redesign-1 / M-Redesign-2 wire this), pressing `S` while the Saved view is mounted and a row is selected fires the unsave path.
+   - When the context is absent, `Saved.svelte` does not throw.
+
+4. **Mobile contract**
+   - Each mobile row is wired with `{@attach swipe({ onSwipeLeft, onSwipeRight })}`.
+   - `onSwipeLeft` fires the unsave path. `onSwipeRight` fires the read-toggle path.
+   - Sub-threshold swipes (per `recogniseSwipe` thresholds: < 40px travel, > 30° angle, or starting within 20px of the left edge) do nothing.
+
+5. **Visual contract**
+   - Every CSS rule originates from a scoped `<style>` block on the component that owns the selector. No edits to `web/src/styles/global.css` or `web/src/styles/tokens.css`.
+   - `ui_design/styles.css` is unmodified.
+
+6. **Test coverage**
+   - 5 unit tests in `SavedToolbar.test.ts` (counts and labels).
+   - 6 unit tests in `SavedRow.test.ts` (render, click handlers, action button stop-propagation, read variant).
+   - 4 unit tests in `SavedMobileRow.test.ts` (swipe-left, swipe-right, sub-threshold, render).
+   - 6 unit tests in `Saved.test.ts` (loading, list, error, empty, count, optimistic unsave).
+   - All pass.
+   - `pnpm --dir web run check` is clean.
+
+---
+
+## Verification commands
+
+| What | Command | Expected |
+|---|---|---|
+| Unit tests (M3 only) | `pnpm --dir web test -- src/views/__tests__/Saved.test.ts src/components/__tests__/Saved*.test.ts` | All 21 tests pass |
+| Full SPA unit tests | `pnpm --dir web test` | All pass, no regressions in existing tests |
+| TypeScript / svelte-check | `pnpm --dir web run check` | Zero errors |
+| Full test suite (Go + SPA) | `make test` | All pass |
+| Build the SPA | `pnpm --dir web build` | `web/dist/` populated, no warnings |
+| Build the static binary | `make build` | `bin/tap` produced |
+
+---
+
+## Risks
+
+1. **M-Redesign-1 primitives are not yet final.** M3 depends on M1's `AppShell`, `MobileTopBar`, `EmptyState`, `FeedAvatar` (restyled), and the `isMobile` reactivity. If any of these are renamed or relocated between M1 and M3, every import in `Saved.svelte`, `SavedRow.svelte`, and `SavedMobileRow.svelte` needs to be updated. The plan's import paths use the most likely M1 names (`../components/FeedAvatar.svelte`, `../lib/preferences.svelte`); if the actual M1 names differ, fix forward in this branch.
+2. **`isMobile` reactivity is not yet defined.** M1's foundations milestone is responsible for deciding how `isMobile` is exposed to views — Svelte store, context, or media-query directive. M3 assumes a `Readable<boolean>` named `isMobile` exported from `web/src/lib/preferences.svelte`. If M1 chooses a different shape, swap the import in Task 4 step 4 — this is a 2-line change.
+3. **The mobile swipe is "tap to fire", not "drag to reveal".** The current `web/src/lib/swipe.ts` is a `touchstart` → `touchend` recogniser; it does not emit a position-as-you-drag stream. The design's mid-swipe `.is-swipe-left` transform on `.ts-saved-m-card` is therefore dead in M3 — the card never visually translates. This is intentional and consistent with the existing `EntryRow` swipe wiring; if reviewers flag it, the fix is a follow-up that extends `swipe.ts` to emit `touchmove` events. Not in scope for M3.
+4. **`saved_at` is not in the DB.** The JSX mockup's "saved Xd ago" eyebrow line is not implementable without a schema change. M3 ships "published <date>" instead. If a future iteration wants saved-at, it needs a new column on `entries` (or a side table) and a backend migration.
+5. **Default `published_at` sort.** Backend returns entries newest by `published_at`. The user may expect "most recently saved first" instead. If usability testing surfaces this, add a `?sort=saved_at` query parameter to `GET /api/v1/entries` — but that requires the `saved_at` column above.
+6. **`Saved.svelte` no longer mounts `Sidebar.svelte` or `TopBar.svelte`.** Until M-Redesign-1 has fully shipped (and `App.svelte` mounts the new `.ts-shell` chrome around every route), a developer running the Saved view in isolation will see an unstyled page. This is acceptable inside the M-Redesign sequence; it is NOT acceptable to ship M3 to `main` before M1 is merged.
+7. **Existing tests for the old Saved view.** `web/src/views/__tests__/` may already contain a `Saved.test.ts` (check before writing one). If it tests the deleted `Sidebar + TopBar + EntryRow` shape, the new test file replaces it; do not preserve the old assertions.
+
+---
+
+## Self-review
+
+Spec coverage:
+
+- **§5 row M3 ("flat chronological list of every entry where saved===true")** — Task 4 wires `api.listEntries({ saved: true })` and renders a flat list. No grouping.
+- **§5 row M3 ("pinned count banner")** — `SavedToolbar` is rendered above the list in Task 4; tested in Task 1.
+- **§5 row M3 ("empty state")** — Task 4 renders the accent-dot + serif title + sans subtitle + kbd chip inline in `Saved.svelte`; the JSX's "hints panel" is dropped (not in Brand spec §6.3).
+- **§5 row M3 (mobile swipe-to-unsave)** — `SavedMobileRow` ships swipe-left / swipe-right; tested in Task 3.
+- **§6.3 ("flat chronological list of every entry where saved === true. No grouping by feed. Pinned banner at top showing the count.")** — Tasks 1 and 4 cover this.
+- **§6.3 ("Press <kbd>S</kbd> on any entry to keep it here.")** — Task 4 step 3 renders this exact copy.
+- **§4.4 entry row primitives (junction dot, title, meta, summary)** — `SavedRow` is a Saved-specific variant (rail mark instead of junction dot, "published <date>" eyebrow instead of meta). This deviates from the generic `EntryRow` because the Saved view's row has different chrome (the design's `.ts-saved-row`, not `.entry`). The plan's choice to ship a dedicated `SavedRow` instead of reusing M1's `EntryRow` is intentional and is consistent with the JSX mockup, which uses `.ts-saved-row`. Reviewers should confirm this is acceptable.
+
+Placeholder scan: none.
+
+Type consistency:
+
+- `EntryListItem` is the canonical entry type (`web/src/lib/types.ts:36`) — every component uses this name.
+- `Subscription` is the feed type (per `web/src/lib/types.ts`) — every component uses this name.
+- `feedFor(subId)` is the lookup helper; named consistently across `Saved.svelte` and the mockup-style `feedFor` already used in `Unread.svelte`.
+- The handler trio is `onOpen` / `onToggleRead` / `onUnsave` — consistent across `SavedRow`, `SavedMobileRow`, and `Saved.svelte`'s `<SavedRow>` / `<SavedMobileRow>` calls.
+
+End of plan.
