@@ -18,7 +18,7 @@
 
 - Token extension: every CSS custom property listed in brand spec §2 (type scale, spacing scale, radii, motion durations, font-feature-settings).
 - Global stylesheets: `tokens.css` (extended), `global.css` (fonts, focus, scrollbar, reduced-motion, keyframes), one optional `print.css`.
-- Vendored font verification: confirm `@fontsource/*` packages serve Inter Tight, Source Serif 4, JetBrains Mono entirely same-origin in production (no Google Fonts CDN fetch).
+- Font verification (not vendoring — per team-lead correction 2026-05-11): the existing `@fontsource/*` package imports in `main.ts` are the canonical mechanism. Add italic 400 for Source Serif 4. Confirm Vite bundles `.woff2` same-origin into `web/dist` and no Google Fonts CDN reference survives the build. Do **not** create `web/src/assets/fonts/`. Do **not** write hand-rolled `@font-face` blocks.
 - New chrome components: `AppShell`, `TopTabs`, `AccountAvatar`, `AccountMenu`, `StatusFoot`, `MobileTopBar`, `MobileTabBar`, `MobileMoreSheet`, `SearchOverlay` (stub).
 - Primitive library: `Button`, `Field`, `Segmented`, `Chip`, `Popover`, `Dialog`, `KbdChip`, `OtpInput`, `RecoveryCodesGrid`, `EmptyState`, `EntryRow` (rewritten), `GroupHeading`, `FeedAvatar` (existing — restyled to design spec).
 - Login rewrite: `.tl-root` shell, three modes (password, passkey, OTP-step). Magic link is explicitly excluded.
@@ -102,7 +102,7 @@
 - `web/src/lib/preferences.svelte.ts` — (1) add `measure` pref (`narrow` / `comfortable` / `wide`) for `.ts-article` consumption in M2; (2) **migrate `density` vocabulary** from `'compact' | 'default' | 'comfortable'` to the brand-spec canonical `'compact' | 'comfortable' | 'cosy'` with `'comfortable'` as the default. Per team-lead decision 2026-05-11: this is the canonical vocabulary across stores, CSS, EntryRow prop, and Settings. Existing `localStorage` values of `'default'` migrate to `'comfortable'` on first read.
 - `web/src/lib/__tests__/preferences.test.ts` — add coverage for new `measure` pref + new `density` vocabulary + `'default' → 'comfortable'` migration.
 - `web/src/styles/tokens.css` — add full token set from brand spec §2 (type scale vars, spacing scale, radii, motion durations, font-feature-settings; ensure existing theme colour vars + sepia stay intact).
-- `web/src/styles/global.css` — pare down: keep body reset, `:focus-visible`, scrollbar, `prefers-reduced-motion`, `@keyframes tap-pulse`, `@keyframes tf-spin`, font-faces. Remove all component-level CSS (every selector currently here that owns a component now lives in that component's scoped block).
+- `web/src/styles/global.css` — pare down to: body reset, `:focus-visible` outline rule, `.tap`-scoped scrollbar styling, `prefers-reduced-motion` guard, `@keyframes tap-pulse`, `@keyframes tf-spin`, plus the two `font-feature-settings` rules. **No `@font-face` blocks** — those come from the `@fontsource*` packages via `main.ts`. Remove all component-level CSS (every selector currently here that owns a component now lives in that component's scoped block).
 - `web/src/components/HotkeysModal.svelte` — restyle to the `.tap-modal` two-column shortcut grid per brand spec §7.
 - `web/src/components/__tests__/HotkeysModal.test.ts` — update DOM expectations.
 - `web/src/components/FeedAvatar.svelte` — confirm 14×14 default + 3px radius (per design); minor style tweak only.
@@ -304,13 +304,15 @@ git add web/src/styles/tokens.css
 git commit -m "M1-A: extend tokens.css with full design system tokens"
 ```
 
-### Group B — Fonts (vendored)
+### Group B — Fonts (verify, do not vendor)
 
-**Files:** `web/src/main.ts`, `web/src/styles/global.css`, `web/package.json` (verify only).
+**Files:** `web/src/main.ts`, `web/src/styles/global.css`.
 
-The `@fontsource-variable/inter-tight`, `@fontsource-variable/source-serif-4`, and `@fontsource/jetbrains-mono` packages are already declared and imported in `main.ts`. Vite bundles their `.woff2` files into `web/dist/assets/` at build time, so the Go binary already serves them same-origin from the embedded SPA. Brand spec §1.3 demands no Google Fonts CDN fetch; the existing setup satisfies this. The task is to verify, not vendor.
+Per team-lead correction 2026-05-11 (amending umbrella §3.1 + §7 risk 6): the codebase already uses `@fontsource*` packages. Vite bundles their `.woff2` files into `web/dist`, which is `go:embed`ed into the binary. Same-origin is already true. **Do NOT** vendor anything into `web/src/assets/fonts/`. **Do NOT** write hand-rolled `@font-face` blocks — the fontsource packages emit them via their imported CSS.
 
-- [ ] **B1. Verify `main.ts` imports.** Open `web/src/main.ts`. Confirm the four `@fontsource*` imports at the top still exist:
+Group B's job: confirm the existing imports cover every weight/style the brand spec uses, add font-feature-settings, verify in dev.
+
+- [ ] **B1. Confirm `main.ts` imports.** Read `web/src/main.ts`. The four imports must be present:
 
 ```ts
 import '@fontsource-variable/source-serif-4';
@@ -319,70 +321,59 @@ import '@fontsource/jetbrains-mono/400.css';
 import '@fontsource/jetbrains-mono/500.css';
 ```
 
-If any are missing, restore from this snippet.
-
-- [ ] **B2. Add italic weight for Source Serif 4.** Brand spec §2.2 requires italic 400 for the article lede. Add to `main.ts` (alphabetical order doesn't matter; group with serifs):
+- [ ] **B2. Add italic 400 for Source Serif 4.** Brand spec §2.2 calls for italic 400 (article lede, `tap-login.css` quote body). The variable package's default `*.css` does not include italic — add:
 
 ```ts
 import '@fontsource-variable/source-serif-4/wght-italic.css';
 ```
 
-- [ ] **B3. Build SPA and verify same-origin font URLs.** Run:
+- [ ] **B3. Confirm Source Serif 4 optical-size range.** Brand spec §2.2 references "8..60 optical sizes". The `@fontsource-variable/source-serif-4` package ships a variable font with both `wght` and `opsz` axes — confirm by inspecting the imported CSS after the next `pnpm install`:
 
 ```bash
-pnpm --dir web build
+grep -r "opsz\|font-variation-settings" node_modules/@fontsource-variable/source-serif-4/ | head
 ```
 
-Expected: `web/dist/assets/` contains `.woff2` files prefixed with `inter-tight`, `source-serif-4`, `jetbrains-mono`. Verify with:
+Expected: at least one match showing the `opsz` axis. If absent (unlikely), file a follow-up — the article reader (M2) would degrade gracefully to the default optical size; nothing in M1 itself depends on `opsz`.
 
-```bash
-ls web/dist/assets/ | grep -E '(inter-tight|source-serif|jetbrains)' | head
-```
-
-Expected output: at least 6 `.woff2` files. If empty, the build did not bundle font assets — check `@fontsource*` package versions in `pnpm-lock.yaml`.
-
-- [ ] **B4. Build the Go binary and run offline.** Verify the embedded SPA serves fonts without external requests:
-
-```bash
-make build
-```
-
-Skip the offline smoke test for B4; it is captured in the "Service worker" verification section at the end of the plan. Confirm `bin/tap` exists and the build is green.
-
-- [ ] **B5. Add `@font-face` declarations to `global.css`.** The `@fontsource*` packages already declare these via their own CSS files imported in `main.ts`, so explicit `@font-face` blocks in `global.css` are **NOT needed** and would duplicate. Instead, add a single comment block at the top of `global.css` recording where the font-faces come from:
+- [ ] **B4. Add `font-feature-settings`.** Append to `global.css` (the body rule from Group C2 already includes the body version; add the mono rule too). Group C handles the final shape of `global.css` — this step just records the requirement:
 
 ```css
-/* Fonts are imported via @fontsource* packages in main.ts.
-   They emit @font-face declarations with same-origin URLs that Vite
-   bundles into web/dist/assets/. Do NOT add Google Fonts <link> tags
-   or @import url(...) — the binary must work offline (brand spec §1.3). */
-```
-
-- [ ] **B6. Add `font-feature-settings` defaults.** Append to `global.css` body rule:
-
-```css
-body {
-  font-feature-settings: "kern", "liga", "onum";
-}
-
-/* Mono numerics — tabular figures and zero-slash where mono is used. */
+body { font-feature-settings: "kern", "liga", "onum"; }
 :where([class*="mono"], code, kbd, .ts-kbd, .ts-rt, .ts-tab-count) {
   font-feature-settings: "tnum", "zero";
 }
 ```
 
+If Group C runs before Group B (the order is flexible), confirm those two rules are in `global.css` after Group C ships. Otherwise add them here.
+
+- [ ] **B5. Build the SPA.** Verify no external CDN fetch:
+
+```bash
+pnpm --dir web build
+grep -r "fonts.googleapis\|fonts.gstatic" web/dist/ || echo "OK: no Google Fonts references"
+ls web/dist/assets/ | grep -E '(inter-tight|source-serif|jetbrains)' | head
+```
+
+Expected: "OK" from the grep + at least 6 `.woff2` files in the `ls`.
+
+- [ ] **B6. Visual smoke** (deferred to Group P2 — recorded here as a reminder). When running `make dev`, manually confirm:
+  - Article body / titles use Source Serif 4 (serif, slightly modulated, ink #1a1a1a).
+  - Top tabs / button labels / Inter Tight (sans, tight tracking).
+  - `.ts-foot` status line / `.ts-kbd` / timestamps use JetBrains Mono (mono, tabular figures).
+  - Italic renders in the article lede (M2 wires this; in M1 the only italic usage is `Uncategorised` in brand spec §6.4 mock — not yet shipped, so M1 has no visible italic surface. The italic import still needs to be in place so M2 can use it without another rebuild.)
+
 - [ ] **B7. Commit.**
 
 ```bash
-git add web/src/main.ts web/src/styles/global.css
-git commit -m "M1-B: verify same-origin font bundle, add italic 400 + font-features"
+git add web/src/main.ts
+git commit -m "M1-B: import Source Serif 4 italic; verify same-origin font bundle"
 ```
 
 ### Group C — Global stylesheet pruning
 
 **Files:** `web/src/styles/global.css`.
 
-The existing `global.css` contains a lot of component-level CSS (`.entry`, `.tap-topbar`, `.tap-sidebar`, `.reader-pane`, `.tap-modal`, `.tap-popover`, etc.) that will now live in scoped Svelte `<style>` blocks. Pare `global.css` down to only what the umbrella spec §3.1 sanctions: body reset, font-faces (via fontsource), `:focus-visible`, scrollbar, `prefers-reduced-motion`, `@keyframes tap-pulse`, `@keyframes tf-spin`.
+The existing `global.css` contains a lot of component-level CSS (`.entry`, `.tap-topbar`, `.tap-sidebar`, `.reader-pane`, `.tap-modal`, `.tap-popover`, etc.) that will now live in scoped Svelte `<style>` blocks. Pare `global.css` down to: body reset, `:focus-visible`, `.tap`-scoped scrollbar, `prefers-reduced-motion`, `@keyframes tap-pulse`, `@keyframes tf-spin`, the two `font-feature-settings` rules from B4. **Font-faces come from `@fontsource*` packages via `main.ts` — do not declare them here.**
 
 - [ ] **C1. Save a backup snapshot** (in your head — git is the actual safety net). The rewrite is destructive; the old rules will be reborn inside scoped component styles in later groups.
 
@@ -3931,7 +3922,11 @@ Each criterion ties to brand spec / umbrella spec / JSX mockup / `styles.css` se
 - [ ] `@keyframes tap-pulse` and `tf-spin` live in `global.css`.
 - [ ] `prefers-reduced-motion` disables both keyframes.
 - [ ] No Google Fonts CDN reference in `web/dist/` after build (P3b grep).
+- [ ] No `@font-face` block in any file under `web/src/styles/` (fonts come from `@fontsource*` in `main.ts`; verify with `grep "@font-face" web/src/styles/` → empty).
+- [ ] No directory `web/src/assets/fonts/` exists (verify with `test ! -d web/src/assets/fonts`).
+- [ ] `main.ts` imports the four `@fontsource*` packages **plus** the Source Serif 4 italic CSS (B1, B2).
 - [ ] `font-feature-settings: "kern", "liga", "onum"` on body; `"tnum", "zero"` on mono surfaces.
+- [ ] `make dev` visual check: Source Serif 4 renders for article body, Inter Tight for UI chrome, JetBrains Mono for timestamps/kbd (B6).
 
 ### Routes (umbrella §2.2)
 
@@ -3993,7 +3988,7 @@ If step 6 finds a regression, fix it before continuing; do not file an issue and
 
 ## Risks
 
-1. **Font vendoring strategy.** The brand spec (§1.3, §11) and umbrella spec (§7 risk 6) both demand offline-first font hosting. The current `@fontsource/*` packages already bundle `.woff2` files into `web/dist/assets/` at build time, so this risk reduces to **verification, not vendoring**. Mitigation: P3b grep + visual smoke on a binary running in airplane mode. If a transitive CSS file in `@fontsource` ever changes to fetch from a CDN, the grep will catch it. **Backout:** if a future fontsource release breaks this, fall back to manually copying `.woff2` files into `web/src/assets/fonts/` and writing explicit `@font-face` declarations in `global.css`. Not needed for M1.
+1. **Font hosting (RESOLVED 2026-05-11).** Team-lead correction: the codebase already uses `@fontsource*` packages and Vite bundles `.woff2` into `web/dist` (which is `go:embed`-ed). Same-origin is already guaranteed. No vendoring, no hand-rolled `@font-face` blocks. Group B's job is verification (grep for `fonts.googleapis`/`fonts.gstatic` in `web/dist` → must come back empty). **Residual risk:** a future `@fontsource*` release could in theory swap to a CDN-fetching CSS; the grep in B5/P3b is the canary. **Backout** (only if needed someday): manually copy `.woff2` into `web/src/assets/fonts/` and write `@font-face` blocks in `global.css`. Not in M1's scope.
 
 2. **Service-worker cache invalidation.** Asset paths change wholesale in M1; every previous build's SW cache becomes stale. The PWA registration is `registerType: 'prompt'`, which surfaces a "Reload" banner via `useRegisterSW`. **Risk:** the banner is dismissable; a user who ignores it sees the old shell. Mitigation: P4 manual test confirms the banner appears and reloading lands on the new build. Implementers must NOT bump the SW strategy to `autoUpdate` in M1 — that's a separate decision documented elsewhere.
 
