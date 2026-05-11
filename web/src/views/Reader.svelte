@@ -280,7 +280,7 @@
   .ts-article-byline {
     display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
     font-family: var(--mono); font-size: 10.5px;
-    letter-spacing: 0.06em; text-transform: uppercase;
+    letter-spacing: 0.14em; text-transform: uppercase;
     color: var(--ink-3); margin: 0 0 22px;
   }
   .ts-article-actions {
