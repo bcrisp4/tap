@@ -2,9 +2,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/svelte';
 import { api } from '../../lib/api';
 
-vi.mock('../../components/Sidebar.svelte', () => ({ default: vi.fn() }));
-vi.mock('../../components/TopBar.svelte', () => ({ default: vi.fn() }));
-
 vi.mock('../../components/EntryRow.svelte', () => ({ default: vi.fn() }));
 
 const { default: Saved } = await import('../Saved.svelte');
@@ -34,7 +31,7 @@ describe('Saved view', () => {
   it('renders the empty state when there are no saved entries', async () => {
     vi.spyOn(api, 'listEntries').mockResolvedValueOnce({ data: [], cursor: undefined } as any);
     render(Saved);
-    expect(await screen.findByText('No saved entries yet.')).toBeTruthy();
+    expect(await screen.findByText('Nothing saved yet.')).toBeTruthy();
   });
 
   it('calls api.listEntries with saved: true', async () => {

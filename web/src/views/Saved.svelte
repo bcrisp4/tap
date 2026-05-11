@@ -1,8 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import Sidebar from '../components/Sidebar.svelte';
-  import TopBar from '../components/TopBar.svelte';
   import EntryRow from '../components/EntryRow.svelte';
+  import EmptyState from '../components/EmptyState.svelte';
   import { api } from '../lib/api';
   import type { EntryListItem } from '../lib/types';
 
@@ -25,37 +24,24 @@
   onMount(load);
 </script>
 
-<div class="layout">
-  <Sidebar />
-  <main class="saved-main">
-    <TopBar
-      title="Saved"
-      countShown={items.length}
-      countTotal={items.length}
-      onRefresh={load}
-    />
-    {#if loading}
-      <p class="status">Loading…</p>
-    {:else if error}
-      <p class="status err">{error}</p>
-    {:else if items.length === 0}
-      <p class="status">No saved entries yet.</p>
-    {:else}
-      <ul class="list" role="list" aria-label="Saved entries">
-        {#each items as e (e.id)}
-          <li role="listitem">
-            <EntryRow entry={e} feed={undefined} />
-          </li>
-        {/each}
-      </ul>
-    {/if}
-  </main>
-</div>
+{#if loading}
+  <p class="status">Loading…</p>
+{:else if error}
+  <p class="status err">{error}</p>
+{:else if items.length === 0}
+  <EmptyState title="Nothing saved yet." subtitle="Press S on any entry to keep it here." dot="ink-4" />
+{:else}
+  <ul class="list" role="list" aria-label="Saved entries">
+    {#each items as e (e.id)}
+      <li role="listitem">
+        <EntryRow entry={e} feed={undefined} />
+      </li>
+    {/each}
+  </ul>
+{/if}
 
 <style>
-  .layout { display: flex; height: 100vh; }
-  .saved-main { flex: 1; display: flex; flex-direction: column; overflow-y: auto; background: var(--bg); }
   .status { padding: 24px; color: var(--ink-3); font-family: var(--mono); font-size: 11px; }
   .status.err { color: #b14; }
-  .list { flex: 1; list-style: none; margin: 0; padding: 0; }
+  .list { list-style: none; margin: 0; padding: 0; }
 </style>
