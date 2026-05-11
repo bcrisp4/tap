@@ -22,7 +22,6 @@
   let users = $state<AdminUser[]>([]);
   let status = $state<StatusResponse | null>(null);
   let loadError = $state('');
-  let busy = $state(false);
   let pollInterval = $state<ReturnType<typeof setInterval> | null>(null);
   let nowSec = $state(Math.floor(Date.now() / 1000));
 
@@ -95,21 +94,17 @@
   }
 
   async function handleCreate(v: { username: string; password: string; role: 'admin' | 'user' }) {
-    busy = true;
     try {
       const u = await api.createUser(v.username, v.password, v.role);
       users = [...users, u];
       closeOverlay();
     } catch (e) {
       loadError = e instanceof Error ? e.message : 'Create user failed';
-    } finally {
-      busy = false;
     }
   }
 
   async function handleResetConfirm() {
     if (!overlayUser) return;
-    busy = true;
     try {
       const r = await api.resetUserPassword(overlayUser.id);
       tempPassword = r.temporary_password;
@@ -117,57 +112,46 @@
     } catch (e) {
       loadError = e instanceof Error ? e.message : 'Reset password failed';
       closeOverlay();
-    } finally {
-      busy = false;
     }
   }
 
   async function handleDisable2FA() {
     if (!overlayUser) return;
-    busy = true;
     try {
       await api.disableUserTOTP(overlayUser.id);
       await loadUsers();
       closeOverlay();
     } catch (e) {
       loadError = e instanceof Error ? e.message : 'Disable 2FA failed';
-    } finally {
-      busy = false;
     }
   }
 
   async function handleToggleDisabled() {
     if (!overlayUser) return;
-    busy = true;
     try {
       const updated = await api.patchUser(overlayUser.id, { disabled: !overlayUser.disabled_at });
       users = users.map((u) => (u.id === updated.id ? updated : u));
       closeOverlay();
     } catch (e) {
       loadError = e instanceof Error ? e.message : 'Toggle disable failed';
-    } finally {
-      busy = false;
     }
   }
 
   async function handleDelete() {
     if (!overlayUser) return;
-    busy = true;
     try {
       await api.deleteUser(overlayUser.id);
       users = users.filter((u) => u.id !== overlayUser!.id);
       closeOverlay();
     } catch (e) {
       loadError = e instanceof Error ? e.message : 'Delete failed';
-    } finally {
-      busy = false;
     }
   }
 </script>
 
 {#if !isAdmin}
   <main class="ts-shell">
-    <EmptyState title="Access denied" description="You don't have permission to view this page." />
+    <EmptyState title="Access denied" subtitle="You don't have permission to view this page." />
   </main>
 {:else}
   <main class="ts-shell ts-shell-admin">

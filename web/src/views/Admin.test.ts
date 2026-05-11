@@ -1,6 +1,5 @@
 import { render, screen, waitFor, fireEvent } from '@testing-library/svelte';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { writable } from 'svelte/store';
 import Admin from './Admin.svelte';
 import { api } from '../lib/api';
 import { getStatus } from '../lib/status';
@@ -8,9 +7,6 @@ import { getStatus } from '../lib/status';
 const navigate = vi.fn();
 vi.mock('../lib/router', () => ({ navigate: (...a: unknown[]) => navigate(...a) }));
 
-const _authStore = writable<{ user: { id: number; username: string; role: 'admin' | 'user' } } | null>({
-  user: { id: 1, username: 'liz', role: 'admin' },
-});
 vi.mock('../lib/auth', () => {
   const { writable } = require('svelte/store');
   const store = writable({ user: { id: 1, username: 'liz', role: 'admin' } });
@@ -40,11 +36,13 @@ vi.mock('../lib/status', () => ({
 
 // Import the mocked auth store after mocking
 import { auth as authStore } from '../lib/auth';
+type MutableStore = { set(v: unknown): void };
+const setAuth = (v: unknown) => (authStore as unknown as MutableStore).set(v);
 
 describe('Admin (access denied)', () => {
   beforeEach(() => { navigate.mockReset(); });
   it('non-admin sees access-denied and redirects to /', async () => {
-    (authStore as ReturnType<typeof writable>).set({ user: { id: 2, username: 'alice', role: 'user' } });
+    setAuth({ user: { id: 2, username: 'alice', role: 'user' } });
     render(Admin, {});
     await waitFor(() => expect(navigate).toHaveBeenCalledWith('/'));
     expect(screen.getByText(/access denied/i)).toBeInTheDocument();
@@ -53,7 +51,7 @@ describe('Admin (access denied)', () => {
 
 describe('Admin (admin role)', () => {
   beforeEach(() => {
-    (authStore as ReturnType<typeof writable>).set({ user: { id: 1, username: 'liz', role: 'admin' } });
+    setAuth({ user: { id: 1, username: 'liz', role: 'admin' } });
     (api.listUsers as ReturnType<typeof vi.fn>).mockReset().mockResolvedValue([
       { id: 1, username: 'liz',   role: 'admin', created_at: 1_700_000_000, disabled_at: null, has_totp: true,  passkey_count: 3 },
       { id: 2, username: 'alice', role: 'user',  created_at: 1_700_000_000, disabled_at: null, has_totp: false, passkey_count: 0 },
@@ -97,7 +95,7 @@ describe('Admin (admin role)', () => {
 
 describe('Admin (mutations)', () => {
   beforeEach(() => {
-    (authStore as ReturnType<typeof writable>).set({ user: { id: 1, username: 'liz', role: 'admin' } });
+    setAuth({ user: { id: 1, username: 'liz', role: 'admin' } });
     (api.listUsers as ReturnType<typeof vi.fn>).mockReset().mockResolvedValue([
       { id: 1, username: 'liz',   role: 'admin', created_at: 1_700_000_000, disabled_at: null, has_totp: true,  passkey_count: 0 },
       { id: 2, username: 'alice', role: 'user',  created_at: 1_700_000_000, disabled_at: null, has_totp: false, passkey_count: 0 },
@@ -185,7 +183,7 @@ describe('Admin (mutations)', () => {
 describe('Admin (status polling)', () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    (authStore as ReturnType<typeof writable>).set({ user: { id: 1, username: 'liz', role: 'admin' } });
+    setAuth({ user: { id: 1, username: 'liz', role: 'admin' } });
     (api.listUsers as ReturnType<typeof vi.fn>).mockReset().mockResolvedValue([]);
     (getStatus as ReturnType<typeof vi.fn>).mockReset().mockResolvedValue({
       version: 'v1', uptime_seconds: 0, db: 'ok',

@@ -8,7 +8,9 @@
     onQuery?: (q: string) => void;
     onCreate?: () => void;
   };
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { filter, query, count, onFilter, onQuery, onCreate }: Props = $props();
+  void count;
   const chips: Array<{ id: AdminFilter; label: string }> = [
     { id: 'all', label: 'All' },
     { id: 'admins', label: 'Admins' },

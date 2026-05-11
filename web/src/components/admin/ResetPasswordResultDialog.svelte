@@ -21,7 +21,7 @@
   }
 </script>
 
-<Dialog {open} title={`Temporary password for ${username}`} onClose={onClose}>
+<Dialog {open} title={`Temporary password for ${username}`} onClose={onClose ?? (() => {})}>
   <div class="body">
     <p>This password works once. <b>{username}</b> will be asked to set a new one on next sign-in. Share it through a secure channel — it will not be shown again.</p>
     <div class="key-row">

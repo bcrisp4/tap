@@ -16,7 +16,7 @@
   const { open, title, body, cta, danger = false, list = [], footNote = '', onConfirm, onCancel }: Props = $props();
 </script>
 
-<Dialog {open} {title} onClose={onCancel}>
+<Dialog {open} {title} onClose={onCancel ?? (() => {})}>
   <div class="body">
     <p>{body}</p>
     {#if list.length > 0}

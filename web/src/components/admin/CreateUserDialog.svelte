@@ -29,7 +29,7 @@
   }
 </script>
 
-<Dialog {open} title="Create user" onClose={onClose}>
+<Dialog {open} title="Create user" onClose={onClose ?? (() => {})}>
   <div class="body">
     <p class="p">New users sign in with this password and are prompted to enrol in two-factor on first successful sign-in.</p>
 
