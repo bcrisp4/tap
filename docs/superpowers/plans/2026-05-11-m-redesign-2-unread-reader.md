@@ -24,7 +24,7 @@
 8. Mark-on-scroll: when the reader is scrolled past the lede (`.ts-article-lede` element bottom edge clears the viewport top by ≥0px), wait 1.5s, then mark the entry read. Cancel if the user scrolls back above the lede before the timer fires. Driven by `IntersectionObserver`. Honours a `prefs.markOnScroll` boolean (default `true`); when `false`, the reader does not auto-mark (current behaviour: auto-mark on mount) and only `M` flips state. This pref is added by this milestone.
 9. Scroll position persistence: write `scrollTop` to `localStorage` under `tap.reader.scroll.<entryId>` on a debounced effect (300ms). On reader mount, after content loads, restore `scrollTop` from that key. Wrapped in `lib/readerScroll.ts` so the store is testable.
 10. Implement the actual SearchOverlay UI inside `web/src/components/SearchOverlay.svelte` (M1 ships the store + key handler + empty component). Bind to the M1 `searchOverlay` store (`{ open, query, scope }`), debounce input by 250ms, call `api.searchEntries(q)` when `q.length >= 3`, render the result list of `EntryRow` items, close on Esc or click-outside, navigate to `/entry/:id` on result click, focus the input when opened, restore focus to the previously focused element on close.
-11. Mobile reader: re-render Reader inside `.ts-mobile-reader-head` / `.ts-mobile-reader-body` / `.ts-mobile-reader-foot` per `tap-simple.jsx` `TapSimpleReaderMobile`. (M1 already wires `isMobile` branching at the AppShell level.) The brand spec's `.m-reader-topbar` / `.m-reader-footbar` are the *legacy* split-pane mobile names — we use the simple-shell variants (`.ts-mobile-reader-head` etc.) which are the equivalent for the simple shell.
+11. Mobile reader: re-render Reader inside `.ts-mobile-reader-head` / `.ts-mobile-reader-body` / `.ts-mobile-reader-foot` per `tap-simple.jsx` `TapSimpleReaderMobile`, branching on M1's `isMobile` store imported from `lib/breakpoints.svelte.ts`. The brand spec's `.m-reader-topbar` / `.m-reader-footbar` are the *legacy* split-pane mobile names — we use the simple-shell variants (`.ts-mobile-reader-head` etc.) which are the equivalent for the simple shell.
 12. Update `web/src/components/HotkeysModal.svelte` to add the new rows: `1` / `2` / `3` (measure), `1.5s mark-on-scroll` (info), `H` (back from reader synonym for Esc), `V` (view original).
 13. Delete `web/src/views/Search.svelte` and its test (M1 spec line 164 mandates this, but M1 only stubs the SearchOverlay; M2 finishes the migration so the search route's removal is observable in the SPA).
 
@@ -128,10 +128,18 @@ Invoke these as the implementer:
   test -f src/components/KbdChip.svelte
   test -f src/components/SearchOverlay.svelte
   test -f src/lib/searchOverlay.svelte.ts
-  grep -q 'measure' src/lib/preferences.svelte.ts
+  # Verify the exported names M2's code references (signature-level, not
+  # just literal occurrence). If the export shape is different (e.g. M1
+  # ships `measure.current` instead of `measure.value`), open a coordination
+  # ticket with planner-m1 before touching consumer code.
+  grep -qE "export const measure\b" src/lib/preferences.svelte.ts
+  grep -qE "export const font\b" src/lib/preferences.svelte.ts
+  grep -qE "export const density\b" src/lib/preferences.svelte.ts
+  grep -qE "export const searchOverlay\b" src/lib/searchOverlay.svelte.ts
+  grep -qE "\.value\b" src/lib/preferences.svelte.ts   # confirms getter name
   # M1 owns the EntryRow rewrite (team-lead ruling 2026-05-11):
   grep -q 'ts-entry' src/components/EntryRow.svelte
-  grep -q 'density' src/components/EntryRow.svelte
+  grep -qE "density[^a-zA-Z]" src/components/EntryRow.svelte
   # Canonical density vocabulary (team-lead ruling 2026-05-11):
   #   'compact' | 'comfortable' | 'cosy', default 'comfortable'.
   grep -q "'cosy'" src/lib/preferences.svelte.ts
@@ -1389,6 +1397,28 @@ describe('Reader view (M2 ts-article anatomy)', () => {
     const { container } = render(Reader, { props: { id: 42 } });
     await waitFor(() => expect(container.querySelector('.ts-article')).toBeTruthy());
     expect(mockLoadScroll).toHaveBeenCalledWith(42);
+    // The restore happens inside requestAnimationFrame; flush the queued
+    // RAF callback (jsdom doesn't run it synchronously) and a microtask.
+    await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+    await Promise.resolve();
+    const scrollEl = container.querySelector('[data-testid="reader-scroll"]') as HTMLElement;
+    expect(scrollEl).toBeTruthy();
+    expect(scrollEl.scrollTop).toBe(880);
+  });
+
+  it('debounced saveScroll writes scrollTop on scroll', async () => {
+    vi.useFakeTimers();
+    mockGetEntry.mockResolvedValueOnce(makeEntry({ read: true }));
+    const { container } = render(Reader, { props: { id: 42 } });
+    await waitFor(() => expect(container.querySelector('[data-testid="reader-scroll"]')).toBeTruthy());
+    const scrollEl = container.querySelector('[data-testid="reader-scroll"]') as HTMLElement;
+    Object.defineProperty(scrollEl, 'scrollTop', { value: 250, configurable: true });
+    await fireEvent.scroll(scrollEl);
+    vi.advanceTimersByTime(299);
+    expect(mockSaveScroll).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(mockSaveScroll).toHaveBeenCalledWith(42, 250);
+    vi.useRealTimers();
   });
 });
 ```
@@ -1408,7 +1438,6 @@ pnpm --dir web test -- src/views/__tests__/Reader.test.ts
   import { api } from '../lib/api';
   import { navigate } from '../lib/router';
   import { entries } from '../lib/store';
-  import { swipe } from '../lib/swipe';
   import type { EntryDetail } from '../lib/types';
   import FeedAvatar from '../components/FeedAvatar.svelte';
   import { measure, font, markOnScroll } from '../lib/preferences.svelte';
@@ -1423,6 +1452,10 @@ pnpm --dir web test -- src/views/__tests__/Reader.test.ts
   let articleEl = $state<HTMLElement | null>(null);
   let scrollEl = $state<HTMLElement | null>(null);
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // Snapshot mark-on-scroll pref once at component setup; do not react to
+  // changes mid-session (see useMarkOnScroll declaration below the effect).
+  const useMarkOnScroll = markOnScroll.value;
 
   const dispatch = getContext<{
     onToggleRead: () => void;
@@ -1440,7 +1473,7 @@ pnpm --dir web test -- src/views/__tests__/Reader.test.ts
         if (cancelled) return;
         entry = fetched;
         // Auto-mark only when mark-on-scroll is disabled.
-        if (!markOnScroll.value && fetched && !fetched.read) {
+        if (!useMarkOnScroll && fetched && !fetched.read) {
           try {
             await entries.toggleRead(targetId, true);
             if (cancelled) return;
@@ -1511,6 +1544,10 @@ pnpm --dir web test -- src/views/__tests__/Reader.test.ts
     });
   }
 
+  // We do not re-attach the observer when the user toggles the pref
+  // mid-session — toggling would orphan a half-fired observer state.
+  // The pref takes effect on the next reader mount, which is fine:
+  // it's a Settings toggle, not a per-article switch.
   const markOnce = createMarkOnScroll({
     onMark: () => { if (entry && !entry.read) void toggleRead(); },
   });
@@ -1521,10 +1558,7 @@ pnpm --dir web test -- src/views/__tests__/Reader.test.ts
   class:font-sans={font.value === 'sans'}
   bind:this={scrollEl}
   onscroll={onScroll}
-  {@attach swipe({
-    onSwipeRight: () => navigate('/'),
-    onSwipeLeft:  () => { /* no cross-entry nav in M2 */ },
-  })}
+  data-testid="reader-scroll"
 >
   <div class="ts-backrow">
     <button type="button" class="ts-back" onclick={() => navigate('/')} aria-label="Back to Unread">
@@ -1561,11 +1595,11 @@ pnpm --dir web test -- src/views/__tests__/Reader.test.ts
           <span>{entry.saved ? 'Saved' : 'Save'}</span>
           <kbd class="ts-kbd">s</kbd>
         </button>
-        <a class="ts-article-action" href={entry.url} target="_blank" rel="noopener" onclick={viewOriginal}>
+        <button type="button" class="ts-article-action" onclick={viewOriginal}>
           <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3h4v4M13 3 7 9M11 9.5V13H3V5h3.5"/></svg>
           <span>Original</span>
           <kbd class="ts-kbd">v</kbd>
-        </a>
+        </button>
       </div>
 
       <div class="ts-article-rule" aria-hidden="true">
@@ -1575,7 +1609,11 @@ pnpm --dir web test -- src/views/__tests__/Reader.test.ts
       </div>
 
       {#if entry.author}
-        <p class="ts-article-lede" {@attach (markOnScroll.value ? markOnce : () => () => {})}>{entry.author}</p>
+        {#if useMarkOnScroll}
+          <p class="ts-article-lede" {@attach markOnce}>{entry.author}</p>
+        {:else}
+          <p class="ts-article-lede">{entry.author}</p>
+        {/if}
       {/if}
 
       <div class="ts-article-body">{@html entry.content}</div>
@@ -1649,7 +1687,6 @@ pnpm --dir web test -- src/views/__tests__/Reader.test.ts
     font-family: var(--sans); font-size: 12.5px; font-weight: 500;
     color: var(--ink-2);
     background: transparent; border: 0; cursor: pointer; border-radius: 4px;
-    text-decoration: none;
   }
   .ts-article-action:hover { color: var(--ink); background: var(--bg-soft); }
   .ts-article-action.is-saved { color: var(--accent); }
@@ -1829,6 +1866,18 @@ describe('measure key bindings', () => {
     const ctx = makeCtx(); buildHandler(ctx)(fire('h'));
     expect(ctx.onBack).toHaveBeenCalledOnce();
   });
+  it('does not throw when optional handlers are absent', () => {
+    // Caller omits the new optional fields — buildHandler must no-op silently.
+    const ctx = {
+      onNext: vi.fn(), onPrev: vi.fn(), onOpen: vi.fn(),
+      onToggleRead: vi.fn(), onToggleSaved: vi.fn(), onViewOriginal: vi.fn(),
+      onEscape: vi.fn(), setModalOpen: vi.fn(),
+    };
+    expect(() => {
+      const h = buildHandler(ctx);
+      h(fire('1')); h(fire('2')); h(fire('3')); h(fire('h'));
+    }).not.toThrow();
+  });
 });
 ```
 
@@ -1850,21 +1899,23 @@ function makeCtx() {
 
 - [ ] **Step 3: Extend `keyboard.ts`**
 
+The new fields are **optional** so that any caller that only fills the original handlers still type-checks. `buildHandler` guards each new key with a presence check before invoking.
+
 ```ts
-// add to KeyboardContext interface
+// add to KeyboardContext interface (optional fields)
 export interface KeyboardContext {
-  // ... existing ...
-  onMeasureNarrow: () => void;
-  onMeasureComfortable: () => void;
-  onMeasureWide: () => void;
-  onBack: () => void;
+  // ... existing required fields above ...
+  onMeasureNarrow?: () => void;
+  onMeasureComfortable?: () => void;
+  onMeasureWide?: () => void;
+  onBack?: () => void;
 }
 
-// add to switch
-case '1': ctx.onMeasureNarrow(); break;
-case '2': ctx.onMeasureComfortable(); break;
-case '3': ctx.onMeasureWide(); break;
-case 'h': ctx.onBack(); break;
+// add to switch (with presence guards)
+case '1': ctx.onMeasureNarrow?.(); break;
+case '2': ctx.onMeasureComfortable?.(); break;
+case '3': ctx.onMeasureWide?.(); break;
+case 'h': ctx.onBack?.(); break;
 ```
 
 - [ ] **Step 4: Update `App.svelte`** to provide context for the new handlers and wire them: when route is `reader`, `1`/`2`/`3` write `measure.value`; `h` calls `navigate('/')`. When route is not `reader`, they're no-ops.
@@ -2269,14 +2320,23 @@ git commit -m "M2: drop /search route and Search view; replaced by SearchOverlay
 **Files:**
 - Modify: `web/src/views/Reader.svelte`
 
-Mobile is handled inside the same Reader by branching on `isMobile` from `AppShell` context. M1 should set context `appShell.isMobile`. When true, render `.ts-mobile-reader-head` + body + `.ts-mobile-reader-foot` per `tap-simple.jsx:511`. Reuse the same `<TSArticle>`-equivalent markup; only the chrome differs.
+Mobile is handled inside the same Reader by branching on `isMobile` exposed by M1. **Hard precondition** (raise with planner-m1 if not yet locked): M1 exports a `Readable<boolean>` named `isMobile` from `web/src/lib/breakpoints.svelte.ts`, fed by a single `matchMedia('(max-width: 768px)')` listener registered once at App mount. (The existing `App.svelte:26` already runs that listener; M1's job is to extract it into `breakpoints.svelte.ts` so views can `import { isMobile } from '../lib/breakpoints.svelte';`.) M2 imports the store; M2 does **not** instantiate a new `matchMedia` listener inside Reader.svelte — duplicate listeners cost cycles and risk drift between views.
 
-- [ ] **Step 1:** Confirm M1 exposes `isMobile` via context or a store. If M1 instead detects width inside each view via `matchMedia`, replicate that pattern locally inside Reader.svelte.
+When `isMobile` is true, render `.ts-mobile-reader-head` + body + `.ts-mobile-reader-foot` per `tap-simple.jsx:511`. Reuse the same article markup; only the chrome differs.
 
-- [ ] **Step 2:** Branch the outer template:
+- [ ] **Step 1:** Verify M1 ships `breakpoints.svelte.ts`.
+
+```bash
+test -f web/src/lib/breakpoints.svelte.ts
+grep -qE "export const isMobile\b" web/src/lib/breakpoints.svelte.ts
+```
+
+If either fails, message `planner-m1` (citing M2 Task 13 dependency) and pause this task; do not work around by instantiating a local `matchMedia` listener.
+
+- [ ] **Step 2:** Branch the outer template (after `import { isMobile } from '../lib/breakpoints.svelte';` at the top of the script):
 
 ```svelte
-{#if isMobile}
+{#if $isMobile}
   <div class="ts-mobile-reader-head">
     <button type="button" class="ts-mobile-back" onclick={() => navigate('/')} aria-label="Back to Unread">
       <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3 5 8l5 5"/></svg>
@@ -2432,6 +2492,10 @@ make dev   # http://localhost:5173 — manual smoke per Task 14 Step 2
 10. **Service worker cache.** Asset paths change (new components). Foundations milestone owns SW invalidation; M2 inherits it. Risk: if the SW caches an old `index.html`, the user sees a half-styled reader. Manual smoke step 2 in Task 14 catches this — if any styling looks stale, the umbrella spec §7 (item 7) requires the `needRefresh` banner to surface; check that the banner appears after `pnpm --dir web build`.
 11. **Existing `Reader.test.ts` cases — including the `'shows error when api.getEntry rejects'` and `'auto-marks unread entry as read on mount'` — collide with the new behaviour. The plan re-authors the test file; check Task 7 for the replacement set. **Do not** leave both the old and new assertions co-existing — the auto-mark test now asserts the *opposite* default.
 12. **`UnreadMarkAll.test.ts`** reaches into specific selectors that no longer exist (`.layout`, `.main`). Read that file first and update selectors during Task 4 — easy to miss.
+13. **Short-article UX regression with `markOnScroll = true` (the new default).** If an article is shorter than the viewport, the user never scrolls past the lede, and the entry is *never* auto-marked read — a real behaviour change vs the current Reader which marks on mount unconditionally. Brand spec §6.2 specifies "marks the entry read 1.5 s after the reader scrolls past the lede (or immediately on `M`)" so this is *spec-aligned* but worth flagging because manual M is now load-bearing for short articles. Mitigations to consider in a follow-up (not in this plan): (a) mark after 5s on viewport even if the lede hasn't passed; (b) treat "lede already above the fold at first paint" as "already passed" and start the 1.5s timer immediately. The plan ships the strict spec behaviour; team-lead should confirm before this lands. The risk does not block M2 because `M` always works.
+14. **Reactive `@attach` and pref toggling.** Svelte 5's `{@attach}` IS reactive — toggling `markOnScroll.value` mid-session *would* re-evaluate the attach expression and tear down/re-attach the observer. But the observer's internal `fired` state could become inconsistent across toggle cycles (fired in attach #1, attach #2 starts unmounted). To avoid this, the plan snapshots `useMarkOnScroll = markOnScroll.value` once at component setup and uses an `{#if useMarkOnScroll}` branch around the lede markup. The pref takes effect on the *next* reader mount, which matches the rest of Tap's preference model (theme, font, density also don't switch mid-render).
+15. **Anchor-vs-button for "Original".** Initial plan used `<a href onclick>` for the Original action, which would double-open the URL (anchor's native open + `window.open` in onclick). Plan now uses a `<button onclick={viewOriginal}>` matching the other action elements. Trade-off: middle-click / right-click → "open in new tab" no longer works (no native href). If that matters, expose `<a>` with `onclick={(e) => { e.preventDefault(); viewOriginal(); }}` instead. The plan keeps the button form because it matches the design's "action buttons stay buttons" pattern (`tap-simple.jsx` line 440 uses `<button>` for Original; the JSX never wires an anchor).
+16. **Reader swipe gestures.** The current Reader uses swipe-left/right for prev/next entry navigation. Brand spec §6.2 doesn't mention swipe; cross-entry nav inside the reader is M2-out-of-scope. **The plan removes the swipe attachment from the reader scroll container** rather than re-purposing it for back-to-list — let users use the back button or `Esc` / `H`. Removing the swipe is a behaviour change visible on mobile but consistent with the simple-shell design.
 
 ---
 
