@@ -32,6 +32,7 @@
 - Owning the `bucketByDay` helper — M-Redesign-2 owns its placement and shape.
 - Infinite scroll / virtualised lists (defer; "Load more" is fine for the page sizes Tap users will see).
 - Read-status filters or "include unread in history" toggle (the design treats History as the full timeline; if it shows unread entries, that's the design intent).
+- "Read-only" filtering. The umbrella spec is internally inconsistent on this point: §2.4 (line 99) says History fetches `/api/v1/entries` "with no `unread` flag" (i.e. all entries), while §5 row M8 (line 199) says "flat chronological list of **read entries** `?unread=0`". This plan follows the §2.4 reading because `api.listEntries` (see `web/src/lib/api.ts:115–132`) only adds `unread=1` to the query when the JS value is truthy — there is no current way to request `unread=0` against the existing endpoint, so the §5 wording cannot be honoured as a pure-frontend change. The team-lead has been notified to reconcile the umbrella spec; the implementation matches §2.4.
 
 ## Files
 
@@ -50,7 +51,7 @@
 
 **Depends on (must exist before this plan runs):**
 
-- M-Redesign-1 (Foundations): `.ts-shell` chrome, `EntryRow`, `EmptyState`, `Button`, the `/history` route, the desktop top-tab, the mobile More-sheet entry.
+- M-Redesign-1 (Foundations): `.ts-shell` chrome, `EntryRow`, `EmptyState`, `Button` (must accept `onclick`, `disabled`, a `quiet` variant, and pass `data-*` attributes through to the inner `<button>` — see Task 5 precondition), the `/history` route, the desktop top-tab, the mobile More-sheet entry.
 - M-Redesign-2 (Unread + Reader): `web/src/lib/dayBands.ts` exporting `bucketByDay(entries, now?: number): { today: T[]; yesterday: T[]; thisWeek: T[]; earlier: T[] }` and `GroupHeading.svelte`. If M2 places the helper elsewhere or names it differently, coordinate via PR comments and update this plan before implementation begins.
 
 ---
@@ -327,7 +328,7 @@ And in the `<script>` add the imports and the `feedFor` lookup:
   }
 ```
 
-`$subscriptions` requires importing the auto-subscription syntax: in Svelte 5 runes mode, `$` prefix on a `writable` store is auto-subscribed in the template; in script you must `import { get } from 'svelte/store'` or destructure via `$:` — but Svelte 5 in this project still supports `$store` auto-subs inside `<script>` template-tagged sections only. **The simpler, idiomatic-for-this-repo move** is to mirror `views/Unread.svelte:65–69`, which uses `$subscriptions.find(...)` inside a regular function — that file is already in runes mode and works. Copy that pattern verbatim.
+Mirror `views/Unread.svelte:67–69`, which uses `$subscriptions.find(...)` inside a `<script>`-declared function under Svelte 5 runes — verified working in this codebase. Copy that pattern verbatim.
 
 Also load subscriptions on mount so `feedFor` finds them:
 
@@ -584,20 +585,34 @@ In `<script>`:
   }
 ```
 
+**Precondition.** This task consumes the M1-owned `Button.svelte` primitive. M1 must deliver `Button.svelte` with:
+
+1. `onclick` (lowercase, Svelte 5 event-attribute form) prop wired to the inner `<button>`.
+2. `disabled` prop wired to the inner `<button>`.
+3. A `quiet` variant (per `docs/specs/2026-05-11-ui-redesign.md` §3.2 primitive table — "default / primary / accent / danger / quiet").
+4. Pass-through of arbitrary `data-*` attributes onto the inner `<button>` so the test can locate it by `[data-action="load-more"]`.
+
+If any of those four are missing when M8 runs, raise the gap with planner-m1 before writing this step. **Do not** fall back to a raw `<button class="ts-btn">` in History; primitive duplication is the failure mode we're avoiding.
+
+Add the import at the top of `<script>`:
+
+```ts
+  import Button from '../components/Button.svelte';
+```
+
 In the template, after the bands block (still inside `{:else}`):
 
 ```svelte
       {#if cursor}
         <div class="load-more-row">
-          <button
-            type="button"
-            class="ts-btn"
+          <Button
+            quiet
             data-action="load-more"
             disabled={loadingMore}
             onclick={loadMore}
           >
             {loadingMore ? 'Loading…' : 'Load more'}
-          </button>
+          </Button>
         </div>
       {/if}
 ```
@@ -607,8 +622,6 @@ Add the row style:
 ```css
   .load-more-row { display: flex; justify-content: center; padding: 24px 0; }
 ```
-
-(Foundations / M1 provides a `Button.svelte` primitive. If it's stable and imported in this codebase by the time M8 runs, swap the raw `<button class="ts-btn">` for `<Button quiet onclick={loadMore} disabled={loadingMore} data-action="load-more">…</Button>`. The test reads `[data-action="load-more"]` either way, so the implementation is interchangeable. Use whichever the foundations primitive supports — confirm by reading `web/src/components/Button.svelte` before this task starts; pass-through of `data-*` attributes is a precondition.)
 
 - [ ] **Step 4: Run and confirm both tests pass**
 
@@ -736,31 +749,40 @@ git commit -m "M-Redesign-8: mount real History view in place of M1 stub"
 
 The brand spec §6.3 (Saved) sets the empty-state pattern: accent dot, serif title, sans sub. History reuses the M1 `EmptyState` primitive.
 
-- [ ] **Step 1: Write the failing test for the empty-state primitive**
+- [ ] **Step 1: Drop the EmptyState mock and tighten the existing empty-state test**
 
-Replace the existing empty-state test from Task 1 step 7 with a stronger version. The old assertion looked for the text `/No history yet/i` in the `<p class="status empty">` placeholder; we now expect the `EmptyState` primitive (file-level-mocked) to be rendered. Use the mock to assert:
+First, **un-mock `EmptyState`** at the top of `web/src/views/__tests__/History.test.ts`. From Task 1 step 1 the file-level mock block reads:
 
 ```ts
-  it('renders the EmptyState primitive when there is no history', async () => {
-    const { default: MockedEmptyState } = await import('../../components/EmptyState.svelte');
+vi.mock('../../components/EntryRow.svelte', () => ({ default: vi.fn() }));
+vi.mock('../../components/GroupHeading.svelte', () => ({ default: vi.fn() }));
+vi.mock('../../components/EmptyState.svelte', () => ({ default: vi.fn() }));
+vi.mock('../../components/Button.svelte', () => ({ default: vi.fn() }));
+```
+
+Remove the `EmptyState` line. (Task 4 step 3 already removed the `GroupHeading` mock for the same reason; this is the parallel move for the same reason — these are M1-owned primitives whose real rendering is the canonical source of truth in DOM assertions. Reading `mock.calls[0][1].props` against a Svelte 5 `vi.fn()`-mocked default export is not a supported pattern in this repo — see `Reader.test.ts`, `UnreadMarkAll.test.ts` for the convention: mocks are for *isolation*, assertions read the parent's own rendered DOM.)
+
+Then strengthen the empty-state test originally written in Task 1 step 7. Replace it with:
+
+```ts
+  it('renders the empty-state copy when there is no history', async () => {
     vi.spyOn(api, 'listEntries').mockResolvedValueOnce({ data: [], next_cursor: undefined } as any);
     render(History);
-    await waitFor(() => expect((MockedEmptyState as any)).toHaveBeenCalled());
-    const props = (MockedEmptyState as any).mock.calls[0][1].props;
-    expect(props.title).toMatch(/No history yet/i);
-    expect(typeof props.sub).toBe('string');
+    expect(await screen.findByText(/No history yet/i)).toBeTruthy();
+    expect(await screen.findByText(/Subscribed feeds will accumulate/i)).toBeTruthy();
   });
 ```
 
-(Remove the older `expect(await screen.findByText(/No history yet/i)).toBeTruthy()` test from Task 1 to avoid duplicate coverage. Update the test count expectations in your local notes accordingly — the suite is now around 7 tests.)
+This asserts against the real `EmptyState` rendering — both the title and the sub. No mock-call introspection.
 
-- [ ] **Step 2: Run and confirm fail**
+- [ ] **Step 2: Run and confirm the existing test fails on the new sub-copy assertion**
 
-Expected: FAIL — the view still renders `<p class="status empty">`, not `EmptyState`.
+Run: `pnpm --dir web test -- src/views/__tests__/History.test.ts -t "empty-state"`
+Expected: FAIL — the current empty branch is `<p class="status empty">No history yet.</p>` (from Task 1 step 3), which does not render the sub-copy text and does not use `EmptyState`. The title-match may pass on the literal string in the `<p>`, but the sub-match will fail. Either way, the test now requires the view to consume `EmptyState`.
 
-- [ ] **Step 3: Switch to the EmptyState primitive**
+- [ ] **Step 3: Switch the empty branch to use the EmptyState primitive**
 
-In `web/src/views/History.svelte`:
+In `web/src/views/History.svelte`, add the import:
 
 ```svelte
   import EmptyState from '../components/EmptyState.svelte';
@@ -776,7 +798,9 @@ Replace the empty branch:
     />
 ```
 
-(The sub copy is concrete and short, matches the design's voice — see brand spec §1.3. Adjust before merge only if reviewer prefers different copy; both flavours satisfy the test.)
+(The sub copy is concrete and short, matches the design's voice — see brand spec §1.3. Adjust at review only if the reviewer prefers different copy; if you change it, update the regex in Step 1's test to match the new wording.)
+
+**Precondition note:** this assumes M1's `EmptyState.svelte` accepts `title` and `sub` props and renders them as visible text. Confirm by reading `web/src/components/EmptyState.svelte` before this step. If M1 named the props differently (e.g. `heading` / `body` / `description`), use M1's names and update the regex assertions to match the rendered text — the assertion shape (text match via `findByText`) does not change.
 
 - [ ] **Step 4: Run all tests for the file and confirm green**
 
