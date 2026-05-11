@@ -99,8 +99,8 @@
 - `web/src/App.svelte` — replace sidebar/TabBar wrapping with `<AppShell>`; update route table; wire `searchOverlay`.
 - `web/src/lib/router.ts` — add `categories` / `feeds` / `history` route names; remove `search` and `category` route names; ensure `unread` / `reader` / `saved` / `settings` / `admin` keep their paths.
 - `web/src/lib/router.ts` test (`web/src/lib/__tests__/router.test.ts`) — update for new routes.
-- `web/src/lib/preferences.svelte.ts` — add `measure` pref (`narrow` / `comfortable` / `wide`) for `.ts-article` consumption in M2.
-- `web/src/lib/__tests__/preferences.test.ts` — add coverage for new pref.
+- `web/src/lib/preferences.svelte.ts` — (1) add `measure` pref (`narrow` / `comfortable` / `wide`) for `.ts-article` consumption in M2; (2) **migrate `density` vocabulary** from `'compact' | 'default' | 'comfortable'` to the brand-spec canonical `'compact' | 'comfortable' | 'cosy'` with `'comfortable'` as the default. Per team-lead decision 2026-05-11: this is the canonical vocabulary across stores, CSS, EntryRow prop, and Settings. Existing `localStorage` values of `'default'` migrate to `'comfortable'` on first read.
+- `web/src/lib/__tests__/preferences.test.ts` — add coverage for new `measure` pref + new `density` vocabulary + `'default' → 'comfortable'` migration.
 - `web/src/styles/tokens.css` — add full token set from brand spec §2 (type scale vars, spacing scale, radii, motion durations, font-feature-settings; ensure existing theme colour vars + sepia stay intact).
 - `web/src/styles/global.css` — pare down: keep body reset, `:focus-visible`, scrollbar, `prefers-reduced-motion`, `@keyframes tap-pulse`, `@keyframes tf-spin`, font-faces. Remove all component-level CSS (every selector currently here that owns a component now lives in that component's scoped block).
 - `web/src/components/HotkeysModal.svelte` — restyle to the `.tap-modal` two-column shortcut grid per brand spec §7.
@@ -685,60 +685,161 @@ git add web/src/lib/searchOverlay.svelte.ts web/src/lib/pollStatus.ts web/src/li
 git commit -m "M1-D: add searchOverlay and pollStatus stores (TDD)"
 ```
 
-### Group E — Preferences extension
+### Group E — Preferences (density migration + measure)
 
 **Files:** `web/src/lib/preferences.svelte.ts`, `web/src/lib/__tests__/preferences.test.ts`.
 
-- [ ] **E1. Write the failing test for the new `measure` pref.** Append to `preferences.test.ts`:
+Two changes in one group:
+
+1. **Density vocabulary migration** (per team-lead decision 2026-05-11): the existing `'compact' | 'default' | 'comfortable'` enum becomes the canonical brand-spec `'compact' | 'comfortable' | 'cosy'`. Default flips from `'default'` to `'comfortable'`. Legacy `'default'` values stored in `localStorage` migrate to `'comfortable'` on first read.
+2. **New `measure` pref** for article body width (`'narrow' | 'comfortable' | 'wide'`).
+
+- [ ] **E1. Write failing tests for both changes.** Append to `preferences.test.ts`:
 
 ```ts
-import { describe, it, expect } from 'vitest';
-import { measure } from '../preferences.svelte';
+import { describe, it, expect, beforeEach } from 'vitest';
 
-describe('measure pref', () => {
-  it('defaults to comfortable when localStorage empty', () => {
-    localStorage.clear();
-    // Re-import not possible without test isolation; rely on module init default.
-    expect(measure.value === 'narrow' || measure.value === 'comfortable' || measure.value === 'wide').toBe(true);
+describe('density pref (canonical vocabulary)', () => {
+  beforeEach(() => { localStorage.clear(); });
+
+  it('defaults to comfortable when localStorage empty', async () => {
+    // Re-import to get a fresh module-level binding after clearing storage.
+    const { density } = await import('../preferences.svelte?fresh-density-default' as string);
+    expect(density.value).toBe('comfortable');
   });
 
-  it('persists to localStorage', () => {
+  it('migrates legacy "default" value to "comfortable"', async () => {
+    localStorage.setItem('tap.density', 'default');
+    const { density } = await import('../preferences.svelte?fresh-density-migrate' as string);
+    expect(density.value).toBe('comfortable');
+    // Migration persists the new value so it doesn't fire again.
+    expect(localStorage.getItem('tap.density')).toBe('comfortable');
+  });
+
+  it('accepts cosy', async () => {
+    const { density } = await import('../preferences.svelte?fresh-density-cosy' as string);
+    density.value = 'cosy';
+    expect(density.value).toBe('cosy');
+    expect(localStorage.getItem('tap.density')).toBe('cosy');
+  });
+});
+
+describe('measure pref', () => {
+  beforeEach(() => { localStorage.clear(); });
+
+  it('defaults to comfortable', async () => {
+    const { measure } = await import('../preferences.svelte?fresh-measure' as string);
+    expect(measure.value).toBe('comfortable');
+  });
+
+  it('persists to localStorage', async () => {
+    const { measure } = await import('../preferences.svelte?fresh-measure-persist' as string);
     measure.value = 'wide';
     expect(localStorage.getItem('tap.measure')).toBe('wide');
   });
 });
 ```
 
-- [ ] **E2. Run test, confirm it fails.**
+**Note on the `?fresh-*` query strings:** Vitest's module cache otherwise pins the first read of `localStorage`, so the migration test would never see the legacy value. The query string forces a fresh evaluation. If this proves brittle in the harness, fall back to `vi.resetModules()` + dynamic `import('../preferences.svelte')` inside each `beforeEach`.
 
-```bash
-pnpm --dir web test -- src/lib/__tests__/preferences.test.ts
-```
+- [ ] **E2. Run, confirm fail.** `pnpm --dir web test -- src/lib/__tests__/preferences.test.ts`. Expected: density migration test fails (legacy `'default'` not migrated); `cosy` rejected by the existing enum; `measure` not exported.
 
-Expected: fails on import "Module has no exported member 'measure'".
-
-- [ ] **E3. Add the pref to `preferences.svelte.ts`.** Append after `density`:
+- [ ] **E3. Rewrite `preferences.svelte.ts`.** Replace the file's contents:
 
 ```ts
+// .svelte.ts enables Svelte runes ($state, $derived) outside components.
+type Theme = 'light' | 'dark' | 'sepia' | 'system';
+type Font = 'serif' | 'sans';
+type Density = 'compact' | 'comfortable' | 'cosy';
 type Measure = 'narrow' | 'comfortable' | 'wide';
+
+const THEMES: Theme[] = ['light', 'dark', 'sepia', 'system'];
+const FONTS: Font[] = ['serif', 'sans'];
+const DENSITIES: Density[] = ['compact', 'comfortable', 'cosy'];
 const MEASURES: Measure[] = ['narrow', 'comfortable', 'wide'];
 
+const mq = typeof window !== 'undefined'
+  ? window.matchMedia('(prefers-color-scheme: dark)')
+  : null;
+
+let prefersDark = $state(mq?.matches ?? false);
+if (mq) {
+  mq.addEventListener('change', (e) => { prefersDark = e.matches; });
+}
+
+function makeTheme() {
+  const raw = localStorage.getItem('tap.theme');
+  let stored = $state<Theme>(THEMES.includes(raw as Theme) ? (raw as Theme) : 'system');
+  const resolved = $derived<'light' | 'dark' | 'sepia'>(
+    stored === 'system' ? (prefersDark ? 'dark' : 'light') : stored,
+  );
+  return {
+    get stored() { return stored; },
+    set stored(v: Theme) { stored = v; localStorage.setItem('tap.theme', v); },
+    get resolved() { return resolved; },
+  };
+}
+
+function makePref<T extends string>(key: string, def: T, allowed: T[]) {
+  const raw = localStorage.getItem(key);
+  let value = $state<T>(allowed.includes(raw as T) ? (raw as T) : def);
+  return {
+    get value() { return value; },
+    set value(v: T) { value = v; localStorage.setItem(key, v); },
+  };
+}
+
+// One-off migration: legacy density value "default" → "comfortable".
+// Run before makePref reads, so the legacy value is replaced *before* the
+// allowed-list filter would drop it back to the default.
+(function migrateDensity() {
+  if (typeof localStorage === 'undefined') return;
+  const raw = localStorage.getItem('tap.density');
+  if (raw === 'default') {
+    localStorage.setItem('tap.density', 'comfortable');
+  }
+})();
+
+export const theme = makeTheme();
+export const font = makePref<Font>('tap.font', 'serif', FONTS);
+export const density = makePref<Density>('tap.density', 'comfortable', DENSITIES);
 export const measure = makePref<Measure>('tap.measure', 'comfortable', MEASURES);
 ```
 
-- [ ] **E4. Run test, confirm green.**
+- [ ] **E4. Update any existing test in `preferences.test.ts` that referenced the old `'default'` density.** Grep:
 
 ```bash
-pnpm --dir web test -- src/lib/__tests__/preferences.test.ts
+grep -n "density.*default\|'default'" web/src/lib/__tests__/preferences.test.ts
 ```
 
-Expected: prior tests + 2 new passing.
+For each match, replace `'default'` with `'comfortable'`, except for tests asserting the migration path (which must keep the old value to drive the migration).
 
-- [ ] **E5. Commit.**
+- [ ] **E5. Run, confirm green.** `pnpm --dir web test -- src/lib/__tests__/preferences.test.ts`. Expected: all density tests + 2 measure tests + any prior passing test still passes.
+
+- [ ] **E6. Update `App.svelte`'s density class application.** The current code adds `density-compact` / `density-comfortable` classes to `html`. After E3, `density.value` can now also be `'cosy'`. Verify (Group O will rewrite App.svelte; ensure the rewrite there reads as):
+
+```ts
+$effect(() => {
+  const html = document.documentElement;
+  html.classList.remove('density-compact', 'density-comfortable', 'density-cosy');
+  html.classList.add(`density-${density.value}`);
+});
+```
+
+(Note: the rewrite in Group O already drops the old `if (density.value !== 'default')` guard. Confirm it always applies a class.)
+
+- [ ] **E7. Add the density CSS rules to `EntryRow.svelte`.** The rules now live with the row, not the global stylesheet. Confirm the `EntryRow.svelte` scoped block (Group H5c) defines:
+  - `.entry.density-compact` — hides summary, 10px padding, junction at `top: 17px` (already in the H5c snippet).
+  - `.entry.density-comfortable` — default shape, 16px padding, summary clamped to 2 lines (this IS the default for `.entry`; no extra rule needed beyond the base `.entry`).
+  - `.entry.density-cosy` — same as compact for padding/junction but **keeps the summary visible clamped to 1 line** (per brand spec §4.4).
+
+If Group H5c's CSS doesn't yet show `.density-cosy { padding-top: 10px; padding-bottom: 10px; } .density-cosy .summary { -webkit-line-clamp: 1; display: -webkit-box; }`, add it before committing H5.
+
+- [ ] **E8. Commit.**
 
 ```bash
 git add web/src/lib/preferences.svelte.ts web/src/lib/__tests__/preferences.test.ts
-git commit -m "M1-E: add measure preference (narrow/comfortable/wide)"
+git commit -m "M1-E: migrate density to compact/comfortable/cosy; add measure pref"
 ```
 
 ### Group F — Router routes
@@ -1811,9 +1912,12 @@ describe('EntryRow', () => {
   .entry.is-selected { background: var(--accent-soft); }
   .entry.is-read .title { color: var(--ink-3); font-weight: 400; }
   .entry.is-read .meta { color: var(--ink-3); }
+  /* Brand spec §4.4: comfortable is the default (16px pad, summary 2 lines). */
   .entry.density-compact { padding-top: 10px; padding-bottom: 10px; }
   .entry.density-compact .summary { display: none; }
   .entry.density-compact .junction { top: 17px; }
+  .entry.density-cosy { padding-top: 10px; padding-bottom: 10px; }
+  .entry.density-cosy .junction { top: 17px; }
   .entry.density-cosy .summary { -webkit-line-clamp: 1; }
 
   .junction {
@@ -3225,13 +3329,19 @@ git add web/src/views/Saved.svelte web/src/views/__tests__/Saved.test.ts
 git commit -m "M1-K5: wire Saved into AppShell, EmptyState on empty"
 ```
 
-- [ ] **K7. Update `Settings.svelte`.** Remove sidebar wrapper. Two specific control swaps:
+- [ ] **K7. Update `Settings.svelte`.** Remove sidebar wrapper. Control swaps (M6 will do the full numbered-eyebrow rebuild — M1 only swaps controls to the new primitives so the page doesn't visually clash with the new shell):
   - Native theme `<select>` → `<Segmented options={[{value:'light',label:'Light'},{value:'dark',label:'Dark'},{value:'sepia',label:'Sepia'},{value:'system',label:'System'}]} value={theme.stored} onChange={(v) => theme.stored = v}>`.
-  - Native font `<select>` → `<Segmented>` with serif/sans options.
-  - Native density `<select>` → `<Segmented>` with comfortable/compact options.
+  - Native font `<select>` → `<Segmented options={[{value:'serif',label:'Serif'},{value:'sans',label:'Sans'}]} value={font.value} onChange={(v) => font.value = v}>`.
+  - Native density `<select>` → `<Segmented options={[{value:'compact',label:'Compact'},{value:'comfortable',label:'Comfortable'},{value:'cosy',label:'Cosy'}]} value={density.value} onChange={(v) => density.value = v}>`. **Note the new vocabulary** — `'compact' | 'comfortable' | 'cosy'`, defaulting to `'comfortable'`. Any existing test assertion that selects an `<option value="default">` or asserts `density.value === 'default'` must be rewritten; legacy stored values migrate automatically (Group E).
   - Any ad-hoc dialog → `<Dialog>`.
+  - Add a `measure` control as well (`<Segmented options={[{value:'narrow',label:'Narrow'},{value:'comfortable',label:'Comfortable'},{value:'wide',label:'Wide'}]} value={measure.value} onChange={(v) => measure.value = v}>`) so the M2 article-rebuild can consume it — keep it visually grouped with density; M6 will rearrange these into the §4.7 segmented row.
 
-Update `Settings.test.ts` to query Segmented buttons instead of native selects.
+Update `Settings.test.ts` to:
+- Query Segmented buttons (role="radio") instead of native `<select>` options.
+- Assert `density.value` round-trips through clicks on `'Compact'` / `'Comfortable'` / `'Cosy'`.
+- Drop any assertion that uses the legacy `'default'` density.
+
+Settings.test.ts is also the canonical place to verify the Segmented-store-write contract (Risk §3). One click → one store mutation.
 
 - [ ] **K8. Run Settings tests, fix drift, commit.**
 
@@ -3541,8 +3651,8 @@ Wire everything together: replace the old route table with the new one, wrap con
 
   $effect(() => {
     const html = document.documentElement;
-    html.classList.remove('density-compact', 'density-comfortable');
-    if (density.value !== 'default') html.classList.add(`density-${density.value}`);
+    html.classList.remove('density-compact', 'density-comfortable', 'density-cosy');
+    html.classList.add(`density-${density.value}`);
   });
 </script>
 
@@ -3897,7 +4007,7 @@ If step 6 finds a regression, fix it before continuing; do not file an issue and
 
 7. **`useRegisterSW` is a TypeScript-typed virtual import.** Type-checking can flake if the `vite-plugin-pwa` types lag the Svelte 5 plugin. **Mitigation:** if `pnpm --dir web run check` errors specifically on `virtual:pwa-register/svelte`, check `web/src/__mocks__/pwa-register-svelte.ts` — it provides the test-time stub. The runtime path is fine.
 
-8. **Density preference collision.** Existing `density` pref values are `compact` / `default` / `comfortable`. Brand spec §4.4 talks about `compact` / `comfortable` / `cosy`. The new `EntryRow` accepts `compact` / `comfortable` / `cosy`. **Risk:** existing users with `tap.density = 'default'` in `localStorage` will hit a mismatch. Mitigation: map `default` → `comfortable` at the call site in `App.svelte` (or in `preferences.svelte.ts` `makePref`'s `allowed` list). **Decision:** keep the store's existing values; the new EntryRow accepts only `compact`/`comfortable`/`cosy` and a caller-side map handles `default`. M6 (Settings) can migrate the stored value to `comfortable` on first run.
+8. **Density preference vocabulary migration (RESOLVED 2026-05-11).** Existing `density` pref values were `'compact' | 'default' | 'comfortable'`. Brand spec §4.4 names the three densities `Compact`, `Comfortable` (default), `Cosy`. **Team-lead decision 2026-05-11:** the brand-spec vocabulary is canonical — `'compact' | 'comfortable' | 'cosy'`, default `'comfortable'`. Group E migrates `localStorage` `'default'` → `'comfortable'` on first read; `preferences.svelte.ts` declares only the three new values; `EntryRow.svelte` accepts only the three new values; Settings (K7) uses the three new values; App.svelte (O2) applies whichever class is current. Planner-m2 has a `grep EntryRow.svelte .ts-entry density` check that fails fast if M1 ships the wrong vocabulary — that check passes here. **No residual risk** for new installs; legacy users see one-time `localStorage` rewrite on first load after upgrade.
 
 9. **AccountAvatar styling assumes parent has `position: relative`.** `.avatar-btn` is `position: absolute` against the nearest positioned ancestor. `.tap` in `AppShell` is `position: relative` — verify this is set, or the avatar will float to the document root. **Mitigation:** included in `AppShell` style block.
 
@@ -3929,8 +4039,8 @@ After authoring this plan, I checked it against the spec with fresh eyes:
 
 - **Spec coverage:** every bullet in umbrella §5 M-Redesign-1 row maps to a Group A–O task. Deletes from §3.3 map to Group L. Stub views map to Group N. HotkeysModal restyle maps to Group M. Login rewrite maps to Group J. Service-worker risk maps to verification P4.
 - **Placeholder scan:** no "TBD", "implement later", or generic "handle edge cases" — every code block is complete.
-- **Type consistency:** `Segmented`'s `onChange` signature matches its usage in Settings. `Field`'s `bind:value` matches its usage in Login. `EntryRow`'s `density` prop accepts `compact | comfortable | cosy` everywhere.
-- **One adjustment** noted in Risks §8 (density store value mapping); plan resolves it inline.
+- **Type consistency:** `Segmented`'s `onChange` signature matches its usage in Settings. `Field`'s `bind:value` matches its usage in Login. `EntryRow`'s `density` prop accepts `'compact' | 'comfortable' | 'cosy'` everywhere — store, CSS class names, prop default, Settings Segmented options. Group E migrates legacy `'default'` to `'comfortable'`.
+- **Two team-lead amendments baked in:** (1) EntryRow primitive in M1, SavedRow deferred to M3 (header §Amendment). (2) Density vocabulary canonical per brand spec — see Group E and Risks §8.
 
 ---
 
