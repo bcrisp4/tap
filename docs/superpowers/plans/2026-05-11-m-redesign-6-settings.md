@@ -4,7 +4,7 @@
 
 **Goal:** Rebuild `web/src/views/Settings.svelte` on the `.ts-shell` simple-centred shell as a single scrollable page with seven numbered eyebrow sections (`01 · APPEARANCE` … `07 · DATA`) matching `ui_design/Tap Brand and UI Spec.md` §6.6, and rebuild every TOTP / passkey / recovery-codes / session / password-change / OPML / delete-account flow on the M1 primitives (`Button`, `Field`, `Segmented`, `Dialog`, `OtpInput`, `RecoveryCodesGrid`, `EmptyState`, `KbdChip`).
 
-**Architecture:** One top-level view file (`views/Settings.svelte`) owns the page layout (eyebrow header, page-id strip, seven `<SetSection>` blocks). Each section is an internal Svelte component under `web/src/views/settings/` so the file stays focused and per-section state lives next to the markup that uses it. Two new client-side preference stores (`prefs.reading`, `prefs.poll`) join the existing `prefs` module; the existing `prefs.measure` from M-Redesign-1 is re-used. The Security section reuses every M7 backend endpoint that `views/settings/Security.svelte` currently calls — this milestone is a chrome rebuild on top of unchanged server behaviour. The only **new backend addition** is `DELETE /api/v1/me`: an account-deletion endpoint that requires the user's current password and cascades to `subscriptions`/`entries`/`sessions`/`categories`/`passkeys`/`tombstones` rows. (Display name is **explicitly out of scope** — no users-table column for it, deferred to a later milestone.) The deletion endpoint is narrow and justified by the design spec's row 04/07 explicitly showing a danger-confirm dialog tied to the page; the umbrella spec §1 permits "narrow additions a milestone explicitly justifies." The legacy `views/settings/Security.svelte` is **deleted** at the end of the milestone — its job is split across two new components (`SecurityTOTPSection.svelte`, `SecurityPasskeysSection.svelte`) plus the new `SessionsSection.svelte`.
+**Architecture:** One top-level view file (`views/Settings.svelte`) owns the page layout (eyebrow header, page-id strip, seven `<SetSection>` blocks). Each section is an internal Svelte component under `web/src/views/settings/` so the file stays focused and per-section state lives next to the markup that uses it. Two new client-side preference stores (`prefs.reading`, `prefs.poll`) join the existing `prefs` module; the existing `prefs.measure` from M-Redesign-1 is re-used. The Security section reuses every M7 backend endpoint that `views/settings/Security.svelte` currently calls — this milestone is a chrome rebuild on top of unchanged server behaviour. The only **new backend addition** is `DELETE /api/v1/me`: an account-deletion endpoint that requires the user's current password and cascades to `subscriptions`/`entries`/`sessions`/`categories`/`passkeys`/`tombstones` rows. (Display name is **explicitly out of scope** — no users-table column for it, deferred to a later milestone.) The umbrella spec §2.4 was amended (with M5's `refresh_now` flag) to add an explicit paragraph for `DELETE /api/v1/me` and to drop M6 from the "no new endpoints" list. The "Refresh all now" button on Settings (03 · SYNCING) is **not** a new endpoint — it consumes M5's `PATCH /api/v1/subscriptions/:id` with `{ refresh_now: true }` (which calls `Scheduler.Poke()` server-side), so M6 depends on M5 landing first. The legacy `views/settings/Security.svelte` is **deleted** at the end of the milestone — its job is split across two new components (`SecurityTOTPSection.svelte`, `SecurityPasskeysSection.svelte`) plus the new `SessionsSection.svelte`.
 
 **Tech Stack:** Svelte 5 + TypeScript + Vite (no SvelteKit), runes throughout (`$state`, `$derived`, `$effect`, `$props`); existing M7 backend (TOTP / WebAuthn / sessions / password change) untouched; one new Go handler for account deletion; Vitest for unit tests; svelte-check for type-only verification.
 
@@ -24,7 +24,7 @@ Reach for as needed:
 - **`tdd`** — drives the section-by-section test sequence: write the failing test for a section's reactive behaviour, run, implement, run, commit. See per-task notes below.
 - **`svelte-template-directives`** — `{@render}` for slot-like patterns; `{@const}` for in-template computed values. Used in `SetRow.svelte` to render the optional description block when desc is non-empty.
 - **`svelte-components`** — match the form ergonomics of `web/src/components/AddFeedForm.svelte`. New dialogs follow the `Dialog.svelte` primitive M-Redesign-1 ships (head + body + foot + Esc + click-outside dismissal + focus trap).
-- **`golang-error-handling`** — for the new `DELETE /api/v1/me` handler: sentinel `ErrUserHasNoPassword` (when the account is passkey-only and can't verify a password challenge), structured error code `password_required`, wrap with `%w` so the API layer can `errors.Is` and map to 400. Don't log the password.
+- **`golang-error-handling`** — for the new `DELETE /api/v1/me` handler: every user in `migrations/0005_auth_and_credentials.sql` has `password_hash TEXT NOT NULL`, so the only failure modes are "missing/empty `current_password` in the body" (400 with `ErrCodeBadRequest`) and "password mismatch" (401 with `ErrCodeInvalidCredentials`). No new sentinel error type is needed; `auth.Verify` returning `false` is the wrong-password signal. Don't log the password.
 - **`golang-database`** — the cascade delete touches eight tables (`users`, `sessions`, `subscriptions`, `entries`, `categories`, `passkeys`, `tombstones`, `webauthn_sessions` if present). Wrap in one transaction; rely on the existing FK `ON DELETE CASCADE` constraints (verify each table before deciding to add explicit `DELETE FROM`).
 - **`golang-security`** — re-authentication before destructive action: verify the supplied password with `auth.Verify` (constant-time compare lives inside `Verify`), bail with 401/`invalid_credentials` if it fails. Do **not** require TOTP a second time — the session has already proven possession. No new rate-limit logic is added by this milestone; rely on whatever the existing session middleware enforces. (Check `internal/api/middleware.go` before adding new behaviour; if no rate-limiting exists yet, do not introduce it here — that's a separate concern.)
 - **`golang-testing`** + **`golang-stretchr-testify`** — match repo style (`require.NoError`, `require.Equal`). Use `httptest.Server` for end-to-end account-deletion tests including the cascade.
@@ -63,7 +63,7 @@ The QR enrolment dialog renders a real QR from the `secret_uri` returned by `POS
 | `web/src/views/settings/dialogs/DeleteAccountDialog.svelte` | **create** | Password-challenge dialog with `.ts-dialog-warn` block; calls `api.deleteAccount`; on success calls `auth.logout` and navigates to `/sign-in`. |
 | `web/src/lib/preferences.svelte.ts` | **modify** | Add `makeReadingPrefs` factory exporting `markOnScroll`, `autoOpenNext`, `showSummaries`, `openLinksNewTab` boolean prefs; add `makePollPref` for advisory poll-interval display. |
 | `web/src/lib/__tests__/preferences.test.ts` | **modify** (or **create** if missing) | Roundtrip tests for the new prefs (default values, localStorage persistence, invalid values fall back to default). |
-| `web/src/lib/api.ts` | **modify** | Add `api.deleteAccount(currentPassword: string)` (POST /api/v1/me/delete with `current_password` in body, expecting 204) and `api.exportSavedJSON()` (client-side blob construction; no new endpoint). |
+| `web/src/lib/api.ts` | **modify** | Add `api.deleteAccount(currentPassword: string)` (`DELETE /api/v1/me` with `current_password` in body, expecting 204) and `api.exportSavedJSON()` (client-side blob construction; no new endpoint). Verify `api.refreshSubscription(id)` from M-Redesign-5 exists; if not, the implementer rebases on M5 before continuing — see Task A3. |
 | `web/src/lib/__tests__/api.test.ts` | **modify** | Add tests for `api.deleteAccount` success + 401 invalid-password + 400 missing-password. |
 | `web/src/lib/types.ts` | **modify** | Add `DeleteAccountRequest = { current_password: string }`. |
 | `internal/api/auth.go` | **modify** | Add `deleteAccountHandler(deps)`; new `deleteAccountRequest` DTO; error code `ErrCodePasswordRequired` (or reuse `ErrCodeInvalidCredentials` on wrong-password). |
@@ -76,7 +76,7 @@ The QR enrolment dialog renders a real QR from the `secret_uri` returned by `POS
 | `web/src/views/__tests__/Settings.test.ts` | **create** | High-level integration tests: page renders all 7 sections; navigates between dialogs; theme change updates store; delete-account success calls `auth.logout`. |
 | `web/src/views/settings/__tests__/AppearanceSection.test.ts` | **create** | Segmented click updates `prefs.theme.stored`; segmented active state mirrors current pref; system theme falls back to OS via `prefersDark`. |
 | `web/src/views/settings/__tests__/ReadingSection.test.ts` | **create** | Each toggle reads + writes the corresponding `prefs.reading.*` value; localStorage round-trip persists across reloads. |
-| `web/src/views/settings/__tests__/SyncingSection.test.ts` | **create** | Refresh-all-now button calls `api.refreshAll` (or per-feed N×1 loop); last-sync timestamp re-renders when poll state changes. |
+| `web/src/views/settings/__tests__/SyncingSection.test.ts` | **create** | Refresh-all-now button iterates over the current subscription list and calls `api.refreshSubscription(id)` (M5's per-feed PATCH `{refresh_now: true}`) for each; last-sync timestamp re-renders after the loop completes. |
 | `web/src/views/settings/__tests__/AccountSection.test.ts` | **create** | Change-password button opens dialog; submit calls `api.changePassword` and closes on success; sign-out-everywhere calls `api.revokeAllOtherSessions`. |
 | `web/src/views/settings/__tests__/SecurityTOTPSection.test.ts` | **create** | Mirrors current `Security.svelte` behaviour for TOTP: enrol opens QR dialog, confirm transitions to recovery codes; disable; regenerate. |
 | `web/src/views/settings/__tests__/SecurityPasskeysSection.test.ts` | **create** | Add-passkey opens dialog and (in test) mocks `navigator.credentials.create`; remove-passkey opens password challenge. |
@@ -84,7 +84,7 @@ The QR enrolment dialog renders a real QR from the `secret_uri` returned by `POS
 | `web/src/views/settings/__tests__/DataSection.test.ts` | **create** | Export OPML triggers `api.exportOPML` and a download; Import OPML opens dialog and submits the file; delete-account opens password challenge and on success calls `auth.logout`. |
 | `web/src/views/settings/dialogs/__tests__/ChangePasswordDialog.test.ts` | **create** | Submit calls api; CSRF rotation is reflected in the auth store; mismatched confirm shows local validation error before request fires. |
 | `web/src/views/settings/dialogs/__tests__/EnrolTOTPDialog.test.ts` | **create** | Step 1 renders QR; copy-secret button writes to `navigator.clipboard`; step 2 OTP confirm calls API; success path transitions to recovery-codes dialog. |
-| `web/src/views/settings/dialogs/__tests__/DeleteAccountDialog.test.ts` | **create** | Confirm requires password; on success calls `auth.logout` and `router.go('/sign-in')`. |
+| `web/src/views/settings/dialogs/__tests__/DeleteAccountDialog.test.ts` | **create** | Confirm requires password; on success calls `auth.logout` and `navigate('/sign-in')` (the router exports `navigate`, not `go`). |
 | `web/package.json` | **modify** | Add `qrcode` dep (or chosen alternative); `pnpm install`. |
 
 ---
@@ -753,6 +753,14 @@ EOF
 
 - [ ] **Step 1: Write the failing test**
 
+**Precondition:** verify M-Redesign-5 has landed `api.refreshSubscription(id)` plus the backend `PATCH /api/v1/subscriptions/:id` accepting `{refresh_now: true}`. Run:
+
+```bash
+grep -n "refreshSubscription\|refresh_now" web/src/lib/api.ts internal/api/subscriptions.go
+```
+
+Both files must show the symbol. If either is missing, **stop and rebase on M-Redesign-5 first**. Do not invent a parallel mechanism.
+
 ```ts
 import { render, fireEvent, waitFor } from '@testing-library/svelte';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -772,11 +780,31 @@ describe('SyncingSection', () => {
     expect(getByRole('radio', { name: /5m/i })).toHaveAttribute('aria-checked', 'true');
   });
 
-  it('clicking Refresh all now calls api on every subscription', async () => {
-    const refresh = vi.spyOn(api, 'refreshAllSubscriptions').mockResolvedValue();
+  it('clicking Refresh all now calls api.refreshSubscription once per feed (M5 mechanism)', async () => {
+    vi.spyOn(api, 'listSubscriptions').mockResolvedValue([
+      { id: 1 } as never, { id: 2 } as never, { id: 3 } as never,
+    ]);
+    const refresh = vi.spyOn(api, 'refreshSubscription').mockResolvedValue();
     const { getByRole } = render(SyncingSection);
     await fireEvent.click(getByRole('button', { name: /refresh all/i }));
-    await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+    await waitFor(() => {
+      expect(refresh).toHaveBeenCalledTimes(3);
+      expect(refresh).toHaveBeenCalledWith(1);
+      expect(refresh).toHaveBeenCalledWith(2);
+      expect(refresh).toHaveBeenCalledWith(3);
+    });
+  });
+
+  it('surfaces a partial-failure status when at least one feed PATCH rejects', async () => {
+    vi.spyOn(api, 'listSubscriptions').mockResolvedValue([
+      { id: 1 } as never, { id: 2 } as never,
+    ]);
+    const refresh = vi.spyOn(api, 'refreshSubscription')
+      .mockImplementation((id: number) => id === 1 ? Promise.resolve() : Promise.reject(new Error('500')));
+    const { getByRole, findByRole } = render(SyncingSection);
+    await fireEvent.click(getByRole('button', { name: /refresh all/i }));
+    expect(await findByRole('alert')).toHaveTextContent(/1 of 2|1 failed/i);
+    expect(refresh).toHaveBeenCalledTimes(2);
   });
 
   it('renders the last-sync timestamp from /healthz', async () => {
@@ -796,25 +824,15 @@ describe('SyncingSection', () => {
 pnpm --dir web test -- src/views/settings/__tests__/SyncingSection.test.ts
 ```
 
-Expected: import failure or missing `api.refreshAllSubscriptions` / `api.health`.
+Expected: missing `api.health` (api.refreshSubscription + api.listSubscriptions already exist from M5).
 
-- [ ] **Step 3: Add the helper API calls**
+- [ ] **Step 3: Add the `health` helper to `web/src/lib/api.ts`**
 
-Edit `web/src/lib/api.ts`. Add two new methods:
+Append to the `api` object (just below `listEntries`):
 
 ```ts
-  // Manual full-refresh: fire-and-forget Poke on every subscription.
-  // The scheduler still owns cadence; this is just a user-triggered nudge.
-  refreshAllSubscriptions: async () => {
-    const subs = await request<ListResponse<Subscription>>('/subscriptions').then(r => r.data);
-    // The current backend exposes no batch-refresh endpoint. Issue a no-op
-    // PATCH per subscription to bump next_poll_at to 0 — the scheduler
-    // will pick them up at the next tick. This is the same pattern Feeds
-    // management uses for bulk refresh.
-    await Promise.all(subs.map(s => request<void>(`/subscriptions/${s.id}/poll`, { method: 'POST', body: '{}' }).catch(() => undefined)));
-  },
-
-  // Wrapper around /healthz for SPA-side display only.
+  // Wrapper around /healthz for SPA-side display only. Public endpoint;
+  // does not flow through request() because /healthz lives outside /api/v1.
   health: async (): Promise<{ polls_active: number; last_poll_at?: number }> => {
     const r = await fetch('/healthz');
     if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
@@ -822,7 +840,7 @@ Edit `web/src/lib/api.ts`. Add two new methods:
   },
 ```
 
-> **Implementer note:** if the backend does not have `POST /api/v1/subscriptions/:id/poll`, scope the Refresh button to a single call against a future batch endpoint, or fall back to a per-feed `nudge` action that already exists in the Feeds management milestone. Check `internal/api/api.go` before assuming; if absent, either add a tiny endpoint (justified narrow addition: this is just an explicit `UPDATE subscriptions SET next_poll_at = 0 WHERE user_id = ? AND id = ?`) or **scope the button down to disabled with a tooltip "available in M-Redesign-5 Feeds management"**. Document the chosen path in the PR.
+**Do not introduce** any `refreshAllSubscriptions`, `pollAll`, or `POST /subscriptions/:id/poll` helper. The umbrella spec §2.4 (post-amendment) makes M5's `PATCH /api/v1/subscriptions/:id` with `{refresh_now: true}` the canonical refresh mechanism for the whole SPA. Implement the loop inside the section component itself, surfacing per-feed errors via `Promise.allSettled`. If `/healthz` doesn't yet return `last_poll_at`, leave the field optional and just show "last sync —" until a future server-side change adds it. (Verify the current shape with `curl -s http://localhost:8080/healthz` before assuming.)
 
 - [ ] **Step 4: Implement the section**
 
@@ -853,14 +871,19 @@ Create `web/src/views/settings/SyncingSection.svelte`:
     try {
       const h = await api.health();
       lastSyncAt = h.last_poll_at ?? null;
-    } catch { /* swallow */ }
+    } catch { /* swallow — display-only */ }
   });
 
   async function refreshAll() {
     busy = true;
     error = '';
     try {
-      await api.refreshAllSubscriptions();
+      const subs = await api.listSubscriptions();
+      const results = await Promise.allSettled(subs.map(s => api.refreshSubscription(s.id)));
+      const failed = results.filter(r => r.status === 'rejected').length;
+      if (failed > 0) {
+        error = `Refreshed ${subs.length - failed} of ${subs.length} · ${failed} failed`;
+      }
       const h = await api.health();
       lastSyncAt = h.last_poll_at ?? null;
     } catch (e) {
@@ -910,7 +933,7 @@ Create `web/src/views/settings/SyncingSection.svelte`:
 pnpm --dir web test -- src/views/settings/__tests__/SyncingSection.test.ts
 ```
 
-Expected: 3 tests pass.
+Expected: 4 tests pass.
 
 - [ ] **Step 6: Commit**
 
@@ -921,8 +944,9 @@ git add web/src/views/settings/SyncingSection.svelte \
 git commit -m "$(cat <<'EOF'
 M-Redesign-6: implement 03 · SYNCING section
 
-Poll-interval segmented (advisory), Refresh-all-now button (issues
-per-feed nudges), and last-sync mono timestamp polled from /healthz.
+Poll-interval segmented (advisory), Refresh-all-now button (N×1 loop
+over api.refreshSubscription from M5; surfaces partial-failure count
+via role=alert), and last-sync mono timestamp polled from /healthz.
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 EOF
@@ -1104,7 +1128,6 @@ Create `web/src/views/settings/AccountSection.svelte`:
 
 ```svelte
 <script lang="ts">
-  import { get } from 'svelte/store';
   import SetSection from './SetSection.svelte';
   import SetRow from './SetRow.svelte';
   import Button from '../../components/Button.svelte';
@@ -1116,8 +1139,11 @@ Create `web/src/views/settings/AccountSection.svelte`:
   let busy = $state(false);
   let error = $state('');
 
-  const authState = $derived(get(auth));
-  const email = $derived(authState?.user?.username ?? '');
+  // Auto-subscribe to the auth store via `$auth` so the email re-renders if
+  // the user's username changes (e.g., a future "change email" flow) and so
+  // tests can swap in a fresh writable per-test. `get(auth)` here is a
+  // one-shot read — it would not re-run when auth updates.
+  const email = $derived($auth.user?.username ?? '');
 
   async function signOutEverywhere() {
     busy = true; error = '';
@@ -1140,7 +1166,7 @@ Create `web/src/views/settings/AccountSection.svelte`:
       <Button onclick={() => dialogOpen = true}>Change password</Button>
     {/snippet}
   </SetRow>
-  <SetRow label="Sign out everywhere" desc="Revokes every other session except this one.">
+  <SetRow label="Sign out everywhere" desc="Revokes every other session except this one. You stay signed in on this device.">
     {#snippet control()}
       <Button kind="danger" onclick={signOutEverywhere} disabled={busy}>Sign out everywhere</Button>
     {/snippet}
@@ -1543,7 +1569,6 @@ Both use an `OtpInput` and call the corresponding API. They follow the same patt
 
 ```svelte
 <script lang="ts">
-  import { get } from 'svelte/store';
   import SetSection from './SetSection.svelte';
   import SetRow from './SetRow.svelte';
   import Button from '../../components/Button.svelte';
@@ -1558,8 +1583,10 @@ Both use an `OtpInput` and call the corresponding API. They follow the same patt
   let viewCodes = $state<string[]>([]);
   let regenerated = $state(false);
 
-  const authState = $derived(get(auth));
-  const hasTOTP = $derived(authState?.user?.has_totp ?? false);
+  // Reactive — `auth.bootstrap()` after an enrol/disable flow flips
+  // `has_totp` in the store, and this $derived must re-run so the button
+  // set swaps from "Set up" to "Regenerate / Disable".
+  const hasTOTP = $derived($auth.user?.has_totp ?? false);
 </script>
 
 <SetSection num="05" title="Security · Two-factor">
@@ -1921,7 +1948,7 @@ Expected: import failure.
           {/each}
         </div>
       {:else}
-        <EmptyState title="No passkeys yet" sub="Add one to skip the password on this device." />
+        <EmptyState title="No passkeys yet" subtitle="Add one to skip the password on this device." />
       {/if}
       <div class="actions">
         <Button kind="primary" onclick={() => addOpen = true}>Add a passkey</Button>
@@ -2432,9 +2459,18 @@ type deleteAccountRequest struct {
 // chain (authedCSRF).
 func deleteAccountHandler(deps deleteAccountDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Match the rest of internal/api/auth.go: 1 MiB cap with explicit
+		// MaxBytesError handling so 413 vs 400 is correct. 1 KB is too
+		// tight for long passphrases plus a JSON envelope plus headers.
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		var req deleteAccountRequest
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "invalid JSON")
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			var mbe *http.MaxBytesError
+			if errors.As(err, &mbe) {
+				writeError(w, http.StatusRequestEntityTooLarge, ErrCodeBadRequest, "request body too large")
+				return
+			}
+			writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "invalid JSON body")
 			return
 		}
 		if req.CurrentPassword == "" {
@@ -2650,20 +2686,20 @@ vi.mock('../../../../lib/auth', () => ({
   auth: { logout: vi.fn().mockResolvedValue(undefined) },
   ERR_UNAUTHORIZED: 'unauthorized',
 }));
-vi.mock('../../../../lib/router', () => ({ go: vi.fn() }));
+vi.mock('../../../../lib/router', () => ({ navigate: vi.fn() }));
 
 describe('DeleteAccountDialog', () => {
-  it('submits with current_password and on success calls auth.logout + go(/sign-in)', async () => {
+  it('submits with current_password and on success calls auth.logout + navigate(/sign-in)', async () => {
     const del = vi.spyOn(api, 'deleteAccount').mockResolvedValue();
     const { auth } = await import('../../../../lib/auth');
-    const { go } = await import('../../../../lib/router');
+    const { navigate } = await import('../../../../lib/router');
     const { getByLabelText, getByRole } = render(DeleteAccountDialog, { onClose: vi.fn() });
     await fireEvent.input(getByLabelText(/password/i), { target: { value: 'pw' } });
     await fireEvent.click(getByRole('button', { name: /delete my account/i }));
     await waitFor(() => {
       expect(del).toHaveBeenCalledWith('pw');
       expect(auth.logout).toHaveBeenCalled();
-      expect(go).toHaveBeenCalledWith('/sign-in');
+      expect(navigate).toHaveBeenCalledWith('/sign-in');
     });
   });
 
@@ -2697,7 +2733,7 @@ Expected: import failures.
   import Field from '../../../components/Field.svelte';
   import { api } from '../../../lib/api';
   import { auth } from '../../../lib/auth';
-  import { go } from '../../../lib/router';
+  import { navigate } from '../../../lib/router';
 
   interface Props { onClose: () => void; }
   let { onClose }: Props = $props();
@@ -2711,7 +2747,7 @@ Expected: import failures.
     try {
       await api.deleteAccount(password);
       await auth.logout();
-      go('/sign-in');
+      navigate('/sign-in');
     } catch (e) {
       error = e instanceof Error ? e.message : 'Could not delete account.';
     } finally { busy = false; }
@@ -2951,6 +2987,8 @@ vi.mock('../../lib/api', () => ({
   api: {
     listSessions: vi.fn().mockResolvedValue([]),
     listPasskeys: vi.fn().mockResolvedValue([]),
+    listSubscriptions: vi.fn().mockResolvedValue([]),
+    refreshSubscription: vi.fn().mockResolvedValue(undefined),
     health: vi.fn().mockResolvedValue({ polls_active: 0 }),
   },
 }));
@@ -2987,7 +3025,6 @@ Expected: the existing Settings still renders the old two-tab UI and the test fa
 
 ```svelte
 <script lang="ts">
-  import { get } from 'svelte/store';
   import { auth } from '../lib/auth';
   import AppearanceSection from './settings/AppearanceSection.svelte';
   import ReadingSection from './settings/ReadingSection.svelte';
@@ -2998,9 +3035,11 @@ Expected: the existing Settings still renders the old two-tab UI and the test fa
   import SessionsSection from './settings/SessionsSection.svelte';
   import DataSection from './settings/DataSection.svelte';
 
-  const authState = $derived(get(auth));
-  const email = $derived(authState?.user?.username ?? '');
-  const role = $derived(authState?.user?.role ?? 'user');
+  // Auto-subscribe via `$auth` so the page-id strip re-renders if the user
+  // logs in/out without remounting the route (rare but possible during
+  // certain dialog flows).
+  const email = $derived($auth.user?.username ?? '');
+  const role = $derived($auth.user?.role ?? 'user');
 </script>
 
 <div class="set">
@@ -3221,7 +3260,7 @@ go vet ./...
 
 1. **Dependency on M1 primitives.** This plan depends on `Button`, `Field`, `Segmented`, `Dialog`, `OtpInput`, `RecoveryCodesGrid`, `EmptyState`, and the `measure` preference store landing in M-Redesign-1. If M1 is not merged before this PR, every snippet that imports from `../../components/<Primitive>.svelte` must be reviewed against M1's actual API. The implementer should rebase on M1 and adjust call sites as needed; if M1's API differs in shape (e.g., `Segmented` exposes `onChange` instead of `onchange`), update the call sites uniformly and document the difference in the PR. Do **not** ship inline replacements for M1 primitives in this milestone — that's M1's job and would create a maintenance fork.
 
-2. **Existing M7 security tests must port forward.** The legacy `views/settings/Security.svelte` is removed. Check the repo for any test file currently importing it (e.g., `web/src/views/settings/__tests__/Security.test.ts` if M7 added one). If present, delete it; the new section-level tests above replace its coverage.
+2. **Existing M7 security tests must port forward.** The legacy `views/settings/Security.svelte` is removed. As of plan authoring, a grep of the repo shows no `web/src/views/settings/__tests__/Security.test.ts` file — the component ships untested today, so the deletion step is a no-op apart from removing `Security.svelte` itself. Re-run the grep at implementation time; if M7 added a test file in the meantime, delete it (the new section-level tests above replace its coverage).
 
 3. **QR-code library choice.** `qrcode` is the recommendation, but the implementer must verify health (downloads, maintenance, license) before adding. If `qrcode` is unsuitable, `qr-code-styling` and `qrcode-generator` are acceptable alternatives — re-verify, then adjust the import and `toDataURL` call in `EnrolTOTPDialog.svelte`. **Do not add the dep without a health check.**
 
@@ -3229,10 +3268,10 @@ go vet ./...
 
 5. **Account deletion cascade.** The plan assumes existing FK constraints with `ON DELETE CASCADE`. If a migration audit shows any user-scoped table that doesn't cascade, add a new migration `0011_user_delete_cascade.sql` (or next free index) before shipping. Don't rely on application-level cascade — the FK is the long-term contract.
 
-6. **Backend API gap: per-subscription poll-nudge endpoint.** The `Refresh all now` button assumes `POST /api/v1/subscriptions/:id/poll` exists. If it doesn't, scope down per Task A3 Step 3 note: ship the button disabled with a tooltip, or add a tiny `POST /api/v1/subscriptions/:id/poll` handler that does `UPDATE subscriptions SET next_poll_at = 0`. This is the only other narrow backend addition the plan opens the door to; either approach is acceptable but must be explicit in the PR.
+6. **M5 ordering dependency for `Refresh all now`.** The button consumes M-Redesign-5's `PATCH /api/v1/subscriptions/:id` accepting `{refresh_now: true}` (which calls `Scheduler.Poke()` server-side) via `api.refreshSubscription(id)`. M5 must merge before M6 ships for the button to work end-to-end. Task A3's first step explicitly greps for both the SPA helper and the backend symbol; if either is missing, the implementer rebases on M5 rather than inventing a parallel mechanism. **Do not add** a `POST /subscriptions/:id/poll`, `POST /poll-all`, or any other refresh endpoint — that was the wrong design in plan v1 and the umbrella §2.4 amendment locks the M5 path as canonical.
 
 7. **Display name is out of scope.** The umbrella spec table mentions "Display name (Field)". The current users table has no display_name column. Display name is **deferred to a follow-up milestone**; the Account section ships without it. This is called out in the PR description so reviewers don't flag it as a missing row.
 
-8. **`prefs.reading` toggles are surface-only.** Adding the toggles does not wire up the behaviour they describe — those wirings land in M-Redesign-2 (mark-on-scroll, auto-open-next, show-summaries on the Unread list) and M-Redesign-1 (open-links-new-tab on the reader). This milestone owns the **control surface** only. The PR description must state this so reviewers don't expect end-to-end behaviour from the toggles in isolation.
+8. **`prefs.reading` toggles are surface-only.** Adding the toggles does not wire up the behaviour they describe — those wirings land in M-Redesign-2 (mark-on-scroll, auto-open-next, show-summaries on the Unread list) and M-Redesign-1 (open-links-new-tab on the reader). This milestone owns the **control surface** only. **Do NOT wire any behaviour from these prefs in M6** — leave them inert. The implementer must resist "helpfully" applying `prefs.reading.openLinksNewTab` to the existing Reader or list, because that's out of scope and creates a partial implementation across milestone boundaries. The PR description must state this so reviewers don't expect end-to-end behaviour from the toggles in isolation.
 
 9. **Smoke-test environment.** Some browsers (e.g., Firefox on Linux) don't support `navigator.credentials.create` in dev contexts without HTTPS. Use Chromium for the passkey portion of the smoke test, or test on a Tailscale-fronted host with HTTPS.
