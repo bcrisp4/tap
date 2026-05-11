@@ -31,8 +31,6 @@
   class="row"
   class:is-read={entry.read}
   class:is-focused={isFocused}
-  role="listitem"
-  onmouseenter={() => onMouseEnter?.()}
   {@attach swipe({
     onSwipeLeft: () => onUnsave?.(),
     onSwipeRight: () => onToggleRead?.(),
@@ -45,7 +43,7 @@
     <span>Unsave</span>
   </div>
 
-  <button type="button" class="card" onclick={() => onOpen?.()} onfocus={() => onFocus?.()}>
+  <button type="button" class="card" onclick={() => onOpen?.()} onfocus={() => onFocus?.()} onmouseenter={() => onMouseEnter?.()}>
     <div class="eyebrow">
       <span>saved</span>
       {#if entry.read}
@@ -60,7 +58,7 @@
         <span class="source">{feed.title}</span>
       {/if}
       {#if entry.author && entry.author !== feed?.title}
-        <span class="sep" aria-hidden="true">·</span>
+        {#if feed}<span class="sep" aria-hidden="true">·</span>{/if}
         <span>{entry.author}</span>
       {/if}
     </div>

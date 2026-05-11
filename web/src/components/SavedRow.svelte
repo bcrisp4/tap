@@ -67,7 +67,7 @@
         <span class="source">{feed.title}</span>
       {/if}
       {#if entry.author && entry.author !== feed?.title}
-        <span class="sep" aria-hidden="true">·</span>
+        {#if feed}<span class="sep" aria-hidden="true">·</span>{/if}
         <span class="author">{entry.author}</span>
       {/if}
     </div>
