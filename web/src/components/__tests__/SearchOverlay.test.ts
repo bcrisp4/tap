@@ -1,7 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, screen, waitFor } from '@testing-library/svelte';
 
-// Use the real store module but mock internals
+// jsdom doesn't implement showModal/close on <dialog>; stub them.
+HTMLDialogElement.prototype.showModal = vi.fn(function(this: HTMLDialogElement) {
+  this.setAttribute('open', '');
+});
+HTMLDialogElement.prototype.close = vi.fn(function(this: HTMLDialogElement) {
+  this.removeAttribute('open');
+  this.dispatchEvent(new Event('close'));
+});
+
 vi.mock('../../lib/searchOverlay.svelte', () => {
   let _open = false;
   let _query = '';
@@ -14,8 +22,6 @@ vi.mock('../../lib/searchOverlay.svelte', () => {
       close() { _open = false; _query = ''; },
       setQuery(v: string) { _query = v; },
       setScope() {},
-      // allow tests to set open directly for simplicity
-      _setOpen(v: boolean) { _open = v; },
     },
   };
 });
@@ -35,18 +41,27 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.clearAllMocks();
   searchOverlay.close();
+  // Re-stub showModal/close after clearAllMocks
+  HTMLDialogElement.prototype.showModal = vi.fn(function(this: HTMLDialogElement) {
+    this.setAttribute('open', '');
+  });
+  HTMLDialogElement.prototype.close = vi.fn(function(this: HTMLDialogElement) {
+    this.removeAttribute('open');
+    this.dispatchEvent(new Event('close'));
+  });
 });
 afterEach(() => vi.useRealTimers());
 
 describe('SearchOverlay', () => {
-  it('does not render when closed', () => {
+  it('does not show input when closed', () => {
     const { container } = render(SearchOverlay);
-    expect(container.querySelector('.search-overlay, .panel')).toBeNull();
+    expect(container.querySelector('dialog[open]')).toBeNull();
   });
 
-  it('renders input when opened', () => {
+  it('shows dialog and input when opened', () => {
     searchOverlay.openOverlay();
     const { container } = render(SearchOverlay);
+    expect(container.querySelector('dialog[open]')).toBeTruthy();
     expect(container.querySelector('input')).toBeTruthy();
   });
 
@@ -56,8 +71,6 @@ describe('SearchOverlay', () => {
     const input = screen.getByRole('searchbox');
     await fireEvent.input(input, { target: { value: 'ab' } });
     vi.advanceTimersByTime(300);
-    // The hint is conditionally rendered based on searchOverlay.query.length.
-    // Since the mock propagates setQuery, the rendered hint should be visible.
     await waitFor(() => expect(screen.getByText(/at least 3/i)).toBeTruthy());
   });
 
@@ -73,19 +86,19 @@ describe('SearchOverlay', () => {
     await waitFor(() => expect(mockSearch).toHaveBeenCalledWith('abc'));
   });
 
-  it('closes on Esc', async () => {
+  it('closes on backdrop click', async () => {
     searchOverlay.openOverlay();
     const { container } = render(SearchOverlay);
-    const overlay = container.querySelector('.search-overlay') as HTMLElement;
-    await fireEvent.keyDown(overlay, { key: 'Escape' });
+    const dialog = container.querySelector('dialog') as HTMLDialogElement;
+    await fireEvent.click(dialog);
     expect(searchOverlay.open).toBe(false);
   });
 
-  it('closes on scrim click', async () => {
+  it('closes when dialog fires close event (native Esc)', async () => {
     searchOverlay.openOverlay();
     const { container } = render(SearchOverlay);
-    const overlay = container.querySelector('.search-overlay') as HTMLElement;
-    await fireEvent.click(overlay);
+    const dialog = container.querySelector('dialog') as HTMLDialogElement;
+    dialog.dispatchEvent(new Event('close'));
     expect(searchOverlay.open).toBe(false);
   });
 

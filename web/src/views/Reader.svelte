@@ -141,18 +141,22 @@
     </button>
   </div>
 
-  <div class="ts-article-rule" aria-hidden="true">
-    <span class="ts-article-rule-line"></span>
-    <span class="ts-article-rule-dot"></span>
-    <span class="ts-article-rule-line"></span>
-  </div>
+  {#if useMarkOnScroll}
+    <div class="ts-article-rule" aria-hidden="true" {@attach markOnce}>
+      <span class="ts-article-rule-line"></span>
+      <span class="ts-article-rule-dot"></span>
+      <span class="ts-article-rule-line"></span>
+    </div>
+  {:else}
+    <div class="ts-article-rule" aria-hidden="true">
+      <span class="ts-article-rule-line"></span>
+      <span class="ts-article-rule-dot"></span>
+      <span class="ts-article-rule-line"></span>
+    </div>
+  {/if}
 
   {#if entry!.author}
-    {#if useMarkOnScroll}
-      <p class="ts-article-lede" {@attach markOnce}>{entry!.author}</p>
-    {:else}
-      <p class="ts-article-lede">{entry!.author}</p>
-    {/if}
+    <p class="ts-article-lede">{entry!.author}</p>
   {/if}
 
   <div class="ts-article-body">{@html entry!.content}</div>

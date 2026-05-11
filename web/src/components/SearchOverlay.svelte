@@ -4,22 +4,24 @@
   import { navigate } from '../lib/router';
   import type { EntryListItem } from '../lib/types';
 
+  let dialogEl = $state<HTMLDialogElement | null>(null);
   let inputEl = $state<HTMLInputElement | null>(null);
   let results = $state<EntryListItem[]>([]);
   let loading = $state(false);
   let error = $state<string | null>(null);
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-  let restoreFocusTo: HTMLElement | null = null;
+  let searchSeq = 0; // monotonic counter; stale responses are discarded
 
   $effect(() => {
+    if (!dialogEl) return;
     if (searchOverlay.open) {
-      restoreFocusTo = document.activeElement as HTMLElement | null;
+      dialogEl.showModal();
       queueMicrotask(() => inputEl?.focus());
     } else {
+      if (dialogEl.open) dialogEl.close();
       results = []; error = null; loading = false;
+      searchSeq++;
       if (debounceTimer !== null) { clearTimeout(debounceTimer); debounceTimer = null; }
-      restoreFocusTo?.focus?.();
-      restoreFocusTo = null;
     }
     return () => {
       if (debounceTimer !== null) { clearTimeout(debounceTimer); debounceTimer = null; }
@@ -28,14 +30,17 @@
 
   async function runSearch(q: string) {
     if (q.length < 3) { results = []; return; }
+    const seq = ++searchSeq;
     loading = true; error = null;
     try {
       const resp = await api.searchEntries(q);
+      if (seq !== searchSeq) return; // stale — a newer search superseded this one
       results = resp.data;
     } catch (e) {
+      if (seq !== searchSeq) return;
       error = (e as Error).message; results = [];
     } finally {
-      loading = false;
+      if (seq === searchSeq) loading = false;
     }
   }
 
@@ -51,60 +56,60 @@
     searchOverlay.close();
   }
 
-  function onKeyDown(ev: KeyboardEvent) {
-    if (ev.key === 'Escape') { searchOverlay.close(); }
-  }
-
-  function onScrimClick(ev: MouseEvent) {
-    if (ev.target === ev.currentTarget) searchOverlay.close();
+  function onDialogClick(ev: MouseEvent) {
+    // clicking the backdrop (outside the panel) closes the dialog
+    if (ev.target === dialogEl) searchOverlay.close();
   }
 </script>
 
-{#if searchOverlay.open}
-  <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
-  <div class="search-overlay" role="dialog" aria-modal="true" aria-label="Search entries"
-       tabindex="-1" onclick={onScrimClick} onkeydown={onKeyDown}>
-    <div class="panel" onclick={(e) => e.stopPropagation()}>
-      <input
-        bind:this={inputEl}
-        type="search"
-        placeholder="Search…"
-        value={searchOverlay.query}
-        oninput={onInput}
-        aria-label="Search entries"
-        class="input"
-      />
-      {#if searchOverlay.query.length > 0 && searchOverlay.query.length < 3}
-        <p class="hint">Type at least 3 characters.</p>
-      {:else if loading}
-        <p class="hint">Searching…</p>
-      {:else if error}
-        <p class="hint err">{error}</p>
-      {:else if results.length === 0 && searchOverlay.query.length >= 3}
-        <p class="hint">No results.</p>
-      {:else}
-        <ul class="results" role="list">
-          {#each results as r (r.id)}
-            <li role="listitem">
-              <button type="button" class="result" onclick={() => pickResult(r.id)}>{r.title}</button>
-            </li>
-          {/each}
-        </ul>
-      {/if}
-    </div>
+<dialog
+  bind:this={dialogEl}
+  class="search-dialog"
+  aria-label="Search entries"
+  onclick={onDialogClick}
+  onclose={() => searchOverlay.close()}
+>
+  <div class="panel">
+    <input
+      bind:this={inputEl}
+      type="search"
+      placeholder="Search…"
+      value={searchOverlay.query}
+      oninput={onInput}
+      aria-label="Search entries"
+      class="input"
+    />
+    {#if searchOverlay.query.length > 0 && searchOverlay.query.length < 3}
+      <p class="hint">Type at least 3 characters.</p>
+    {:else if loading}
+      <p class="hint">Searching…</p>
+    {:else if error}
+      <p class="hint err">{error}</p>
+    {:else if results.length === 0 && searchOverlay.query.length >= 3}
+      <p class="hint">No results.</p>
+    {:else}
+      <ul class="results" role="list">
+        {#each results as r (r.id)}
+          <li role="listitem">
+            <button type="button" class="result" onclick={() => pickResult(r.id)}>{r.title}</button>
+          </li>
+        {/each}
+      </ul>
+    {/if}
   </div>
-{/if}
+</dialog>
 
 <style>
-  .search-overlay {
-    position: fixed; inset: 0;
-    background: rgba(0, 0, 0, 0.32);
-    display: flex; align-items: flex-start; justify-content: center;
-    padding-top: 80px;
-    z-index: 300;
+  .search-dialog {
+    margin: 80px auto 0;
+    padding: 0;
+    border: none;
+    background: transparent;
+    max-width: min(560px, 92vw);
+    width: 100%;
   }
+  .search-dialog::backdrop { background: rgba(0, 0, 0, 0.32); }
   .panel {
-    width: min(560px, 92vw);
     background: var(--bg);
     border: 1px solid var(--rule);
     border-radius: 6px;
