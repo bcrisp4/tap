@@ -4,7 +4,9 @@
 
 **Goal:** Rebuild `web/src/views/Saved.svelte` on the new `.ts-shell` simple-centred layout from M-Redesign-1. Replace the current `Sidebar + TopBar + EntryRow` layout with the design-spec `.ts-saved-toolbar` + flat chronological `.ts-saved-list`, the `.ts-saved-empty` state, and a mobile variant with swipe-to-unsave / swipe-to-toggle-read gestures.
 
-**Architecture:** Pure SPA milestone, zero backend change. The view reuses primitives shipped by M-Redesign-1 (the `.ts-shell` chrome, `EmptyState`, `EntryRow` design-system foundations, `MobileTopBar`, the `is-mobile` branching). The list is flat — no day-band grouping, no per-feed grouping — per umbrella spec §5 row M3 and Brand spec §6.3. A pinned count banner (the `.ts-saved-toolbar`) sits at the top of the list. Mobile rows ship a separate `.ts-saved-m-row` component that wraps each row in a swipe-attached card with two reveal layers (left: Mark read/unread; right: Unsave, destructive). The swipe attachment reuses the existing pure recogniser in `web/src/lib/swipe.ts`; M-Redesign-3 does not modify that file. Optimistic write-through with rollback already lives in `entries.toggleSaved` / `entries.toggleRead` in `web/src/lib/store.ts` — the view wires actions to those store methods directly.
+**Architecture:** Pure SPA milestone, zero backend change. The view reuses primitives shipped by M-Redesign-1 (the `.ts-shell` chrome, `EmptyState`, `KbdChip`, `FeedAvatar` restyled, `MobileTopBar`, the `isMobile` reactivity). The list is flat — no day-band grouping, no per-feed grouping — per umbrella spec §5 row M3 and Brand spec §6.3. A pinned count banner (the `.ts-saved-toolbar`) sits at the top of the list. Mobile rows ship a separate `.ts-saved-m-row` component that wraps each row in a swipe-attached card with two reveal layers (left: Mark read/unread; right: Unsave, destructive). The swipe attachment reuses the existing pure recogniser in `web/src/lib/swipe.ts`; M-Redesign-3 does not modify that file.
+
+**State model — single source of truth via the global `entries` store.** The view does NOT keep a view-local copy of items. Instead it (i) loads the saved set into the global `entries` store via a small new method `entries.loadSaved()` (Task 0), (ii) derives its rendered list from `$entries.items.filter(e => e.saved)`, and (iii) routes every mutation through the existing `entries.toggleSaved(id, false)` / `entries.toggleRead(id, read)` methods, which already do optimistic update with rollback in `web/src/lib/store.ts`. When `toggleSaved(id, false)` succeeds the entry's `saved` flag flips to `false`, the filter predicate stops matching, and the row falls out of the rendered list naturally — no view-local bookkeeping required. This keeps M3 consistent with the rest of the codebase (Unread also uses the same store), and it means changes made elsewhere (e.g. a future hotkey on Reader) propagate to Saved without a refresh.
 
 **Tech Stack:** Svelte 5 (runes, `{@attach}` directive, `<svelte:window>`), TypeScript, Vite, Vitest + `@testing-library/svelte`. No new dependencies.
 
@@ -26,7 +28,7 @@
 
 Always-on:
 
-- **`superpowers:test-driven-development`** — INVOKE AT THE START of every behaviour-bearing task. Mandated by `CLAUDE.md` ("TDD is non-negotiable"). Pure CSS / markup-only steps (Task 1's component scaffolding, Task 5's empty-state markup) are exempt; everything else (load → list/error/empty branching, sort sentinel, optimistic write through `entries.toggleSaved`, mobile swipe-attached actions, mobile reveal class transitions, keyboard `S` toggle) is in scope.
+- **`superpowers:test-driven-development`** — INVOKE AT THE START of every behaviour-bearing task. Mandated by `CLAUDE.md` ("TDD is non-negotiable"). Pure CSS / markup-only steps are exempt; everything else (Task 0 `entries.loadSaved` store method; load → list/error/empty branching; click/swipe action handlers; focus/mouseenter row plumbing; mobile swipe-attached actions; keyboard `S` toggle) is in scope.
 - **`superpowers:verification-before-completion`** — before marking a task done, run the exact verification command in the task's final step and confirm output matches expected output. Evidence before assertions.
 
 Reach for as needed:
@@ -47,7 +49,9 @@ MCP tools:
 
 | Path | Action | Responsibility |
 |---|---|---|
-| `web/src/views/Saved.svelte` | **rewrite** | Composes the page. Owns: `entries.load(false)` + filter to `saved`, loading / error / empty / list state branching, desktop-vs-mobile branch, count banner, keyboard `S` handler binding via `keyDispatch` context. |
+| `web/src/views/Saved.svelte` | **rewrite** | Composes the page. Calls `entries.loadSaved()` on mount, derives the rendered list as `$derived(() => $entries.items.filter(e => e.saved))`, routes mutations through `entries.toggleSaved` / `entries.toggleRead`, branches desktop vs mobile, renders the count banner, wires the keyboard `S` handler via `keyDispatch` context, and tracks the focused/hovered row in a `focusedId` rune so keyboard `S` knows which row to act on. |
+| `web/src/lib/store.ts` | **modify** | Add `entries.loadSaved()` method — fetches `api.listEntries({ saved: true, limit: 100 })` and replaces `items`. The existing `toggleSaved` / `toggleRead` methods are unchanged and reused. |
+| `web/src/lib/__tests__/store.test.ts` | **modify (or create if absent)** | Add a test for `entries.loadSaved()`: calls `api.listEntries({ saved: true, limit: 100 })`, populates `items`, sets loading false. If the test file doesn't exist, create it. |
 | `web/src/views/__tests__/Saved.test.ts` | **create** | Load → list, load → error, load → empty, optimistic unsave from row, mobile swipe-left unsave, mobile swipe-right toggle-read. |
 | `web/src/components/SavedToolbar.svelte` | **create** | The pinned `.ts-saved-toolbar` count banner with serif "Saved" eyebrow + mono count + `Find /` kbd hint. View-specific to Saved (M3-owned, NOT a primitive in M1's library). Consumed only by `views/Saved.svelte`. Consumes `KbdChip` from M1. No sort menu in M3 (out of scope; see §"Out of scope"). |
 | `web/src/components/__tests__/SavedToolbar.test.ts` | **create** | Renders correct count for 0 / 1 / N (verifies singular/plural). |
@@ -75,6 +79,115 @@ MCP tools:
 
 ## Phase A — Component primitives
 
+### Task 0: Add `entries.loadSaved()` to the global store with TDD
+
+**Skills:** `superpowers:test-driven-development`, `svelte-runes` (only insofar as the existing store uses Svelte's `writable`; no new rune work).
+
+**Files:**
+- Modify: `web/src/lib/store.ts`
+- Modify: `web/src/lib/__tests__/store.test.ts`
+
+Rationale: Saved view consumes the global `entries` store so optimistic `toggleSaved` / `toggleRead` and rollback fall out for free. The existing `entries.load(unreadOnly)` only takes `unread`; it has no `saved` flag. Add a focused `loadSaved()` method rather than overloading `load()` — the call sites are distinct (Unread mounts call `load(true)`; Saved mounts call `loadSaved()`).
+
+- [ ] **Step 1: Write the failing test**
+
+Append the following block to `web/src/lib/__tests__/store.test.ts` (or, if the file already has a `describe('entries', ...)` block, add the test inside it):
+
+```typescript
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { get } from 'svelte/store';
+import { entries } from '../store';
+import { api } from '../api';
+
+vi.mock('../api', () => ({
+  api: { listEntries: vi.fn(), patchEntry: vi.fn() },
+}));
+
+describe('entries.loadSaved', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  it('fetches saved=true and populates items', async () => {
+    vi.mocked(api.listEntries).mockResolvedValueOnce({
+      data: [
+        { id: 1, subscription_id: 3, title: 'a', url: 'u', author: '',
+          published_at: 1700000000, fetched_at: 1700000000,
+          read: false, saved: true, extract_failed: false },
+      ],
+      next_cursor: null,
+    });
+    await entries.loadSaved();
+    expect(api.listEntries).toHaveBeenCalledWith({ saved: true, limit: 100 });
+    const state = get(entries);
+    expect(state.loading).toBe(false);
+    expect(state.error).toBeNull();
+    expect(state.items).toHaveLength(1);
+    expect(state.items[0].saved).toBe(true);
+  });
+
+  it('records the error and clears items when the API rejects', async () => {
+    vi.mocked(api.listEntries).mockRejectedValueOnce(new Error('boom'));
+    await entries.loadSaved();
+    const state = get(entries);
+    expect(state.items).toHaveLength(0);
+    expect(state.loading).toBe(false);
+    expect(state.error).toBe('boom');
+  });
+});
+```
+
+If the existing test file already has a `vi.mock('../api', ...)` block at the top, do not duplicate it — reuse the existing mock and add only the `describe('entries.loadSaved', ...)` block.
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+```bash
+pnpm --dir web test -- src/lib/__tests__/store.test.ts -t loadSaved
+```
+
+Expected: FAIL with `entries.loadSaved is not a function`.
+
+- [ ] **Step 3: Implement the method**
+
+In `web/src/lib/store.ts`, inside the object returned by `entriesStore()`, add this method (immediately after `load`):
+
+```typescript
+async loadSaved() {
+  set({ items: [], loading: true, error: null });
+  try {
+    const r = await api.listEntries({ saved: true, limit: 100 });
+    set({ items: r.data, loading: false, error: null });
+  } catch (e) {
+    set({ items: [], loading: false, error: (e as Error).message });
+  }
+},
+```
+
+This mirrors `load(unreadOnly)`'s shape exactly. No behaviour change for existing call sites — Unread keeps calling `load(true)`.
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+```bash
+pnpm --dir web test -- src/lib/__tests__/store.test.ts -t loadSaved
+```
+
+Expected: PASS, both tests.
+
+- [ ] **Step 5: Run the full store test suite for regressions**
+
+```bash
+pnpm --dir web test -- src/lib/__tests__/store.test.ts
+```
+
+Expected: all pre-existing tests still pass.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add web/src/lib/store.ts web/src/lib/__tests__/store.test.ts
+git commit -m "M-Redesign-3: add entries.loadSaved() for Saved view consumption"
+```
+
+---
+
 ### Task 1: Scaffold `SavedToolbar.svelte` with TDD
 
 **Skills:** `superpowers:test-driven-development`, `svelte-runes`, `svelte-styling`.
@@ -94,21 +207,26 @@ import SavedToolbar from '../SavedToolbar.svelte';
 
 describe('SavedToolbar', () => {
   it('renders zero count as "0 entries"', () => {
-    render(SavedToolbar, { props: { count: 0 } });
-    expect(screen.getByText(/entries/i)).toBeInTheDocument();
-    expect(screen.getByText('0')).toBeInTheDocument();
+    const { container } = render(SavedToolbar, { props: { count: 0 } });
+    const countEl = container.querySelector('.count');
+    expect(countEl).not.toBeNull();
+    expect(countEl!.textContent!.replace(/\s+/g, ' ').trim()).toMatch(/^0\s+entries$/);
   });
 
   it('renders singular for 1 ("1 entry")', () => {
-    render(SavedToolbar, { props: { count: 1 } });
-    expect(screen.getByText(/^entry$/i)).toBeInTheDocument();
-    expect(screen.getByText('1')).toBeInTheDocument();
+    const { container } = render(SavedToolbar, { props: { count: 1 } });
+    const countEl = container.querySelector('.count');
+    expect(countEl).not.toBeNull();
+    // The word "entry" is part of the same text node as the number;
+    // assert on the count container's full label.
+    expect(countEl!.textContent!.replace(/\s+/g, ' ').trim()).toMatch(/^1\s+entry$/);
   });
 
   it('renders plural for N > 1 ("12 entries")', () => {
-    render(SavedToolbar, { props: { count: 12 } });
-    expect(screen.getByText(/entries/i)).toBeInTheDocument();
-    expect(screen.getByText('12')).toBeInTheDocument();
+    const { container } = render(SavedToolbar, { props: { count: 12 } });
+    const countEl = container.querySelector('.count');
+    expect(countEl).not.toBeNull();
+    expect(countEl!.textContent!.replace(/\s+/g, ' ').trim()).toMatch(/^12\s+entries$/);
   });
 
   it('renders the find hint with the / kbd chip', () => {
@@ -175,7 +293,7 @@ Replace the contents of `web/src/components/SavedToolbar.svelte` with:
     font-family: var(--mono); font-size: 11px;
     color: var(--ink-3); letter-spacing: 0.04em;
   }
-  .count :global(b) { color: var(--ink); font-weight: 500; }
+  .count b { color: var(--ink); font-weight: 500; }
   .right { display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
   .find {
     font-family: var(--mono); font-size: 11px;
@@ -186,7 +304,7 @@ Replace the contents of `web/src/components/SavedToolbar.svelte` with:
 ```
 
 Notes:
-- The `<b>` element inside `.count` is selected via `:global(b)` because Svelte's CSS scoper drops selectors that target elements rendered inside child interpolations (`<b>{count}</b>`).
+- The `<b>` inside `.count` is selected by a normal descendant selector — Svelte's scoper handles it correctly. Matches `styles.css`'s `.ts-saved-toolbar-count b` rule.
 - "Find" is mixed-case (matches `tap-saved.jsx:148`'s `Find` text inside `.ts-saved-toolbar-find`). The brand spec mono rule for labels is UPPER, but this is a hint, not a label.
 - The keyboard chip is rendered by `<KbdChip>/</KbdChip>` — this primitive is a hard precondition on M1. If `KbdChip.svelte` is missing at execution time, fix M1, do not stub it locally.
 
@@ -276,6 +394,25 @@ describe('SavedRow', () => {
     const { container } = render(SavedRow, { props: { entry: { ...entry, read: true }, feed } });
     expect(container.querySelector('.row')?.classList.contains('is-read')).toBe(true);
   });
+
+  it('fires onMouseEnter when the row is hovered', async () => {
+    const onMouseEnter = vi.fn();
+    const { container } = render(SavedRow, { props: { entry, feed, onMouseEnter } });
+    await fireEvent.mouseEnter(container.querySelector('.row')!);
+    expect(onMouseEnter).toHaveBeenCalledOnce();
+  });
+
+  it('fires onFocus when the row is focused', async () => {
+    const onFocus = vi.fn();
+    const { container } = render(SavedRow, { props: { entry, feed, onFocus } });
+    await fireEvent.focus(container.querySelector('.row')!);
+    expect(onFocus).toHaveBeenCalledOnce();
+  });
+
+  it('applies is-focused class when isFocused prop is true', () => {
+    const { container } = render(SavedRow, { props: { entry, feed, isFocused: true } });
+    expect(container.querySelector('.row')?.classList.contains('is-focused')).toBe(true);
+  });
 });
 ```
 
@@ -299,11 +436,19 @@ Replace the contents of `web/src/components/SavedRow.svelte` with:
   type Props = {
     entry: EntryListItem;
     feed: Subscription | undefined;
+    isFocused?: boolean;
+    onFocus?: () => void;
+    onMouseEnter?: () => void;
     onOpen?: () => void;
     onToggleRead?: () => void;
     onUnsave?: () => void;
   };
-  let { entry, feed, onOpen, onToggleRead, onUnsave }: Props = $props();
+  let {
+    entry, feed,
+    isFocused = false,
+    onFocus, onMouseEnter,
+    onOpen, onToggleRead, onUnsave,
+  }: Props = $props();
 
   function publishedLabel(ts: number): string {
     return new Date(ts * 1000).toLocaleDateString(undefined, {
@@ -320,10 +465,13 @@ Replace the contents of `web/src/components/SavedRow.svelte` with:
 <article
   class="row"
   class:is-read={entry.read}
+  class:is-focused={isFocused}
   role="button"
   tabindex="0"
   onclick={() => onOpen?.()}
   onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen?.(); } }}
+  onfocus={() => onFocus?.()}
+  onmouseenter={() => onMouseEnter?.()}
 >
   <span class="rail" aria-hidden="true">
     <span class="rail-mark">
@@ -609,11 +757,19 @@ Replace the contents of `web/src/components/SavedMobileRow.svelte` with:
   type Props = {
     entry: EntryListItem;
     feed: Subscription | undefined;
+    isFocused?: boolean;
+    onFocus?: () => void;
+    onMouseEnter?: () => void;
     onOpen?: () => void;
     onToggleRead?: () => void;
     onUnsave?: () => void;
   };
-  let { entry, feed, onOpen, onToggleRead, onUnsave }: Props = $props();
+  let {
+    entry, feed,
+    isFocused = false,
+    onFocus, onMouseEnter,
+    onOpen, onToggleRead, onUnsave,
+  }: Props = $props();
 
   function publishedLabel(ts: number): string {
     return new Date(ts * 1000).toLocaleDateString(undefined, {
@@ -625,6 +781,8 @@ Replace the contents of `web/src/components/SavedMobileRow.svelte` with:
 <div
   class="row"
   class:is-read={entry.read}
+  class:is-focused={isFocused}
+  onmouseenter={() => onMouseEnter?.()}
   {@attach swipe({
     onSwipeLeft: () => onUnsave?.(),
     onSwipeRight: () => onToggleRead?.(),
@@ -637,7 +795,7 @@ Replace the contents of `web/src/components/SavedMobileRow.svelte` with:
     <span>Unsave</span>
   </div>
 
-  <button type="button" class="card" onclick={() => onOpen?.()}>
+  <button type="button" class="card" onclick={() => onOpen?.()} onfocus={() => onFocus?.()}>
     <div class="eyebrow">
       <span>saved</span>
       {#if entry.read}
@@ -799,6 +957,11 @@ vi.mock('../../lib/api', () => ({
   },
 }));
 
+// Force the desktop branch so the view renders SavedRow (not SavedMobileRow).
+vi.mock('../../lib/preferences.svelte', () => ({
+  isMobile: { subscribe: (fn: (v: boolean) => void) => { fn(false); return () => {}; } },
+}));
+
 beforeEach(() => {
   vi.clearAllMocks();
 });
@@ -912,75 +1075,39 @@ Replace the contents of `web/src/views/Saved.svelte` with:
   import SavedMobileRow from '../components/SavedMobileRow.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import KbdChip from '../components/KbdChip.svelte';
-  import { api } from '../lib/api';
-  import { subscriptions } from '../lib/store';
+  import { entries, subscriptions } from '../lib/store';
   import { navigate } from '../lib/router';
   import { isMobile } from '../lib/preferences.svelte';
-  import type { EntryListItem, Subscription } from '../lib/types';
+  import type { Subscription } from '../lib/types';
 
-  let items = $state<EntryListItem[]>([]);
-  let loading = $state(true);
-  let error = $state<string | null>(null);
-  let selectedId = $state<number | null>(null);
+  let focusedId = $state<number | null>(null);
+
+  const items = $derived($entries.items.filter(e => e.saved));
 
   const dispatch = getContext<{
     onNext: () => void; onPrev: () => void; onOpen: () => void;
     onToggleRead: () => void; onToggleSaved: () => void;
   } | undefined>('keyDispatch');
 
-  async function load() {
-    loading = true; error = null;
-    try {
-      const r = await api.listEntries({ saved: true, limit: 100 });
-      items = r.data;
-    } catch (e) {
-      error = (e as Error).message;
-    } finally {
-      loading = false;
-    }
-  }
-
   function feedFor(subId: number): Subscription | undefined {
     return $subscriptions.find(s => s.id === subId);
   }
 
-  async function unsave(id: number) {
-    const before = items;
-    items = items.filter(e => e.id !== id);
-    try {
-      await api.patchEntry(id, { saved: false });
-    } catch (e) {
-      items = before;
-      error = (e as Error).message;
-    }
-  }
-
-  async function toggleRead(id: number, read: boolean) {
-    const before = items;
-    items = items.map(e => e.id === id ? { ...e, read } : e);
-    try {
-      await api.patchEntry(id, { read });
-    } catch (e) {
-      items = before;
-      error = (e as Error).message;
-    }
-  }
-
   onMount(() => {
-    load();
+    entries.loadSaved();
     subscriptions.load();
 
     if (dispatch) {
       dispatch.onToggleSaved = () => {
-        if (selectedId != null) unsave(selectedId);
+        if (focusedId != null) entries.toggleSaved(focusedId, false);
       };
       dispatch.onToggleRead = () => {
-        if (selectedId == null) return;
-        const e = items.find(x => x.id === selectedId);
-        if (e) toggleRead(e.id, !e.read);
+        if (focusedId == null) return;
+        const e = items.find(x => x.id === focusedId);
+        if (e) entries.toggleRead(e.id, !e.read);
       };
       dispatch.onOpen = () => {
-        if (selectedId != null) navigate(`/entry/${selectedId}`);
+        if (focusedId != null) navigate(`/entry/${focusedId}`);
       };
     }
   });
@@ -998,10 +1125,10 @@ Replace the contents of `web/src/views/Saved.svelte` with:
   Press <KbdChip>S</KbdChip> on any entry to keep it here.
 {/snippet}
 
-{#if loading}
+{#if $entries.loading}
   <p class="status" role="status">Loading…</p>
-{:else if error}
-  <p class="status err" role="alert">{error}</p>
+{:else if $entries.error}
+  <p class="status err" role="alert">{$entries.error}</p>
 {:else if items.length === 0}
   <EmptyState
     tone="accent"
@@ -1017,17 +1144,23 @@ Replace the contents of `web/src/views/Saved.svelte` with:
           <SavedMobileRow
             {entry}
             feed={feedFor(entry.subscription_id)}
+            isFocused={focusedId === entry.id}
+            onFocus={() => (focusedId = entry.id)}
+            onMouseEnter={() => (focusedId = entry.id)}
             onOpen={() => navigate(`/entry/${entry.id}`)}
-            onUnsave={() => unsave(entry.id)}
-            onToggleRead={() => toggleRead(entry.id, !entry.read)}
+            onUnsave={() => entries.toggleSaved(entry.id, false)}
+            onToggleRead={() => entries.toggleRead(entry.id, !entry.read)}
           />
         {:else}
           <SavedRow
             {entry}
             feed={feedFor(entry.subscription_id)}
+            isFocused={focusedId === entry.id}
+            onFocus={() => (focusedId = entry.id)}
+            onMouseEnter={() => (focusedId = entry.id)}
             onOpen={() => navigate(`/entry/${entry.id}`)}
-            onUnsave={() => unsave(entry.id)}
-            onToggleRead={() => toggleRead(entry.id, !entry.read)}
+            onUnsave={() => entries.toggleSaved(entry.id, false)}
+            onToggleRead={() => entries.toggleRead(entry.id, !entry.read)}
           />
         {/if}
       </li>
@@ -1054,6 +1187,17 @@ Replace the contents of `web/src/views/Saved.svelte` with:
 </style>
 ```
 
+Notes on the state model (mirrors the Architecture paragraph at the top of this plan):
+
+- **No view-local `items`.** The rendered list is `$derived($entries.items.filter(e => e.saved))`. The global store owns truth; the view owns rendering.
+- **No view-local `loading` / `error`.** Both come from `$entries.loading` / `$entries.error` — `entries.loadSaved()` (Task 0) sets them.
+- **Mutations go through the global store.** `entries.toggleSaved(id, false)` already does optimistic update + rollback (`web/src/lib/store.ts:49`). When it succeeds the entry's `saved` flag flips to `false`, the `$derived` predicate stops matching, and the row falls out of the rendered list naturally.
+- **`focusedId` tracks the active row.** Set by either `onFocus` (keyboard tab) or `onMouseEnter` (mouse hover). The keyboard `S` handler (via `keyDispatch.onToggleSaved`) acts on the row whose id matches `focusedId`. Both `SavedRow` and `SavedMobileRow` accept `isFocused` / `onFocus` / `onMouseEnter` props (Task 2 step 3 / Task 3 step 3 must include them — see the row-component prop tables below in the Task 2 / Task 3 final-state note).
+
+**Update to Task 2 row props (`SavedRow.svelte`):** add three optional props — `isFocused?: boolean` (defaults false; toggles `.is-focused` class for the focus ring), `onFocus?: () => void` (fires on `focus` of the row's outer `<article>` / `<button>`), `onMouseEnter?: () => void` (fires on mouse-enter). The existing `onOpen` / `onToggleRead` / `onUnsave` props stay.
+
+**Update to Task 3 row props (`SavedMobileRow.svelte`):** add the same three props. On mobile `onMouseEnter` rarely fires; the swipe attachment is the primary input. Including it keeps the component-prop surface aligned with `SavedRow` so the view can pass the same handler object.
+
 - [ ] **Step 4: Verify imports compile**
 
 `web/src/lib/preferences.svelte.ts` exports `isMobile` as a `Readable<boolean>` — this is a hard precondition of M-Redesign-1 (see "Hard preconditions" at the top of this plan). If M1 has not yet shipped `isMobile` as a module-level `Readable<boolean>`, the M3 plan does not execute; coordinate with planner-m1 to fix M1 first. M3 must not ship its own media-query plumbing or a fallback path.
@@ -1064,17 +1208,9 @@ Replace the contents of `web/src/views/Saved.svelte` with:
 pnpm --dir web test -- src/views/__tests__/Saved.test.ts
 ```
 
-Expected: PASS, all 6 tests.
+Expected: PASS, all 6 tests. Mobile-branch coverage lives in `SavedMobileRow.test.ts` (Task 3); the view-level test asserts the desktop branch only via the `vi.mock('../../lib/preferences.svelte', ...)` at the top of the file.
 
-Add the following mock at the top of the test file (immediately under the `vi.mock('../../lib/api', …)` call) so the desktop branch is selected for all six unit tests:
-
-```typescript
-vi.mock('../../lib/preferences.svelte', () => ({
-  isMobile: { subscribe: (fn: (v: boolean) => void) => { fn(false); return () => {}; } },
-}));
-```
-
-Mobile-branch coverage lives in `SavedMobileRow.test.ts` (Task 3); the view-level test does not need to assert mobile-specific behaviour.
+Note on state-isolation: the `entries` store is a singleton across tests. Each test's first action is `render(Saved)` which calls `entries.loadSaved()` synchronously inside `onMount`; the loadSaved method calls `set({ items: [], loading: true, error: null })` immediately, so the global store is implicitly reset at the start of every test. No explicit `entries.reset()` plumbing is needed. If a future test asserts on state *before* the first `loadSaved()` resolution, it will need to import `entries` and call a reset helper — that's out of scope for M3.
 
 - [ ] **Step 6: Type-check the whole SPA**
 
@@ -1122,6 +1258,8 @@ Open `http://localhost:5173/`, sign in, press `S` on any unread entry to save it
 - Read entries dim (title weight 400, colour `var(--ink-2)`, rail mark `var(--ink-4)`).
 - Clicking the row body navigates to `/entry/:id`.
 - Clicking Unsave on a row makes that row disappear without a refresh and the count decrements.
+- Hovering a row, then pressing `S` on the keyboard: unsaves the hovered row (same as clicking Unsave). Tabbing to a row, then pressing `S`: same. Pressing `S` when no row is hovered/focused: no-op.
+- After unsaving from Saved, navigating to Unread (M2) shows the entry in the unread list with `saved=false` (no stale `SAVED` mark) — verifies the global store is the SSOT.
 
 - [ ] **Step 4: Confirm the empty-state visual checklist**
 
@@ -1230,15 +1368,17 @@ A reviewer should be able to verify, using **selectors and behaviour**, that:
    - Each mobile row is a `<div class="row">` wrapping a `<button class="card">` plus two `aria-hidden` reveal layers.
    - `Saved.svelte` does not declare a local `.kbd` class or inline `<kbd>` element — it consumes `<KbdChip>` from M1 inside the `emptySubtitle` snippet and inside `<SavedToolbar>`.
 
-2. **API contract**
-   - `Saved.svelte` calls `api.listEntries({ saved: true, limit: 100 })` exactly once on mount.
-   - Clicking the row-level Unsave button calls `api.patchEntry(id, { saved: false })`.
-   - Clicking the row-level Mark read button calls `api.patchEntry(id, { read: true })` (or `{ read: false }` if the row was read).
-   - All three API calls happen optimistically — the UI updates before the network resolves; on rejection, the UI rolls back.
+2. **State contract**
+   - `Saved.svelte` calls `entries.loadSaved()` exactly once on mount; under the hood that calls `api.listEntries({ saved: true, limit: 100 })` exactly once.
+   - Clicking the row-level Unsave button calls `entries.toggleSaved(id, false)`; under the hood that calls `api.patchEntry(id, { saved: false })`.
+   - Clicking the row-level Mark read button calls `entries.toggleRead(id, !entry.read)`; under the hood that calls `api.patchEntry(id, { read: <new> })`.
+   - All mutations happen optimistically through the global `entries` store — UI updates before the network resolves; on rejection, the store rolls back.
+   - The rendered list is `$derived(() => $entries.items.filter(e => e.saved))`; no view-local items array.
 
 3. **Keyboard contract**
-   - When the `keyDispatch` context is present (M-Redesign-1 / M-Redesign-2 wire this), pressing `S` while the Saved view is mounted and a row is selected fires the unsave path.
-   - When the context is absent, `Saved.svelte` does not throw.
+   - When the `keyDispatch` context is present (M-Redesign-1 / M-Redesign-2 wire this), pressing `S` while the Saved view is mounted and a row is **focused** (via Tab key) or **hovered** (via mouse) fires `entries.toggleSaved(focusedId, false)`. The currently-acting row is tracked via the view's `focusedId` rune, set by either the row's `onFocus` callback or `onMouseEnter` callback.
+   - When no row is focused/hovered, pressing `S` is a no-op.
+   - When the `keyDispatch` context is absent (Saved view rendered outside the shell), `Saved.svelte` does not throw.
 
 4. **Mobile contract**
    - Each mobile row is wired with `{@attach swipe({ onSwipeLeft, onSwipeRight })}`.
@@ -1250,8 +1390,9 @@ A reviewer should be able to verify, using **selectors and behaviour**, that:
    - `ui_design/styles.css` is unmodified.
 
 6. **Test coverage**
+   - 2 unit tests in `store.test.ts` for `entries.loadSaved()` (success + error paths).
    - 5 unit tests in `SavedToolbar.test.ts` (counts and labels).
-   - 6 unit tests in `SavedRow.test.ts` (render, click handlers, action button stop-propagation, read variant).
+   - 9 unit tests in `SavedRow.test.ts` (render, click handlers, action button stop-propagation, read variant, is-read class, onMouseEnter, onFocus, is-focused class).
    - 4 unit tests in `SavedMobileRow.test.ts` (swipe-left, swipe-right, sub-threshold, render).
    - 6 unit tests in `Saved.test.ts` (loading, list, error, empty, count, optimistic unsave).
    - All pass.
@@ -1263,7 +1404,7 @@ A reviewer should be able to verify, using **selectors and behaviour**, that:
 
 | What | Command | Expected |
 |---|---|---|
-| Unit tests (M3 only) | `pnpm --dir web test -- src/views/__tests__/Saved.test.ts src/components/__tests__/Saved*.test.ts` | All 21 tests pass |
+| Unit tests (M3 only) | `pnpm --dir web test -- src/views/__tests__/Saved.test.ts src/components/__tests__/Saved*.test.ts src/lib/__tests__/store.test.ts -t loadSaved` | All 26 M3-introduced tests pass (5 SavedToolbar + 9 SavedRow + 4 SavedMobileRow + 6 Saved + 2 loadSaved) |
 | Full SPA unit tests | `pnpm --dir web test` | All pass, no regressions in existing tests |
 | TypeScript / svelte-check | `pnpm --dir web run check` | Zero errors |
 | Full test suite (Go + SPA) | `make test` | All pass |
@@ -1299,9 +1440,10 @@ Placeholder scan: none.
 
 Type consistency:
 
-- `EntryListItem` is the canonical entry type (`web/src/lib/types.ts:36`) — every component uses this name. The DTO has no `summary` field, so neither row primitive renders one; this matches Brand spec §6.3 which makes no mention of a row summary on Saved.
+- `EntryListItem` is the canonical entry type (`web/src/lib/types.ts:36`) — every component uses this name. The DTO has no `summary` field, so neither row primitive renders one; this matches Brand spec §6.3 which makes no mention of a row summary on Saved. All test fixtures include `fetched_at` and `extract_failed` to satisfy the full DTO shape.
 - `Subscription` is the feed type (per `web/src/lib/types.ts`) — every component uses this name.
 - `feedFor(subId)` is the lookup helper; named consistently across `Saved.svelte` and the existing `feedFor` already used in `Unread.svelte`.
-- The handler trio is `onOpen` / `onToggleRead` / `onUnsave` — consistent across `SavedRow`, `SavedMobileRow`, and `Saved.svelte`'s `<SavedRow>` / `<SavedMobileRow>` calls.
+- The handler set is `isFocused` / `onFocus` / `onMouseEnter` / `onOpen` / `onToggleRead` / `onUnsave` — consistent across `SavedRow`, `SavedMobileRow`, and `Saved.svelte`'s `<SavedRow>` / `<SavedMobileRow>` calls. `focusedId` (the view's tracking rune) is set by either `onFocus` or `onMouseEnter`.
+- State methods: `entries.loadSaved()` (added in Task 0), `entries.toggleSaved(id, false)`, `entries.toggleRead(id, !read)` — consistent with the existing store surface. The rendered list comes from `$derived(() => $entries.items.filter(e => e.saved))`.
 
 End of plan.
