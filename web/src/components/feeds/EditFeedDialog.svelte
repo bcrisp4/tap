@@ -39,7 +39,7 @@
       if (basicAuthUser) patch.basic_auth_user = basicAuthUser;
       if (basicAuthPass) patch.basic_auth_pass = basicAuthPass;
       if (selectedCategory !== originalCategoryId) patch.category_id = selectedCategory;
-      await api.updateSubscription(feed.id, patch);
+      await api.updateSubscription(init.id, patch);
       notifySW({ type: 'invalidate', paths: ['/api/v1/subscriptions', '/api/v1/categories'] });
       onSaved();
     } catch (e) {
