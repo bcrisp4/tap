@@ -381,3 +381,24 @@ describe('api.request — offline enqueue', () => {
     expect(enqueueSpy).not.toHaveBeenCalled();
   });
 });
+
+describe('api.deleteAccount', () => {
+  it('issues DELETE /api/v1/me with current_password in the body', async () => {
+    mockFetch.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const { api } = await import('../api');
+    await api.deleteAccount('secret');
+    expect(mockFetch).toHaveBeenCalledWith('/api/v1/me', expect.objectContaining({
+      method: 'DELETE',
+      body: JSON.stringify({ current_password: 'secret' }),
+    }));
+  });
+
+  it('rejects with the server message on 401', async () => {
+    mockFetch.mockResolvedValueOnce(new Response(
+      JSON.stringify({ error: { code: 'invalid_credentials', message: 'wrong password' } }),
+      { status: 401, headers: { 'Content-Type': 'application/json' } },
+    ));
+    const { api } = await import('../api');
+    await expect(api.deleteAccount('bad')).rejects.toThrow(/wrong password/);
+  });
+});

@@ -168,3 +168,51 @@ describe('markOnScroll preference', () => {
     expect(store['tap.markOnScroll']).toBe('1');
   });
 });
+
+describe('reading prefs', () => {
+  it('defaults markOnScroll to true, autoOpenNext to false, showSummaries to true, openLinksNewTab to true', async () => {
+    const { reading } = await import('../preferences.svelte');
+    expect(reading.markOnScroll).toBe(true);
+    expect(reading.autoOpenNext).toBe(false);
+    expect(reading.showSummaries).toBe(true);
+    expect(reading.openLinksNewTab).toBe(true);
+  });
+
+  it('persists changes to localStorage', async () => {
+    const { reading } = await import('../preferences.svelte');
+    reading.markOnScroll = false;
+    expect(store['tap.reading.markOnScroll']).toBe('false');
+  });
+
+  it('reads back a persisted value', async () => {
+    store['tap.reading.autoOpenNext'] = 'true';
+    const { reading } = await import('../preferences.svelte');
+    expect(reading.autoOpenNext).toBe(true);
+  });
+
+  it('coerces invalid localStorage values back to default', async () => {
+    store['tap.reading.markOnScroll'] = 'banana';
+    const { reading } = await import('../preferences.svelte');
+    expect(reading.markOnScroll).toBe(true);
+  });
+});
+
+describe('poll pref (advisory display)', () => {
+  it('defaults to "15m"', async () => {
+    const { poll } = await import('../preferences.svelte');
+    expect(poll.interval).toBe('15m');
+  });
+
+  it('accepts only 5m | 15m | 1h | manual', async () => {
+    const { poll } = await import('../preferences.svelte');
+    poll.interval = '5m';
+    expect(poll.interval).toBe('5m');
+    expect(store['tap.poll.interval']).toBe('5m');
+  });
+
+  it('falls back to 15m for invalid stored value', async () => {
+    store['tap.poll.interval'] = 'forever';
+    const { poll } = await import('../preferences.svelte');
+    expect(poll.interval).toBe('15m');
+  });
+});
