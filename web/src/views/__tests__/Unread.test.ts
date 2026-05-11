@@ -33,6 +33,7 @@ vi.mock('../../lib/store', () => ({
       return () => { _entriesSubs.splice(_entriesSubs.indexOf(fn), 1); };
     },
     load: (...args: unknown[]) => mockEntriesLoad(...args),
+    toggleRead: vi.fn(),
   },
   subscriptions: {
     subscribe: (fn: (v: Subscription[]) => void) => {
@@ -100,6 +101,7 @@ describe('Unread view', () => {
     const { container } = render(Unread);
     expect(container.querySelector('ul[role="list"]')).toBeTruthy();
   });
+
 });
 
 describe('Unread keyboard context', () => {
