@@ -236,6 +236,7 @@ func (w *Worker) Run(ctx context.Context, sub db.DueSubscription) {
 		UserID:          sub.UserID,
 		NewETag:         nullStr(res.ETag),
 		NewLastModified: nullStr(res.LastModified),
+		FeedTitle:       res.Feed.Title,
 		NowUnix:         now.Unix(),
 		NewEntries:      newEntries,
 		Floor:           w.opts.Floor,
