@@ -32,7 +32,13 @@
     error = '';
     try {
       const subs = await api.listSubscriptions();
-      const results = await Promise.allSettled(subs.map(s => api.refreshSubscription(s.id)));
+      const ids = subs.map(s => s.id);
+      const POOL = 4;
+      const results: PromiseSettledResult<unknown>[] = [];
+      for (let i = 0; i < ids.length; i += POOL) {
+        const batch = ids.slice(i, i + POOL).map(id => api.refreshSubscription(id));
+        results.push(...await Promise.allSettled(batch));
+      }
       const failed = results.filter(r => r.status === 'rejected').length;
       if (failed > 0) {
         error = `Refreshed ${subs.length - failed} of ${subs.length} · ${failed} failed`;
