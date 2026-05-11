@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -1162,7 +1161,7 @@ func TestWorker_AutoSetsSubscriptionTitle(t *testing.T) {
 </channel></rss>`
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/rss+xml")
-		_, _ = io.WriteString(w, rss)
+		_, _ = w.Write([]byte(rss))
 	}))
 	defer srv.Close()
 
@@ -1179,7 +1178,5 @@ func TestWorker_AutoSetsSubscriptionTitle(t *testing.T) {
 
 	s, err := db.GetSubscription(context.Background(), d, subID, uid)
 	require.NoError(t, err)
-	if s.Title != "FixtureFeed" {
-		t.Fatalf("title = %q, want FixtureFeed", s.Title)
-	}
+	require.Equal(t, "FixtureFeed", s.Title)
 }

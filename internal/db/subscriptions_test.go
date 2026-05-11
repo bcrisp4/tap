@@ -309,22 +309,17 @@ func TestUpdateAfterPoll_OverwritesURLDefaultTitle(t *testing.T) {
 		FeedURL: "https://example.test/feed.xml",
 		NextPoll: 0, Created: 1,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	_, err = UpdateAfterPoll(ctx, d, id, PollResult{
 		UserID: uid, NowUnix: 100, FeedTitle: "Example News",
 		Floor: 15 * time.Minute, Ceiling: 24 * time.Hour,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
-	s, _ := GetSubscription(ctx, d, id, uid)
-	if s.Title != "Example News" {
-		t.Fatalf("title = %q, want Example News", s.Title)
-	}
+	s, err := GetSubscription(ctx, d, id, uid)
+	require.NoError(t, err)
+	require.Equal(t, "Example News", s.Title)
 }
 
 func TestUpdateAfterPoll_PreservesUserSetTitle(t *testing.T) {
@@ -337,22 +332,17 @@ func TestUpdateAfterPoll_PreservesUserSetTitle(t *testing.T) {
 		FeedURL: "https://example.test/feed.xml",
 		NextPoll: 0, Created: 1,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	_, err = UpdateAfterPoll(ctx, d, id, PollResult{
 		UserID: uid, NowUnix: 100, FeedTitle: "Example News",
 		Floor: 15 * time.Minute, Ceiling: 24 * time.Hour,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
-	s, _ := GetSubscription(ctx, d, id, uid)
-	if s.Title != "My Custom Name" {
-		t.Fatalf("title = %q, want My Custom Name (user-set, must not be overwritten)", s.Title)
-	}
+	s, err := GetSubscription(ctx, d, id, uid)
+	require.NoError(t, err)
+	require.Equal(t, "My Custom Name", s.Title)
 }
 
 func TestListDuePollsCarriesCreds(t *testing.T) {
