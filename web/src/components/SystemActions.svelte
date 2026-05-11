@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { auth } from '../lib/auth';
   import { navigate } from '../lib/router';
   import { api } from '../lib/api';
   import { subscriptions, categories } from '../lib/store';
+  import { auth } from '../lib/auth';
 
   let busyOpml = $state(false);
   let opmlError = $state<string | null>(null);
@@ -54,14 +54,10 @@
   }
 </script>
 
-{#if $auth.user?.role === 'admin'}
-  <a class="navitem" href="/admin" onclick={(e) => { e.preventDefault(); navigate('/admin'); }}>Admin</a>
-{/if}
-
 <button class="sys-action" type="button" onclick={doExport} disabled={busyOpml}>Export OPML</button>
-<label class="sys-action" for="opml-import">Import OPML</label>
-<input id="opml-import" type="file" accept=".opml,.xml,application/xml,text/xml"
-       bind:this={fileInput} onchange={doImport} hidden />
+<button class="sys-action" type="button" onclick={() => fileInput?.click()} disabled={busyOpml}>Import OPML</button>
+<input type="file" accept=".opml,.xml,application/xml,text/xml"
+       bind:this={fileInput} onchange={doImport} hidden aria-hidden="true" />
 
 {#if opmlResult}
   <p class="opml-feedback">Imported {opmlResult.imported}, skipped {opmlResult.skipped}.</p>
@@ -73,15 +69,6 @@
 <button class="sys-action sys-logout" type="button" onclick={doLogout}>Sign out</button>
 
 <style>
-  .navitem {
-    display: block;
-    padding: 6px 20px;
-    font-family: var(--sans);
-    font-size: 13px;
-    color: var(--ink);
-    border-left: 2px solid transparent;
-    text-decoration: none;
-  }
   .sys-action {
     display: block;
     width: 100%;

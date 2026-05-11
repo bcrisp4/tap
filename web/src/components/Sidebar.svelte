@@ -5,6 +5,7 @@
   import AddFeedForm from './AddFeedForm.svelte';
   import { subscriptions, categories } from '../lib/store';
   import { navigate, route } from '../lib/router';
+  import { auth } from '../lib/auth';
   import { api } from '../lib/api';
 
   // Inline category creation state.
@@ -164,6 +165,10 @@
   <div class="group-title">SYSTEM</div>
   <a class="navitem" class:active={$route.name === 'settings'} href="/settings"
     onclick={(e) => { e.preventDefault(); navigate('/settings'); }}>Settings</a>
+  {#if $auth.user?.role === 'admin'}
+    <a class="navitem" class:active={$route.name === 'admin'} href="/admin"
+      onclick={(e) => { e.preventDefault(); navigate('/admin'); }}>Admin</a>
+  {/if}
   <SystemActions />
   <AddFeedForm />
 </nav>

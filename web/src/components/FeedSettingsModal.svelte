@@ -19,11 +19,17 @@
   let busy = $state(false);
   let error = $state<string | null>(null);
 
+  let dialogEl = $state<HTMLDialogElement | null>(null);
+
+  $effect(() => {
+    if (dialogEl && typeof dialogEl.showModal === 'function') dialogEl.showModal();
+  });
+
   async function save() {
     busy = true;
     error = null;
     try {
-      const patch: Record<string, unknown> = {
+      const patch: Parameters<typeof api.updateSubscription>[1] = {
         extract,
         extract_selector: extractSelector,
       };
@@ -39,13 +45,17 @@
       busy = false;
     }
   }
+
+  function handleClose() {
+    if (dialogEl && typeof dialogEl.close === 'function') dialogEl.close();
+    onClose();
+  }
 </script>
 
-<div class="backdrop" onclick={onClose} role="presentation"></div>
-<dialog open class="feed-modal" aria-label="Feed settings">
+<dialog bind:this={dialogEl} class="feed-modal" aria-label="Feed settings" onclose={handleClose}>
   <header>
     <h2>Feed settings</h2>
-    <button onclick={onClose} aria-label="Close">✕</button>
+    <button onclick={handleClose} aria-label="Close">✕</button>
   </header>
   <form onsubmit={(e) => { e.preventDefault(); void save(); }}>
     <label>
@@ -74,31 +84,21 @@
       <p class="err">{error}</p>
     {/if}
     <footer>
-      <button type="button" onclick={onClose}>Cancel</button>
+      <button type="button" onclick={handleClose}>Cancel</button>
       <button type="submit" disabled={busy}>Save</button>
     </footer>
   </form>
 </dialog>
 
 <style>
-  .backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.35);
-    z-index: 50;
-  }
   .feed-modal {
-    position: fixed;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    z-index: 51;
     background: var(--surface, var(--bg));
     border: 1px solid var(--rule);
     padding: 18px 22px;
     min-width: 360px;
     max-width: 480px;
   }
+  .feed-modal::backdrop { background: rgba(0, 0, 0, 0.35); }
   header {
     display: flex;
     align-items: center;

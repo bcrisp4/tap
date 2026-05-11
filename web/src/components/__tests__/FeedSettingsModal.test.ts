@@ -30,9 +30,10 @@ describe('FeedSettingsModal', () => {
     const { getByRole, getByLabelText } = render(FeedSettingsModal, {
       props: { subscription: sub, onClose: vi.fn() },
     });
+    // dialog is hidden in jsdom (showModal() unavailable); query hidden elements directly
     await fireEvent.click(getByLabelText('Enable article extraction'));
     await fireEvent.input(getByLabelText('Extract CSS selector'), { target: { value: '.article-body' } });
-    await fireEvent.click(getByRole('button', { name: /save/i }));
+    await fireEvent.click(getByRole('button', { name: /save/i, hidden: true }));
     await waitFor(() => {
       expect(spy).toHaveBeenCalledWith(
         7,
@@ -46,7 +47,7 @@ describe('FeedSettingsModal', () => {
     const { getByRole } = render(FeedSettingsModal, {
       props: { subscription: sub, onClose },
     });
-    await fireEvent.click(getByRole('button', { name: /cancel/i }));
+    await fireEvent.click(getByRole('button', { name: /cancel/i, hidden: true }));
     expect(onClose).toHaveBeenCalled();
   });
 });

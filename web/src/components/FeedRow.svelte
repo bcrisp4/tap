@@ -13,16 +13,28 @@
   let menuOpen = $state(false);
   let confirmingDelete = $state(false);
   let settingsOpen = $state(false);
+  let rowError = $state<string | null>(null);
 
   async function doDelete() {
-    await api.deleteSubscription(subscription.id);
-    await subscriptions.load();
+    rowError = null;
+    try {
+      await api.deleteSubscription(subscription.id);
+      await subscriptions.load();
+    } catch (e) {
+      rowError = (e as Error).message;
+      confirmingDelete = false;
+    }
   }
 
   async function assignCategory(catId: number | null) {
-    await api.updateSubscription(subscription.id, { category_id: catId });
-    await subscriptions.load();
+    rowError = null;
     menuOpen = false;
+    try {
+      await api.updateSubscription(subscription.id, { category_id: catId });
+      await subscriptions.load();
+    } catch (e) {
+      rowError = (e as Error).message;
+    }
   }
 </script>
 
@@ -48,7 +60,7 @@
           <button type="button" onclick={() => assignCategory(c.id)}>{c.name}</button>
         {/each}
       </details>
-      <button type="button" onclick={() => (confirmingDelete = true)}>Delete feed</button>
+      <button type="button" onclick={() => { confirmingDelete = true; menuOpen = false; }}>Delete feed</button>
     </div>
   {/if}
 
@@ -58,6 +70,10 @@
       <button type="button" onclick={doDelete}>Confirm</button>
       <button type="button" onclick={() => (confirmingDelete = false)}>Cancel</button>
     </div>
+  {/if}
+
+  {#if rowError}
+    <p class="row-error" role="alert">{rowError}</p>
   {/if}
 </div>
 
@@ -151,5 +167,12 @@
     background: var(--bg);
     cursor: pointer;
     border-radius: 3px;
+  }
+  .row-error {
+    font-family: var(--sans);
+    font-size: 10px;
+    color: var(--error, #c0392b);
+    padding: 0 20px;
+    margin: 0;
   }
 </style>
