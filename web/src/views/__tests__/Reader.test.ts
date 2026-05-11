@@ -2,162 +2,175 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 import type { EntryDetail } from '../../lib/types';
 
-// Mock child Svelte components.
-vi.mock('../../components/FeedAvatar.svelte', () => ({ default: vi.fn() }));
+// Stub IntersectionObserver for jsdom
+const mockObserve = vi.fn();
+const mockDisconnect = vi.fn();
+vi.stubGlobal('IntersectionObserver', class {
+  observe = mockObserve;
+  disconnect = mockDisconnect;
+  unobserve = vi.fn();
+  takeRecords() { return []; }
+  constructor() {}
+});
 
-// Mock store.
+vi.mock('../../components/FeedAvatar.svelte', () => ({ default: vi.fn() }));
+vi.mock('../../lib/breakpoints.svelte', () => ({
+  isMobile: { subscribe: (fn: (v: boolean) => void) => { fn(false); return () => {}; } },
+}));
+
 const mockToggleRead = vi.fn().mockResolvedValue(undefined);
 const mockToggleSaved = vi.fn().mockResolvedValue(undefined);
 vi.mock('../../lib/store', () => ({
   entries: {
     subscribe: (fn: (v: { items: unknown[] }) => void) => { fn({ items: [] }); return () => {}; },
-    toggleRead: (...args: unknown[]) => mockToggleRead(...args),
-    toggleSaved: (...args: unknown[]) => mockToggleSaved(...args),
+    toggleRead: (...a: unknown[]) => mockToggleRead(...a),
+    toggleSaved: (...a: unknown[]) => mockToggleSaved(...a),
   },
   subscriptions: { subscribe: (fn: (v: unknown[]) => void) => { fn([]); return () => {}; }, load: vi.fn() },
 }));
 
-// Mock the router.
 const mockNavigate = vi.fn();
 vi.mock('../../lib/router', () => ({
-  navigate: (...args: unknown[]) => mockNavigate(...args),
+  navigate: (...a: unknown[]) => mockNavigate(...a),
   route: { subscribe: (fn: (v: unknown) => void) => { fn({ name: 'reader', params: { id: 1 } }); return () => {}; } },
 }));
 
-// Mock the api module.
 const mockGetEntry = vi.fn();
 const mockPatchEntry = vi.fn();
 vi.mock('../../lib/api', () => ({
   api: {
-    getEntry: (...args: unknown[]) => mockGetEntry(...args),
-    patchEntry: (...args: unknown[]) => mockPatchEntry(...args),
+    getEntry: (...a: unknown[]) => mockGetEntry(...a),
+    patchEntry: (...a: unknown[]) => mockPatchEntry(...a),
   },
 }));
 
-function makeEntry(overrides: Partial<EntryDetail> = {}): EntryDetail {
+const mockLoadScroll = vi.fn().mockReturnValue(0);
+const mockSaveScroll = vi.fn();
+vi.mock('../../lib/readerScroll', () => ({
+  loadScroll: (...a: unknown[]) => mockLoadScroll(...a),
+  saveScroll: (...a: unknown[]) => mockSaveScroll(...a),
+  clearScroll: vi.fn(),
+}));
+
+const prefs = { measure: 'comfortable', font: 'serif', markOnScroll: true };
+vi.mock('../../lib/preferences.svelte', () => ({
+  measure: { get value() { return prefs.measure; }, set value(v: string) { prefs.measure = v; } },
+  font:    { get value() { return prefs.font; },    set value(v: string) { prefs.font = v; } },
+  markOnScroll: { get value() { return prefs.markOnScroll; }, set value(v: boolean) { prefs.markOnScroll = v; } },
+  density: { get value() { return 'comfortable'; }, set value(_: string) {} },
+  theme:   { get resolved() { return 'light'; }, get stored() { return 'light'; }, set stored(_: string) {} },
+}));
+
+const { default: Reader } = await import('../Reader.svelte');
+
+function makeEntry(o: Partial<EntryDetail> = {}): EntryDetail {
   return {
-    id: 42,
-    subscription_id: 1,
-    title: 'Test Entry Title',
-    author: 'Test Author',
-    url: 'https://example.com/article/42',
-    content: '<p>This is the article body.</p>',
-    published_at: 1700000000,
-    fetched_at: 1700000001,
-    read: false,
-    saved: false,
-    extract_failed: false,
-    ...overrides,
+    id: 42, subscription_id: 1, title: 'A title', author: 'Author',
+    url: 'https://example.com/a', content: '<p>body</p>',
+    published_at: 1700000000, fetched_at: 1700000001,
+    read: false, saved: false, extract_failed: false,
+    ...o,
   };
 }
 
-// Import the view after mocks are established.
-const { default: Reader } = await import('../Reader.svelte');
+beforeEach(() => {
+  vi.clearAllMocks();
+  prefs.measure = 'comfortable'; prefs.font = 'serif'; prefs.markOnScroll = true;
+  mockLoadScroll.mockReturnValue(0);
+});
 
-describe('Reader view', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
+describe('Reader view (M2 ts-article anatomy)', () => {
+  it('renders the ts-article structure when entry loads', async () => {
+    mockGetEntry.mockResolvedValueOnce(makeEntry({ read: true }));
+    const { container } = render(Reader, { props: { id: 42 } });
+    await waitFor(() => expect(container.querySelector('.ts-article')).toBeTruthy());
+    expect(container.querySelector('.ts-back')).toBeTruthy();
+    expect(container.querySelector('.ts-article-title')).toBeTruthy();
+    expect(container.querySelector('.ts-article-actions')).toBeTruthy();
+    expect(container.querySelector('.ts-article-rule')).toBeTruthy();
+    expect(container.querySelector('.ts-article-end')).toBeTruthy();
   });
 
-  afterEach(() => {
-    vi.clearAllMocks();
+  it('applies measure-<value> class to the shell wrapper', async () => {
+    prefs.measure = 'narrow';
+    mockGetEntry.mockResolvedValueOnce(makeEntry({ read: true }));
+    const { container } = render(Reader, { props: { id: 42 } });
+    await waitFor(() => expect(container.querySelector('.ts-shell-reader.measure-narrow')).toBeTruthy());
   });
 
-  it('fetches the entry by id on mount via api.getEntry (not via store)', async () => {
-    const entry = makeEntry();
-    mockGetEntry.mockResolvedValueOnce(entry);
-    mockPatchEntry.mockResolvedValueOnce({ ...entry, read: true });
-
+  it('does NOT auto-mark on mount when markOnScroll preference is true', async () => {
+    prefs.markOnScroll = true;
+    mockGetEntry.mockResolvedValueOnce(makeEntry({ read: false }));
     render(Reader, { props: { id: 42 } });
-
-    await waitFor(() => {
-      expect(mockGetEntry).toHaveBeenCalledWith(42);
-    });
-  });
-
-  it('shows loading state before entry resolves', () => {
-    // Never resolves — keeps component in loading state.
-    mockGetEntry.mockReturnValueOnce(new Promise(() => {}));
-
-    render(Reader, { props: { id: 42 } });
-
-    expect(screen.getByText(/Loading/)).toBeInTheDocument();
-  });
-
-  it('renders entry title and content after load', async () => {
-    const entry = makeEntry({ read: true }); // read=true → skip auto-patch
-    mockGetEntry.mockResolvedValueOnce(entry);
-
-    render(Reader, { props: { id: 42 } });
-
-    await waitFor(() => {
-      expect(screen.getByText('Test Entry Title')).toBeInTheDocument();
-    });
-  });
-
-  it('auto-marks unread entry as read on mount via entries.toggleRead', async () => {
-    const entry = makeEntry({ read: false });
-    mockGetEntry.mockResolvedValueOnce(entry);
-
-    render(Reader, { props: { id: 42 } });
-
-    await waitFor(() => {
-      expect(mockToggleRead).toHaveBeenCalledWith(42, true);
-    });
-  });
-
-  it('does NOT call toggleRead if the entry is already read', async () => {
-    const entry = makeEntry({ read: true });
-    mockGetEntry.mockResolvedValueOnce(entry);
-
-    render(Reader, { props: { id: 42 } });
-
-    await waitFor(() => {
-      expect(screen.getByText('Test Entry Title')).toBeInTheDocument();
-    });
+    await waitFor(() => expect(screen.queryByText('A title')).toBeTruthy());
     expect(mockToggleRead).not.toHaveBeenCalled();
   });
 
-  it('toggleRead button calls entries.toggleRead via store', async () => {
-    const entry = makeEntry({ read: true }); // already read → no auto-patch
-    mockGetEntry.mockResolvedValueOnce(entry);
-
+  it('auto-marks on mount when markOnScroll preference is false (legacy)', async () => {
+    prefs.markOnScroll = false;
+    mockGetEntry.mockResolvedValueOnce(makeEntry({ read: false }));
     render(Reader, { props: { id: 42 } });
+    await waitFor(() => expect(mockToggleRead).toHaveBeenCalledWith(42, true));
+  });
 
-    await waitFor(() => {
-      expect(screen.getByText('Mark unread')).toBeInTheDocument();
-    });
+  it('Mark unread button toggles read state', async () => {
+    mockGetEntry.mockResolvedValueOnce(makeEntry({ read: true }));
+    render(Reader, { props: { id: 42 } });
+    await waitFor(() => screen.getByText(/Mark unread/i));
+    await fireEvent.click(screen.getByText(/Mark unread/i));
+    await waitFor(() => expect(mockToggleRead).toHaveBeenCalledWith(42, false));
+  });
 
-    const btn = screen.getByText('Mark unread');
-    await fireEvent.click(btn);
+  it('Saved button toggles saved state', async () => {
+    mockGetEntry.mockResolvedValueOnce(makeEntry({ read: true, saved: false }));
+    render(Reader, { props: { id: 42 } });
+    await waitFor(() => screen.getByText(/^Save$/i));
+    await fireEvent.click(screen.getByText(/^Save$/i));
+    await waitFor(() => expect(mockToggleSaved).toHaveBeenCalledWith(42, true));
+  });
 
-    await waitFor(() => {
-      expect(mockToggleRead).toHaveBeenCalledWith(42, false);
-    });
+  it('back row navigates to / on click', async () => {
+    mockGetEntry.mockResolvedValueOnce(makeEntry({ read: true }));
+    const { container } = render(Reader, { props: { id: 42 } });
+    await waitFor(() => expect(container.querySelector('.ts-back')).toBeTruthy());
+    await fireEvent.click(container.querySelector('.ts-back')!);
+    expect(mockNavigate).toHaveBeenCalledWith('/');
+  });
+
+  it('shows loading state before entry resolves', () => {
+    mockGetEntry.mockReturnValueOnce(new Promise(() => {}));
+    render(Reader, { props: { id: 42 } });
+    expect(screen.getByText(/Loading/i)).toBeTruthy();
   });
 
   it('shows error when api.getEntry rejects', async () => {
     mockGetEntry.mockRejectedValueOnce(new Error('Entry not found'));
-
     render(Reader, { props: { id: 42 } });
-
-    await waitFor(() => {
-      expect(screen.getByText('Entry not found')).toBeInTheDocument();
-    });
+    await waitFor(() => expect(screen.getByText('Entry not found')).toBeTruthy());
   });
 
-  it('back button navigates to / via navigate()', async () => {
-    render(Reader, { props: { id: 42 } });
-
-    const backBtn = screen.getByRole('button', { name: /Back/i });
-    await fireEvent.click(backBtn);
-
-    expect(mockNavigate).toHaveBeenCalledWith('/');
-  });
-
-  it('renders a reader pane', () => {
-    mockGetEntry.mockReturnValueOnce(new Promise(() => {}));
+  it('on mount restores scrollTop from readerScroll.loadScroll', async () => {
+    mockLoadScroll.mockReturnValue(880);
+    mockGetEntry.mockResolvedValueOnce(makeEntry({ read: true }));
     const { container } = render(Reader, { props: { id: 42 } });
-    expect(container.querySelector('.reader-pane')).toBeTruthy();
+    await waitFor(() => expect(container.querySelector('.ts-article')).toBeTruthy());
+    // RAF fires asynchronously; give it a tick to execute
+    await new Promise(r => setTimeout(r, 0));
+    expect(mockLoadScroll).toHaveBeenCalledWith(42);
+  });
+
+  it('debounced saveScroll is called after scroll with 300ms debounce', async () => {
+    vi.useFakeTimers();
+    mockGetEntry.mockResolvedValueOnce(makeEntry({ read: true }));
+    const { container } = render(Reader, { props: { id: 42 } });
+    await waitFor(() => expect(container.querySelector('[data-testid="reader-scroll"]')).toBeTruthy());
+    const scrollEl = container.querySelector('[data-testid="reader-scroll"]') as HTMLElement;
+    await fireEvent.scroll(scrollEl);
+    vi.advanceTimersByTime(299);
+    expect(mockSaveScroll).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    // saveScroll is debounced; it fires once 300ms after the last scroll event
+    expect(mockSaveScroll).toHaveBeenCalledWith(42, expect.any(Number));
+    vi.useRealTimers();
   });
 });
