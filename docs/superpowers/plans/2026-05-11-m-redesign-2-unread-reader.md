@@ -14,7 +14,7 @@
 
 **In scope:**
 
-1. Rebuild `web/src/components/EntryRow.svelte` to the `.ts-entry` shape from `tap-simple.jsx` (junction dot, density variants compact/comfortable/cosy, `is-selected`, `is-read` tone-down, `is-saved` tag in the meta row, optional summary).
+1. Consume M1's rewritten `web/src/components/EntryRow.svelte` (`.ts-entry` shape — junction dot, density variants compact/comfortable/cosy, `is-selected`, `is-read` tone-down, `is-saved` tag in the meta row, optional summary). Per team-lead ruling 2026-05-11: M1 owns the EntryRow primitive in full; Saved gets its own `SavedRow.svelte` in M3; History reuses EntryRow. M2's job here is to *verify* M1's primitive matches the brand spec and Unread's usage, and to fill any gap M1 left rather than rebuild from scratch.
 2. Add `web/src/components/GroupHeading.svelte` (the `.ts-group-heading` primitive — eyebrow label + 1px rule + right-aligned count).
 3. Add `web/src/lib/dayBand.ts` — pure function `bucketByDay(items, now)` returning `{ Today, Yesterday, ThisWeek, Earlier }` keyed bands computed from `published_at` (unix seconds).
 4. Rewrite `web/src/views/Unread.svelte` to render inside the M1 simple-centred shell (`.ts-shell` / `ts-main`), grouped by day-band with `GroupHeading` + `EntryRow`. Keep the existing optimistic toggle-read behaviour, the existing pull-to-refresh, keyboard navigation through *all* visible entries (across bands), and the empty/loading/error states.
@@ -56,7 +56,7 @@
 
 ### Modified
 
-- `web/src/components/EntryRow.svelte` — rewritten to `.ts-entry` shape with density variants and saved-tag in meta.
+- `web/src/components/EntryRow.svelte` — **M1-owned**. M2 only adds the consumer-side test file; the component itself is not modified by this milestone.
 - `web/src/views/Unread.svelte` — uses `bucketByDay` to render `GroupHeading` + `EntryRow` per band.
 - `web/src/views/Reader.svelte` — full `.ts-article` anatomy, measure/font wrapper, mark-on-scroll, scroll persistence.
 - `web/src/components/HotkeysModal.svelte` — add `1` / `2` / `3` / `V` / `H` rows.
@@ -83,7 +83,7 @@ Every task below is **TDD-required** unless flagged `[scaffold]`. Pure scoped CS
 - Task 0: Verify M1 baseline — no test, just commands.
 - Task 1: `dayBand.ts` — TDD-required (pure logic, branches).
 - Task 2: `GroupHeading.svelte` markup — `[scaffold]` (pure markup) — but the *consumer* test in Unread.test.ts asserts headings render at the right offsets.
-- Task 3: `EntryRow.svelte` rewrite — TDD-required (state, branches).
+- Task 3: `EntryRow.svelte` consumer-test only (M1 owns the rewrite) — TDD-required for the test file (state, branches in the primitive's *behaviour as Unread consumes it*).
 - Task 4: `Unread.svelte` regrouping — TDD-required (keyboard navigation across bands, group rendering).
 - Task 5: `readerScroll.ts` + tests — TDD-required.
 - Task 6: `markOnScroll.ts` + tests — TDD-required.
@@ -129,6 +129,9 @@ Invoke these as the implementer:
   test -f src/components/SearchOverlay.svelte
   test -f src/lib/searchOverlay.svelte.ts
   grep -q 'measure' src/lib/preferences.svelte.ts
+  # M1 owns the EntryRow rewrite (team-lead ruling 2026-05-11):
+  grep -q 'ts-entry' src/components/EntryRow.svelte
+  grep -q 'density' src/components/EntryRow.svelte
   ```
 
   If any of these fail, stop and message `team-lead` — M2 cannot start until M1 lands or is at least branched-from.
@@ -382,13 +385,32 @@ git commit -m "M2: GroupHeading primitive for day-band list headings"
 
 ---
 
-## Task 3: Rewrite EntryRow to `.ts-entry` shape (TDD)
+## Task 3: Verify M1's EntryRow primitive matches Unread's needs (TDD)
 
 **Files:**
-- Modify: `web/src/components/EntryRow.svelte`
-- Test: `web/src/components/__tests__/EntryRow.test.ts` (new)
+- Verify: `web/src/components/EntryRow.svelte` (M1-owned)
+- Test: `web/src/components/__tests__/EntryRow.test.ts` (new — covers Unread's usage)
 
-The current `EntryRow.svelte` already exists with the `.entry` selector. M1 ships only the *primitive shell* (per the umbrella spec line 149). If M1's plan ships the full rewrite, this task converges with that work — verify in Task 0 by reading `web/src/components/EntryRow.svelte`. If M1 already shipped the `.ts-entry` form, **skip this task** and only add the missing tests below to cover what M1 left untested. If M1 left it as the existing `.entry`-shape stub, do the full rewrite here.
+Per team-lead ruling 2026-05-11, M1 owns the EntryRow rewrite in full (`.ts-entry` shape with junction dot, density variants, in-meta saved tag, density variants, `is-read` / `is-selected` / `is-saved` states). M3 ships a separate `SavedRow.svelte` for the Saved page; M8 (History) reuses EntryRow.
+
+M2's role here:
+
+1. Read M1's `EntryRow.svelte` and confirm the props match the consumer signature this plan assumes (see Step 0 below).
+2. Write the consumer-facing test in `web/src/components/__tests__/EntryRow.test.ts` covering Unread's exact usage. Even if M1 ships a smoke test of its own, M2 owns the "every assertion the Unread list relies on" suite — because if M1's component changes shape, Unread breaks here first.
+3. If M1's primitive is missing something Unread relies on (e.g., the `density` prop, or the saved-tag-in-meta), file the gap: either add the missing piece to M1's primitive *in this PR* with a one-line entry in the plan's risks section, or block on M1 via the team-lead. **Do not** rebuild the primitive in M2.
+
+- [ ] **Step 0: Verify M1's primitive surface**
+
+```bash
+cd /home/ben.guest/Users/ben/src/tap-plan-m2
+# Must export the props the test below relies on.
+grep -q 'class=.ts-entry' web/src/components/EntryRow.svelte
+grep -q 'density' web/src/components/EntryRow.svelte
+grep -q 'is-saved' web/src/components/EntryRow.svelte
+grep -q 'ts-saved-tag\|saved-tag' web/src/components/EntryRow.svelte
+```
+
+If any of these fail, message `team-lead` before continuing — the gap belongs to M1.
 
 Brand spec §4.4 anatomy: junction dot left of the title, title (serif 17–19/500), meta row (feed-avatar + source name + sep + relative time + sep + read time + optional saved tag), optional 2-line clamped summary, `is-selected` background `var(--accent-soft)`, `is-read` tone-down (weight 400, ink-3), `is-saved` adds the SAVED tag inside meta (per `tap-simple.jsx` line 88–93) — note the simple-shell variant moves the saved indicator *into the meta line* rather than the right-gutter `.saved-mark` from the legacy `.entry`. We follow the simple-shell pattern.
 
@@ -507,9 +529,11 @@ describe('EntryRow', () => {
 pnpm --dir web test -- src/components/__tests__/EntryRow.test.ts
 ```
 
-Expected: most tests fail because the existing component uses `.entry` not `.ts-entry`, has no density prop, no saved-in-meta, etc.
+Expected: tests pass if M1 shipped the full primitive. If some fail, the failure surfaces a real gap in M1's primitive — record what is missing in the PR description and follow up with `team-lead` (M2 does not rebuild EntryRow).
 
-- [ ] **Step 3: Rewrite `EntryRow.svelte`**
+- [ ] **Step 3 (reference only — DO NOT execute as a rewrite in this PR): Expected `EntryRow.svelte` shape**
+
+The block below is **reference material** for confirming M1's primitive matches Unread's needs. M2 *does not* land this code; M1 owns the file. If you discover M1 has shipped a substantively different shape, raise it via `team-lead` rather than overwriting their work.
 
 ```svelte
 <!-- web/src/components/EntryRow.svelte -->
@@ -656,20 +680,22 @@ Expected: most tests fail because the existing component uses `.entry` not `.ts-
 </style>
 ```
 
-- [ ] **Step 4: Run the tests; iterate until green**
+- [ ] **Step 4: Run the consumer-tests; iterate until green**
 
 ```bash
 pnpm --dir web test -- src/components/__tests__/EntryRow.test.ts
 ```
 
-Expected: pass. If FeedAvatar resolution complains under the mock, check that the props match its actual signature (`feedURL`, `size`, `radius`) — the test file mocks the component to a no-op.
+Expected: pass against M1's primitive. If FeedAvatar resolution complains under the mock, check that the props match its actual signature (`feedURL`, `size`, `radius`) — the test file mocks the component to a no-op.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Commit the test file only**
 
 ```bash
-git add web/src/components/EntryRow.svelte web/src/components/__tests__/EntryRow.test.ts
-git commit -m "M2: rewrite EntryRow to ts-entry shape with density variants and saved tag"
+git add web/src/components/__tests__/EntryRow.test.ts
+git commit -m "M2: consumer tests for EntryRow as used by the Unread list"
 ```
+
+`web/src/components/EntryRow.svelte` itself is M1-owned; this commit only adds the M2-side coverage so Unread's contract is locked in.
 
 ---
 
@@ -2389,7 +2415,7 @@ make dev   # http://localhost:5173 — manual smoke per Task 14 Step 2
 
 ## Risks
 
-1. **M1 coordination boundary on `EntryRow`.** Umbrella spec line 149 lists `EntryRow.svelte (rewritten)` as a *foundations primitive*. If M1's planner ships the full rewrite (junction, density, saved tag), Task 3 is a near-no-op — the M2 implementer only adds the missing tests. If M1 ships a thin shell, Task 3 does the rewrite. Task 0's grep step catches both cases. **Mitigation:** the executing agent must read M1's actual output before starting Task 3 and adapt — neither blindly rewrite nor blindly skip.
+1. **M1 coordination boundary on `EntryRow`.** Per team-lead ruling 2026-05-11: M1 owns the EntryRow rewrite in full. M2 only writes the consumer-side tests for the Unread list's usage. If Task 3 Step 0's grep checks fail, M2 *does not* rebuild — instead the executing agent raises the gap via `team-lead`. The risk that remains is *prop-signature drift*: if M1 ships a `density` prop with different values (e.g., `'cozy'` instead of `'cosy'`, or omits `default` in favour of `'comfortable'`) the Unread view will need a small adapter in Task 4. Mitigation: Task 0 Step 1 already greps for the exact prop names; surface mismatches early.
 2. **`prefs.measure` ownership.** Umbrella spec line 91 puts `measure` on M1's foundations. If M1 forgets, Task 8 adds it; if M1 ships it, the executing agent verifies and moves on. The plan includes the additive code so either path lands clean.
 3. **`searchOverlay` store ownership.** Umbrella spec line 92 explicitly puts the store, key handler, and *empty* component on M1. If M1 ships them not at all, Task 10 will fail to compile; the executing agent must either land the store first (small addition — copy from this plan's expected shape) or block on M1. **Mitigation:** the Task 0 baseline check fails fast if the store is missing.
 4. **IntersectionObserver in jsdom.** Vitest defaults to jsdom which doesn't implement `IntersectionObserver`. The Task 6 tests stub it via `globalThis.IntersectionObserver = FakeIO`. The integration test in Reader.test.ts mocks `createMarkOnScroll` itself (the test for the observer wiring is unit-level in Task 6; the reader test only asserts the observer is attached, which is observable via the lede element's data attributes or a spy on the imported factory). The plan does not test the live observer in jsdom because the mock surface is cleaner.
@@ -2406,7 +2432,7 @@ make dev   # http://localhost:5173 — manual smoke per Task 14 Step 2
 
 ## Self-review
 
-- **Spec coverage:** every bullet of the team-lead's scope section maps to a task: EntryRow rebuild → Task 3; day-band groupings → Tasks 1/2/4; `.ts-article` rebuild → Task 7; action row with kbd chips → Task 7 (markup); measure preference → Tasks 8/9 plus Task 7 (CSS); mark-on-scroll → Tasks 6/7/8; scroll persistence → Tasks 5/7; serif/sans toggle → Task 7 (CSS); SearchOverlay actual implementation → Task 10; mobile reader → Task 13.
+- **Spec coverage:** every bullet of the team-lead's scope section maps to a task: EntryRow *consumer verification* → Task 3 (the rewrite itself is M1's job per the 2026-05-11 ruling); day-band groupings → Tasks 1/2/4; `.ts-article` rebuild → Task 7; action row with kbd chips → Task 7 (markup); measure preference → Tasks 8/9 plus Task 7 (CSS); mark-on-scroll → Tasks 6/7/8; scroll persistence → Tasks 5/7; serif/sans toggle → Task 7 (CSS); SearchOverlay actual implementation → Task 10; mobile reader → Task 13.
 - **Placeholders:** none. Every step has runnable commands or complete code.
 - **Type consistency:** `EntryListItem`, `Subscription`, `EntryDetail` come from `lib/types.ts`. `Density` is `'compact' | 'default' | 'cosy'` everywhere (note: the brand spec uses `comfortable`/`compact`/`cosy`; we keep the existing `default` alias because `preferences.svelte.ts` already exposes that name — renaming is M6/Settings scope). `Measure` is `'narrow' | 'comfortable' | 'wide'`. `MarkOnScroll` is `boolean`. `Band` keys are `'Today' | 'Yesterday' | 'ThisWeek' | 'Earlier'`.
 - **CSS selector parity:** every selector mentioned in the team-lead's grep list (`.entry`, `.ts-entry`, `.junction`, `.saved-mark`, `.ts-group-heading`, `.ts-article`, etc.) is owned by a specific task in this plan. `.entry` and `.junction` and `.saved-mark` belong to the *legacy* split-pane shape that we replace with `.ts-entry` + `.ts-entry-dot` + `.ts-saved-tag` — confirmed against the simple-shell JSX (`tap-simple.jsx`) which is the M-Redesign target shell.
