@@ -1,3 +1,10 @@
+export type StatusEvent = {
+  time: string;
+  level: 'warn' | 'error';
+  event: string;
+  attrs: Record<string, unknown>;
+};
+
 export type StatusResponse = {
   version: string;
   uptime_seconds: number;
@@ -5,12 +12,13 @@ export type StatusResponse = {
   polls_active: number;
   polls_total: number;
   last_poll_at: number | null;
-  recent_errors: Array<{
-    time: string;
-    level: 'warn' | 'error';
-    event: string;
-    attrs: Record<string, unknown>;
-  }>;
+  recent_errors: StatusEvent[];
+  feeds_total: number;
+  feeds_ok: number;
+  feeds_with_errors: number;
+  offending_feeds: string[];
+  entries_total: number;
+  entries_24h: number;
 };
 
 export async function getStatus(): Promise<StatusResponse> {
