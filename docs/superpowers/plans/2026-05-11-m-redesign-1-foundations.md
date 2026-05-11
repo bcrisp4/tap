@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the SPA's sidebar/split-pane chrome with the single centred `.ts-shell` (desktop) and `.tmshell` (mobile), rewrite Login to the `.tl-root` shell with three modes (password / passkey / OTP-step), ship the primitive component library and global tokens the rest of the redesign milestones (M2–M8) consume, and leave every existing view minimally restyled but visually consistent with the new chrome.
+**Goal:** Replace the SPA's sidebar/split-pane chrome with the single centred `.ts-shell` (desktop) and the `.tap.is-mobile` shell (mobile) — both rooted in `AppShell.svelte`. Rewrite Login to the `.tl-root` shell with three modes (password / passkey / OTP-step), ship the primitive component library and global tokens the rest of the redesign milestones (M2–M8) consume, and leave every existing view minimally restyled but visually consistent with the new chrome.
 
 **Architecture:** All chrome flows through `web/src/components/AppShell.svelte` (theme class, mobile detection, layout). Top-tab navigation (desktop) and bottom-tab + More sheet (mobile) replace the sidebar. CSS is per-component scoped `<style>` blocks; only tokens, fonts, focus ring, scrollbar, reduced-motion guard, and the two sanctioned keyframes (`tap-pulse`, `tf-spin`) live in global stylesheets. Existing views (Unread, Reader, Saved, Settings, Admin) keep their logic and stores; only their wrapping chrome and a small set of controls (`<select>` → `Segmented`, ad-hoc `<button>` → `Button`, ad-hoc dialogs → `Dialog`) change in M1.
 
@@ -75,6 +75,7 @@
 - `web/src/views/History.svelte` — stub page ("Coming soon — M8").
 - `web/src/lib/searchOverlay.svelte.ts` — store: `{ open, query, scope: 'unread'|'saved'|'all' }`; opened by `/` keystroke from `App.svelte`'s existing handler.
 - `web/src/lib/pollStatus.ts` — promoted from `components/PollerStatus.svelte` state. Exports a readable store consumed by `StatusFoot`.
+- `web/src/lib/breakpoints.svelte.ts` — **canonical location for `isMobile`** (per reviewer 2026-05-11). Exports `isMobile: Readable<boolean>` driven by a single `matchMedia('(max-width: 768px)')` listener at module-init time. Replaces the local `$state` currently in `App.svelte`. Consumed by `AppShell` (M1), and by M2/M3/M4/M5/M6 plans that reference `isMobile` — those plans must import from this location, not from `preferences.svelte.ts`.
 - `web/src/styles/print.css` — optional, `theme-print` stack fallback (low priority; deliver only if it fits without expanding scope).
 - Test files (TDD-driven, see "TDD posture" below):
   - `web/src/components/__tests__/AppShell.test.ts`
@@ -93,6 +94,8 @@
   - `web/src/components/__tests__/EntryRow.test.ts`
   - `web/src/lib/__tests__/searchOverlay.test.ts`
   - `web/src/lib/__tests__/pollStatus.test.ts`
+  - `web/src/lib/__tests__/breakpoints.test.ts`
+  - `web/src/components/__tests__/EmptyState.test.ts`
 
 ### Modified
 
@@ -106,8 +109,7 @@
 - `web/src/components/HotkeysModal.svelte` — restyle to the `.tap-modal` two-column shortcut grid per brand spec §7.
 - `web/src/components/__tests__/HotkeysModal.test.ts` — update DOM expectations.
 - `web/src/components/FeedAvatar.svelte` — confirm 14×14 default + 3px radius (per design); minor style tweak only.
-- `web/src/components/PollerStatus.svelte` — split: behaviour (`/healthz` poll) moves into `lib/pollStatus.ts`; the existing component becomes a deprecated re-export that imports from the new location and renders `StatusFoot`. **Decision:** delete the original `PollerStatus.svelte` once `StatusFoot` consumes the store directly. The store + `StatusFoot` are the new contract; no shim.
-- `web/src/components/__tests__/PollerStatus.test.ts` — delete or rewrite as `web/src/lib/__tests__/pollStatus.test.ts`.
+- (Note: `PollerStatus.svelte` and its test are not "modified" — they are deleted outright. See the Deleted section. The replacement is `lib/pollStatus.ts` + `StatusFoot.svelte`, both created in Groups D and I. No shim, no re-export.)
 - `web/src/views/Login.svelte` — full rewrite to `.tl-root` shell with three modes; reuses Field, Button, KbdChip, OtpInput primitives.
 - `web/src/views/__tests__/Login.test.ts` — rewrite to cover mode switching, OTP entry, passkey button visibility.
 - `web/src/views/Unread.svelte` — remove `<Sidebar>` and `<TopBar>`; wrap content in `<AppShell>` (via App.svelte); replace any native `<select>` density/font UI with `Segmented`. Keep keyboard handlers, mark-all-read, refresh.
@@ -162,14 +164,17 @@ Per `CLAUDE.md`: TDD non-negotiable on branches, state, error handling; pure CSS
 - `EntryRow` `is-read` tone-down; `is-saved` indicator; click navigates to `/entry/:id`; density-variant CSS class.
 - `searchOverlay` store: open/close, query update, scope change.
 - `pollStatus` store: initial poll, interval setup, error handling (network failure leaves prior value alone).
+- `breakpoints.isMobile` store: initial value from `matchMedia('(max-width: 768px)')`; updates on `change` event; subscribers receive new value.
+- `EmptyState` discriminator: renders string `sub` directly; renders Snippet `sub` via `{@render}`.
 - `Login` mode transitions (`password` → `otp` after `auth.login` returns `totp_required`); passkey button shown only when `'credentials' in navigator`; recovery-code toggle inside OTP mode.
-- Router parse/format for `/categories` / `/feeds` / `/history`; absence of `/search` and `/categories/:id`.
+- Router parse/format for `/categories` / `/feeds` / `/history` / `/sign-in`; absence of `/search` and `/categories/:id`.
+- App.svelte auth-redirect contract: unauthenticated on a non-signin route → push `/sign-in`; authenticated on `/sign-in` → push `/`.
 - `preferences.measure` round-trip via `localStorage` (mirror existing pref tests).
 - HotkeysModal `?` opens; Esc closes; click-outside closes.
 
 **Exempt (CSS/markup-only or pure shell layout):**
 
-- `AppShell` (no state beyond `isMobile`, which is already tested in `App.test.ts`).
+- `AppShell` (no state beyond consuming `isMobile` from `lib/breakpoints.svelte.ts`; store has its own test).
 - `TopTabs` (renders `route` store; existing route tests cover navigation).
 - `StatusFoot` (consumes `pollStatus` store; store tests cover behaviour).
 - `MobileTopBar` (pure markup).
@@ -471,11 +476,11 @@ git add web/src/styles/global.css
 git commit -m "M1-C: prune global.css to reset/focus/scrollbar/keyframes only"
 ```
 
-### Group D — `searchOverlay` store + `pollStatus` store
+### Group D — Stores: `searchOverlay`, `pollStatus`, `breakpoints`
 
-**Files:** `web/src/lib/searchOverlay.svelte.ts`, `web/src/lib/pollStatus.ts`, `web/src/lib/__tests__/searchOverlay.test.ts`, `web/src/lib/__tests__/pollStatus.test.ts`.
+**Files:** `web/src/lib/searchOverlay.svelte.ts`, `web/src/lib/pollStatus.ts`, `web/src/lib/breakpoints.svelte.ts`, plus matching tests.
 
-These stores back `SearchOverlay.svelte` and `StatusFoot.svelte`. Invoke `svelte-runes` skill before writing — `.svelte.ts` files use runes outside components, same pattern as `preferences.svelte.ts`.
+These three stores back `SearchOverlay.svelte`, `StatusFoot.svelte`, and `AppShell.svelte` respectively. Invoke `svelte-runes` skill before writing — `.svelte.ts` files use runes outside components, same pattern as `preferences.svelte.ts`. `breakpoints.svelte.ts` is the canonical location for `isMobile` per reviewer 2026-05-11 — it replaces the existing local `$state` in `App.svelte` and is consumed by every downstream redesign plan (M2/M3/M4/M5/M6).
 
 - [ ] **D1. Write the failing `searchOverlay` test.**
 
@@ -669,11 +674,84 @@ pnpm --dir web test -- src/lib/__tests__/pollStatus.test.ts
 
 Expected: 3 passing.
 
-- [ ] **D9. Commit.**
+- [ ] **D9. Write the failing `breakpoints.isMobile` test.** `web/src/lib/__tests__/breakpoints.test.ts`:
+
+```ts
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { get } from 'svelte/store';
+
+describe('breakpoints.isMobile store', () => {
+  let listeners: Array<(e: MediaQueryListEvent) => void>;
+  let mql: { matches: boolean; addEventListener: ReturnType<typeof vi.fn>; removeEventListener: ReturnType<typeof vi.fn>; media: string };
+
+  beforeEach(() => {
+    listeners = [];
+    mql = {
+      matches: false,
+      media: '(max-width: 768px)',
+      addEventListener: vi.fn((_evt: string, fn: (e: MediaQueryListEvent) => void) => listeners.push(fn)),
+      removeEventListener: vi.fn(),
+    };
+    vi.stubGlobal('matchMedia', vi.fn(() => mql));
+  });
+
+  it('initial value reflects matchMedia.matches', async () => {
+    mql.matches = true;
+    const { isMobile } = await import('../breakpoints.svelte?fresh-initial-true' as string);
+    expect(get(isMobile)).toBe(true);
+  });
+
+  it('initial value false when not mobile', async () => {
+    mql.matches = false;
+    const { isMobile } = await import('../breakpoints.svelte?fresh-initial-false' as string);
+    expect(get(isMobile)).toBe(false);
+  });
+
+  it('updates when the media query fires change', async () => {
+    mql.matches = false;
+    const { isMobile } = await import('../breakpoints.svelte?fresh-change' as string);
+    expect(get(isMobile)).toBe(false);
+    listeners.forEach(fn => fn({ matches: true } as MediaQueryListEvent));
+    expect(get(isMobile)).toBe(true);
+  });
+});
+```
+
+- [ ] **D10. Run, confirm fail.** `pnpm --dir web test -- src/lib/__tests__/breakpoints.test.ts`. Expected: module not found.
+
+- [ ] **D11. Implement `breakpoints.svelte.ts`.**
+
+```ts
+import { writable, type Readable } from 'svelte/store';
+
+const MOBILE_QUERY = '(max-width: 768px)';
+
+function makeIsMobile(): Readable<boolean> {
+  // SSR guard: if matchMedia is undefined (Node/jsdom without stub), default to false.
+  const supportsMQ = typeof window !== 'undefined' && typeof window.matchMedia === 'function';
+  const initial = supportsMQ ? window.matchMedia(MOBILE_QUERY).matches : false;
+  const { subscribe, set } = writable<boolean>(initial);
+
+  if (supportsMQ) {
+    const mql = window.matchMedia(MOBILE_QUERY);
+    mql.addEventListener('change', (e: MediaQueryListEvent) => set(e.matches));
+  }
+
+  return { subscribe };
+}
+
+export const isMobile = makeIsMobile();
+```
+
+**Why `writable` not runes:** Svelte runes (`$state`) are scoped to component / `.svelte.ts` modules but they don't satisfy the `Readable<T>` interface that downstream plans (M2/M3/M4/M5/M6) consume via `$isMobile`. A plain `writable` + sealed `subscribe` export gives them the `$store` shape they expect. The filename `breakpoints.svelte.ts` is kept for consistency with the existing `preferences.svelte.ts` (mixed-mode is fine — Vite handles both).
+
+- [ ] **D12. Run, confirm green.** `pnpm --dir web test -- src/lib/__tests__/breakpoints.test.ts`. Expected: 3 passing.
+
+- [ ] **D13. Commit.**
 
 ```bash
-git add web/src/lib/searchOverlay.svelte.ts web/src/lib/pollStatus.ts web/src/lib/__tests__/searchOverlay.test.ts web/src/lib/__tests__/pollStatus.test.ts
-git commit -m "M1-D: add searchOverlay and pollStatus stores (TDD)"
+git add web/src/lib/searchOverlay.svelte.ts web/src/lib/pollStatus.ts web/src/lib/breakpoints.svelte.ts web/src/lib/__tests__/searchOverlay.test.ts web/src/lib/__tests__/pollStatus.test.ts web/src/lib/__tests__/breakpoints.test.ts
+git commit -m "M1-D: add searchOverlay, pollStatus, and breakpoints stores (TDD)"
 ```
 
 ### Group E — Preferences (density migration + measure)
@@ -735,7 +813,7 @@ describe('measure pref', () => {
 
 - [ ] **E2. Run, confirm fail.** `pnpm --dir web test -- src/lib/__tests__/preferences.test.ts`. Expected: density migration test fails (legacy `'default'` not migrated); `cosy` rejected by the existing enum; `measure` not exported.
 
-- [ ] **E3. Rewrite `preferences.svelte.ts`.** Replace the file's contents:
+- [ ] **E3. Rewrite `preferences.svelte.ts`.** Replace the file's contents. **Load-bearing detail:** the `migrateDensity()` IIFE must execute *before* `export const density = makePref(...)`. The snippet below is correctly ordered (IIFE on line 23 of the snippet, density export on line 31). Do not reorder. If you split the file later (e.g., per-pref modules), make sure migration runs before the pref reads `localStorage`.
 
 ```ts
 // .svelte.ts enables Svelte runes ($state, $derived) outside components.
@@ -887,6 +965,11 @@ describe('router', () => {
     expect(get(route)).toEqual({ name: 'admin' });
   });
 
+  it('parses /sign-in', () => {
+    navigate('/sign-in');
+    expect(get(route)).toEqual({ name: 'signin' });
+  });
+
   it('falls back to unread for /search (deleted)', () => {
     navigate('/search');
     expect(get(route)).toEqual({ name: 'unread' });
@@ -920,7 +1003,8 @@ type RouteState =
   | { name: 'feeds' }
   | { name: 'history' }
   | { name: 'settings' }
-  | { name: 'admin' };
+  | { name: 'admin' }
+  | { name: 'signin' };
 
 function parse(pathname: string): RouteState {
   const m = pathname.match(/^\/entry\/(\d+)$/);
@@ -931,6 +1015,7 @@ function parse(pathname: string): RouteState {
   if (pathname === '/history')    return { name: 'history' };
   if (pathname === '/settings')   return { name: 'settings' };
   if (pathname === '/admin')      return { name: 'admin' };
+  if (pathname === '/sign-in')    return { name: 'signin' };
   return { name: 'unread' };
 }
 
@@ -952,13 +1037,13 @@ export function navigate(to: string) {
 pnpm --dir web test -- src/lib/__tests__/router.test.ts
 ```
 
-Expected: 10 passing.
+Expected: 11 passing.
 
 - [ ] **F5. Commit.**
 
 ```bash
 git add web/src/lib/router.ts web/src/lib/__tests__/router.test.ts
-git commit -m "M1-F: rewrite router with categories/feeds/history; drop search/category"
+git commit -m "M1-F: rewrite router with categories/feeds/history/sign-in; drop search/category"
 ```
 
 ### Group G — Pure-markup primitives (no behaviour)
@@ -1056,33 +1141,90 @@ These are presentational; per "TDD posture" they don't need TDD. Build them in o
 
 - [ ] **G4. `EmptyState.svelte`** (`web/src/components/EmptyState.svelte`).
 
+**Contract (cross-plan, per team-lead decision 2026-05-11):** prop name is **`subtitle`** and accepts **`string | Snippet`**. Strings render as plain text inside `<p class="ts-empty-sub">`; Snippets render via `{@render subtitle()}` so callers can slot inline elements (e.g. M3's `Press <KbdChip>S</KbdChip> on any entry to save it`). M3/M5/M6/M8 plans align on this prop name and union type. `cta` is a structured `{ label, onClick }` object rather than a Snippet — covers the only call-site shape used across the redesign without a second discriminator. The `dot` prop is `'accent' | 'ink-4'` per brand spec §4.16: "no results" empty states should use `ink-4`.
+
 ```svelte
 <script lang="ts">
+  import type { Snippet } from 'svelte';
   type Props = {
     title: string;
-    sub?: string;
-    tone?: 'accent' | 'mute';
-    cta?: import('svelte').Snippet;
+    subtitle?: string | Snippet;
+    cta?: { label: string; onClick: () => void };
+    dot?: 'accent' | 'ink-4';
   };
-  let { title, sub, tone = 'accent', cta }: Props = $props();
+  let { title, subtitle, cta, dot = 'accent' }: Props = $props();
 </script>
 
-<div class="empty tone-{tone}">
-  <div class="dot" aria-hidden="true"></div>
-  <div class="title">{title}</div>
-  {#if sub}<div class="sub">{sub}</div>{/if}
-  {#if cta}<div class="cta">{@render cta()}</div>{/if}
+<div class="ts-empty">
+  <span class="ts-empty-dot" data-tone={dot} aria-hidden="true"></span>
+  <h2 class="ts-empty-title">{title}</h2>
+  {#if typeof subtitle === 'string'}
+    <p class="ts-empty-sub">{subtitle}</p>
+  {:else if subtitle}
+    <p class="ts-empty-sub">{@render subtitle()}</p>
+  {/if}
+  {#if cta}
+    <button type="button" class="ts-btn is-primary" onclick={cta.onClick}>{cta.label}</button>
+  {/if}
 </div>
 
 <style>
-  .empty { padding: 80px 24px; text-align: center; color: var(--ink-3); }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); margin: 0 auto 18px; }
-  .tone-mute .dot { background: var(--ink-4); }
-  .title { font-family: var(--serif); font-size: 20px; font-weight: 500; color: var(--ink-2); margin-bottom: 8px; letter-spacing: -0.01em; }
-  .sub { font-family: var(--sans); font-size: 13px; color: var(--ink-3); max-width: 360px; margin: 0 auto; line-height: 1.5; }
-  .cta { margin-top: 18px; display: inline-flex; }
+  .ts-empty { padding: 80px 24px; text-align: center; color: var(--ink-3); }
+  .ts-empty-dot {
+    display: inline-block;
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent);
+    margin: 0 auto 18px;
+  }
+  .ts-empty-dot[data-tone="ink-4"] { background: var(--ink-4); }
+  .ts-empty-title {
+    font-family: var(--serif); font-size: 20px; font-weight: 500;
+    color: var(--ink-2);
+    margin: 0 0 8px;
+    letter-spacing: -0.01em;
+  }
+  .ts-empty-sub {
+    font-family: var(--sans); font-size: 13px; color: var(--ink-3);
+    max-width: 360px; margin: 0 auto;
+    line-height: 1.5;
+  }
+  .ts-empty .ts-btn { margin-top: 18px; }
 </style>
 ```
+
+**Test note:** add a unit test asserting both `subtitle` shapes and the `cta` callback. `web/src/components/__tests__/EmptyState.test.ts`:
+
+```ts
+import { render } from '@testing-library/svelte';
+import { describe, it, expect, vi } from 'vitest';
+import EmptyState from '../EmptyState.svelte';
+import { createRawSnippet } from 'svelte';
+
+describe('EmptyState', () => {
+  it('renders string subtitle', () => {
+    const { getByText } = render(EmptyState, { title: 'Nothing yet', subtitle: 'Come back later.' });
+    expect(getByText('Come back later.')).toBeTruthy();
+  });
+
+  it('renders Snippet subtitle (allows inline interactive markup)', () => {
+    const subtitle = createRawSnippet(() => ({ render: () => '<span>Press <kbd>S</kbd></span>' }));
+    const { getByText } = render(EmptyState, { title: 'Empty', subtitle });
+    expect(getByText(/Press/)).toBeTruthy();
+  });
+
+  it('renders cta button and fires onClick', async () => {
+    const onClick = vi.fn();
+    const { getByRole } = render(EmptyState, {
+      title: 'No feeds', subtitle: 'Add one to get started.',
+      cta: { label: 'Add feed', onClick },
+    });
+    (getByRole('button', { name: /add feed/i }) as HTMLButtonElement).click();
+    expect(onClick).toHaveBeenCalledOnce();
+  });
+});
+```
+
+This bumps EmptyState into the "exempt-but-has-one-test" bucket because the `subtitle` type discriminator is behavioural.
 
 - [ ] **G5. `Chip.svelte`** (`web/src/components/Chip.svelte`). Variants: pill / tag / error / backoff.
 
@@ -2820,9 +2962,10 @@ describe('AppShell', () => {
 
 - [ ] **I6c. Implement `AppShell.svelte`.**
 
+`AppShell.svelte` is a thin layout wrapper: it (a) applies the `.tap.ts-root` (+ `.is-mobile`, `+ .font-sans`) class chain on its root, (b) consumes `isMobile` from `lib/breakpoints.svelte.ts` (NOT a local `$state`), (c) branches the children render between the desktop (`<TopTabs> + <AccountAvatar> + main + <StatusFoot>`) and mobile (`<MobileTopBar> + main + <MobileTabBar>`) trees, (d) computes `pageTitle`, `unread`, and `isAdmin` derivations consumed by the chrome. No further state or behaviour — every interactive piece is delegated to a child component.
+
 ```svelte
 <script lang="ts">
-  import { onMount } from 'svelte';
   import TopTabs from './TopTabs.svelte';
   import AccountAvatar from './AccountAvatar.svelte';
   import StatusFoot from './StatusFoot.svelte';
@@ -2831,21 +2974,11 @@ describe('AppShell', () => {
   import { auth } from '../lib/auth';
   import { route } from '../lib/router';
   import { entries } from '../lib/store';
-  import { theme, font } from '../lib/preferences.svelte';
+  import { font } from '../lib/preferences.svelte';
+  import { isMobile } from '../lib/breakpoints.svelte';
 
   type Props = { children: import('svelte').Snippet };
   let { children }: Props = $props();
-
-  let isMobile = $state(
-    typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches,
-  );
-
-  onMount(() => {
-    const mq = window.matchMedia('(max-width: 768px)');
-    const onResize = (e: MediaQueryListEvent) => { isMobile = e.matches; };
-    mq.addEventListener('change', onResize);
-    return () => mq.removeEventListener('change', onResize);
-  });
 
   const unread = $derived($entries.items.filter(e => !e.read).length);
   const isAdmin = $derived($auth.user?.role === 'admin');
@@ -2859,10 +2992,10 @@ describe('AppShell', () => {
 
 <div
   class="tap ts-root"
-  class:is-mobile={isMobile}
+  class:is-mobile={$isMobile}
   class:font-sans={font.value === 'sans'}
 >
-  {#if isMobile}
+  {#if $isMobile}
     <MobileTopBar title={pageTitle} count={$route.name === 'unread' ? unread : undefined} countLabel="unread" />
     <main class="mbody">{@render children()}</main>
     <MobileTabBar unreadCount={unread} />
@@ -2985,6 +3118,14 @@ pnpm --dir web test -- src/views/__tests__/Login.test.ts
 - [ ] **J3. Rewrite `web/src/views/Login.svelte`.** Full replacement:
 
 ```svelte
+<!--
+  Login is mounted by App.svelte under two conditions:
+   (1) URL is /sign-in (route name 'signin'), OR
+   (2) $auth.user == null on any other URL (state-aware fallback).
+  App.svelte's redirect $effect keeps the two in sync: unauthenticated
+  users are pushed to /sign-in; authenticated users on /sign-in are
+  pushed to /. Magic-link mode is intentionally out of scope (umbrella §1).
+-->
 <script lang="ts">
   import Button from '../components/Button.svelte';
   import Field from '../components/Field.svelte';
@@ -3556,7 +3697,11 @@ git commit -m "M1-N: stub views for /categories, /feeds, /history"
 
 Wire everything together: replace the old route table with the new one, wrap content in `AppShell`, hook `/` to `searchOverlay`, mount `SearchOverlay`.
 
-- [ ] **O1. Read `App.svelte` and `App.test.ts`.** Update `App.test.ts` to reflect the new mount: no `<TabBar>`, no top-level `<Sidebar>`, single AppShell wrapping current route content.
+- [ ] **O1. Read `App.svelte` and `App.test.ts`.** Update `App.test.ts` to reflect the new mount: no `<TabBar>`, no top-level `<Sidebar>`, single AppShell wrapping current route content. Add two new test cases for the auth-redirect contract (item 4 of reviewer's round 1):
+  1. **Unauthenticated user lands on `/` → redirected to `/sign-in`.** Mock `auth.bootstrap()` to resolve with `user: null`; assert `window.location.pathname === '/sign-in'` after the `$effect` flushes (use `tick()` from svelte).
+  2. **Authenticated user visits `/sign-in` → redirected to `/`.** Mock `auth` store with a non-null `user`; `navigate('/sign-in')`; assert pathname becomes `/`.
+
+Both tests live in `web/src/views/__tests__/App.test.ts`. Verify the existing `__mocks__/pwa-register-svelte.ts` mock still resolves the `virtual:pwa-register/svelte` import (it does; do not modify).
 
 - [ ] **O2. Rewrite `App.svelte`.**
 
@@ -3645,6 +3790,19 @@ Wire everything together: replace the old route table with the new one, wrap con
     html.classList.remove('density-compact', 'density-comfortable', 'density-cosy');
     html.classList.add(`density-${density.value}`);
   });
+
+  // Auth-route redirect contract (umbrella §2.2 + reviewer 2026-05-11 round 1 item 4):
+  //   - Unauthenticated and NOT already on /sign-in → navigate('/sign-in').
+  //   - Authenticated and ON /sign-in → navigate('/').
+  // Single $effect so both checks fire on auth bootstrap and on route change.
+  $effect(() => {
+    if (!$auth.bootstrapped) return;
+    if ($auth.user == null && $route.name !== 'signin') {
+      navigate('/sign-in');
+    } else if ($auth.user != null && $route.name === 'signin') {
+      navigate('/');
+    }
+  });
 </script>
 
 <svelte:window onkeydown={(e) => {
@@ -3671,7 +3829,7 @@ Wire everything together: replace the old route table with the new one, wrap con
 
 {#if !$auth.bootstrapped}
   <!-- empty during bootstrap window -->
-{:else if $auth.user == null}
+{:else if $route.name === 'signin' || $auth.user == null}
   <Login />
 {:else}
   <AppShell>
@@ -3934,6 +4092,8 @@ Each criterion ties to brand spec / umbrella spec / JSX mockup / `styles.css` se
 - [ ] `/search` returns to `/` (route deleted).
 - [ ] `/categories/1` returns to `/` (per-category-detail deleted).
 - [ ] Admin route renders Admin only when `auth.user.role === 'admin'`.
+- [ ] Unauthenticated user visiting `/` is pushed to `/sign-in`.
+- [ ] Authenticated user visiting `/sign-in` is pushed to `/`.
 
 ### Deletes (umbrella §3.3)
 
@@ -4012,19 +4172,23 @@ If step 6 finds a regression, fix it before continuing; do not file an issue and
 
 Per the task instructions, do NOT edit `docs/specs/2026-05-11-ui-redesign.md`. Inconsistencies noted here for the reviewer:
 
-1. **Primitive list (already amended by team-lead 2026-05-11):** umbrella §3.2 lists `EntryRow.svelte` as a single primitive; the team-lead's decision is to defer `SavedRow.svelte` to M3 and keep `EntryRow` in M1. This plan follows the amendment. Recommend updating §3.2's table footnote to record the split.
+1. **Primitive list (RESOLVED 2026-05-11 by team-lead):** umbrella §3.2 listed `EntryRow.svelte` as a single primitive; team-lead amendment defers `SavedRow.svelte` to M3, keeps `EntryRow` in M1. This plan follows the amendment.
 
-2. **`pollStatus` "promoted" location.** Umbrella §2.3 says `pollStatus` is promoted from `PollerStatus.svelte` state into `lib/store.ts`. This plan creates `lib/pollStatus.ts` instead (separate file, parallel to `lib/searchOverlay.svelte.ts`), because cramming poll state into the existing `lib/store.ts` (which already owns `entries`, `subscriptions`, `categories`) would couple unrelated concerns. **Recommend** the umbrella spec be updated to say "lifted into its own `lib/pollStatus.ts`", but the behaviour is identical.
+2. **`pollStatus` location (RESOLVED 2026-05-11 by umbrella amendment):** umbrella §2.3 now reads "lifted into a new `lib/pollStatus.ts`", matching this plan. No further action.
 
 3. **`/categories/:id` removal vs. M4 future state.** Umbrella §2.2 says `/categories/:id` is replaced by a chip on Unread and a filter on Feeds. The chip lives in M2/M4. Until M4 ships, users have no way to filter by category. Acceptable per the umbrella spec, but worth confirming.
 
 4. **Mobile More sheet for Admin.** Brand spec §4.10 / §6.8 do not mention Admin in the More sheet. Umbrella §2.2 says "More sheet contains History, Settings, optionally Admin, and Log out." This plan includes Admin in the More sheet when the user has admin role. Recommend the brand spec annotate this.
 
-5. **`/sign-in` route vs. existing `Login.svelte` mount.** The umbrella spec §2.2 lists `/sign-in` as the route name. The current `App.svelte` renders `<Login>` whenever `$auth.user == null`, regardless of URL. This plan keeps that mounting behaviour (Login is gated on auth state, not URL). If `/sign-in` should be a true distinct route — e.g., a logged-in user can visit it to add a passkey — that's M6/M7's concern, not M1's.
+5. **`/sign-in` route (RESOLVED 2026-05-11 by team-lead + reviewer):** umbrella §2.2 lists `/sign-in` (route name `signin`); M1 wires it. App.svelte enforces a two-way redirect: unauthenticated and NOT on `/sign-in` → push `/sign-in`; authenticated and on `/sign-in` → push `/`. Login.svelte is mounted by either URL match or `$auth.user == null` (deep-link + state-aware). See Group F and Group O.
 
 6. **Magic-link mode.** Brand spec §6.0 lists four modes (password / passkey / magic / otp); umbrella §1 explicitly excludes magic. This plan delivers three modes. No issue, just confirming.
 
 7. **`searchOverlay` scope picker.** Brand spec §7 says `/` "focuses search" — scope is implicit. The store carries a `scope` field so M2 can implement scope toggling. M1 ships the field but the overlay UI doesn't expose it. Not a defect.
+
+8. **EmptyState contract (RESOLVED 2026-05-11 by team-lead):** prop is `subtitle: string | Snippet`, `cta` is `{ label, onClick }` (not Snippet), `dot` is `'accent' | 'ink-4'`. M3/M5/M6/M8 plans align. See Group G4.
+
+9. **`isMobile` shared location (RESOLVED 2026-05-11 by team-lead + reviewer):** new file `web/src/lib/breakpoints.svelte.ts` exports `isMobile: Readable<boolean>` from a single module-init `matchMedia('(max-width: 768px)')` listener. M2/M3/M4/M5/M6 all import from this path. See Group D (D9–D13) and AppShell (Group I6c).
 
 ---
 
