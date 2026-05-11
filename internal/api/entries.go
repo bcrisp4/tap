@@ -58,6 +58,7 @@ func registerEntryRoutes(m *http.ServeMux, d *sql.DB) {
 		p := db.ListEntriesParams{
 			UserID:     u.ID,
 			UnreadOnly: r.URL.Query().Get("unread") == "1",
+			SavedOnly:  r.URL.Query().Get("saved") == "1",
 		}
 		if v := r.URL.Query().Get("feed"); v != "" {
 			id, err := strconv.ParseInt(v, 10, 64)

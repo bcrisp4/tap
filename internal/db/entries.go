@@ -54,6 +54,7 @@ type Entry struct {
 type ListEntriesParams struct {
 	UserID            int64
 	UnreadOnly        bool
+	SavedOnly         bool
 	SubscriptionID    int64 // 0 means all
 	CategoryID        int64 // 0 means all
 	Limit             int
@@ -85,6 +86,9 @@ func ListEntries(ctx context.Context, d *sql.DB, p ListEntriesParams) (entries [
 
 	if p.UnreadOnly {
 		clauses = append(clauses, "read = 0")
+	}
+	if p.SavedOnly {
+		clauses = append(clauses, "saved = 1")
 	}
 	if p.SubscriptionID > 0 {
 		clauses = append(clauses, "subscription_id = ?")
