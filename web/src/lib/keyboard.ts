@@ -7,6 +7,10 @@ export interface KeyboardContext {
   onViewOriginal: () => void;
   onEscape: () => void;
   setModalOpen: (open: boolean) => void;
+  onMeasureNarrow?: () => void;
+  onMeasureComfortable?: () => void;
+  onMeasureWide?: () => void;
+  onBack?: () => void;
 }
 
 const FORM_TAGS = new Set(['INPUT', 'TEXTAREA', 'SELECT']);
@@ -28,6 +32,10 @@ export function buildHandler(ctx: KeyboardContext) {
       case 'v':                   ctx.onViewOriginal(); break;
       case 'Escape':              ctx.onEscape(); break;
       case '?':                   ctx.setModalOpen(true); break;
+      case '1':                   ctx.onMeasureNarrow?.(); break;
+      case '2':                   ctx.onMeasureComfortable?.(); break;
+      case '3':                   ctx.onMeasureWide?.(); break;
+      case 'h':                   ctx.onBack?.(); break;
     }
   };
 }
