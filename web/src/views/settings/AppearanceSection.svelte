@@ -21,8 +21,8 @@
   ];
   const densityOptions: { value: Density; label: string }[] = [
     { value: 'compact',     label: 'Compact' },
-    { value: 'comfortable', label: 'Default' },
-    { value: 'cosy',        label: 'Comfortable' },
+    { value: 'comfortable', label: 'Comfortable' },
+    { value: 'cosy',        label: 'Cosy' },
   ];
   const measureOptions: { value: Measure; label: string }[] = [
     { value: 'narrow',      label: 'Narrow' },
