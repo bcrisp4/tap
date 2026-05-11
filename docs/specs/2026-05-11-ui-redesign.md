@@ -10,7 +10,7 @@
 
 **In scope:**
 
-- Reskin every existing view (Unread, Reader, Saved, Settings, Login, Admin, Category) to the new design.
+- Reskin every existing view (Unread, Reader, Saved, Settings, Login, Admin) to the new design. (`Category.svelte` is deleted, not reskinned — its per-category filter role moves to the new `/categories` management page and a category filter chip on `/`.)
 - Build three new pages: Categories management (`/categories`), Feeds management (`/feeds`), History (`/history`).
 - Replace the sidebar + split-pane shell with the single simple-centred `.ts-shell` for desktop, the `.tap.is-mobile` shell for mobile.
 - Adopt the design's brand chrome: wordmark, account-avatar + popover, top tabs (desktop), bottom tabs + More sheet (mobile), `ts-foot` status strip.
@@ -90,7 +90,7 @@ The current Svelte 5 stores stay. Additions:
 |---|---|---|
 | `prefs.measure` | `lib/preferences.svelte.ts` | `narrow` / `comfortable` / `wide` — article body max-width on `.ts-article` |
 | `searchOverlay` | new `lib/searchOverlay.svelte.ts` | `{ open, query, scope }`; opened by `/` keystroke. Foundations ships the store + key handler with an empty overlay component; M2 adds the actual filter UI. |
-| `pollStatus` (promoted) | existing `PollerStatus.svelte` state lifted into `lib/store.ts` | renders in `ts-foot` on every page, not just Unread |
+| `pollStatus` (promoted) | existing `PollerStatus.svelte` state lifted into a new `lib/pollStatus.ts` module (keeps it separate from `lib/store.ts`'s entry/subscription/category stores) | renders in `ts-foot` on every page, not just Unread |
 
 No new client-side route state shapes beyond the new route names.
 
