@@ -36,7 +36,7 @@
 </script>
 
 <Popover {open} anchor="free" {onClose}>
-  <div class="ts-cat-pop" role="menu" aria-label="{label} {feedName}" style:top="{top}px" style:left="{left}px">
+  <div class="ts-cat-pop" aria-label="{label} {feedName}" style:top="{top}px" style:left="{left}px">
     <div class="ts-cat-pop-eyebrow">{label} <b>{feedName}</b> to</div>
     <div class="ts-cat-pop-rule"></div>
     {#each categories as cat (cat.id)}

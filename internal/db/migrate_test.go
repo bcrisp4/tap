@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"io/fs"
-	"path/filepath"
 	"sort"
 	"testing"
 
@@ -195,7 +194,7 @@ func TestMigrate_0011_CategoryPosition_OnPopulatedDB(t *testing.T) {
 
 	// Apply all migrations — after 0011 lands, newTestDB applies it too.
 	// We need to apply through 0010 only. Use a scoped helper below.
-	require.NoError(t, applyMigrationsUpTo(t, d, "0010"))
+	require.NoError(t, applyMigrationsUpTo(t, d, 10))
 
 	// Insert a user and two categories using the pre-0011 schema.
 	res, err := d.ExecContext(context.Background(),
@@ -219,9 +218,9 @@ func TestMigrate_0011_CategoryPosition_OnPopulatedDB(t *testing.T) {
 	require.Equal(t, int64(0), pb)
 }
 
-// applyMigrationsUpTo applies migrations with version <= the given prefix (e.g. "0010").
-// It reuses the same logic as Migrate but stops at the given version number.
-func applyMigrationsUpTo(t *testing.T, d *sql.DB, versionPrefix string) error {
+// applyMigrationsUpTo applies migrations with numeric version <= maxVersion.
+// Reuses the same logic as Migrate but stops after the given version number.
+func applyMigrationsUpTo(t *testing.T, d *sql.DB, maxVersion int) error {
 	t.Helper()
 	ctx := context.Background()
 	if _, err := d.ExecContext(ctx, `
@@ -239,14 +238,12 @@ func applyMigrationsUpTo(t *testing.T, d *sql.DB, versionPrefix string) error {
 	sort.Strings(files)
 
 	for _, name := range files {
-		base := filepath.Base(name)
-		// Stop before migration files whose version prefix > the cutoff.
-		if base > versionPrefix+"_" {
-			break
-		}
 		v, err := versionFromFilename(name)
 		if err != nil {
 			return err
+		}
+		if v > maxVersion {
+			break
 		}
 		body, err := migrationsFS.ReadFile(name)
 		if err != nil {

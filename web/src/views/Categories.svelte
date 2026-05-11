@@ -23,7 +23,7 @@
 
   const catList = $derived($categories.slice().sort((a, b) => a.position - b.position));
   const uncatFeeds = $derived($subscriptions.filter((s: Subscription) => s.category_id == null));
-  const uncatUnread = $derived(() => {
+  const uncatUnread = $derived.by(() => {
     const uncatIds = new Set(uncatFeeds.map((s: Subscription) => s.id));
     return $entries.items.filter(e => !e.read && uncatIds.has(e.subscription_id)).length;
   });
@@ -154,12 +154,12 @@
             isMobile={$isMobile}
             isFirst={i === 0}
             isLast={i === catList.length - 1}
-            onRename={(name) => categories.rename(cat.id, name)}
+            onRename={(name) => void categories.rename(cat.id, name).catch(console.error)}
             onDelete={() => confirmDelete = { category: cat }}
             onMarkRead={() => confirmMarkRead = { category: cat }}
-            onReorderUp={() => reorderUp(cat.id)}
-            onReorderDown={() => reorderDown(cat.id)}
-            onReassignFeed={(subId, newCatId) => categories.reassignSubscription(subId, newCatId)}
+            onReorderUp={() => void reorderUp(cat.id).catch(console.error)}
+            onReorderDown={() => void reorderDown(cat.id).catch(console.error)}
+            onReassignFeed={(subId, newCatId) => void categories.reassignSubscription(subId, newCatId).catch(console.error)}
           />
         {/each}
 
@@ -167,7 +167,7 @@
           <CategoryCard
             category={{ id: -1, name: 'Uncategorised', unread: 0, created_at: 0, position: Number.MAX_SAFE_INTEGER }}
             feeds={uncatFeeds}
-            unread={uncatUnread()}
+            unread={uncatUnread}
             allCategories={catList}
             isUncategorised={true}
             isMobile={$isMobile}
@@ -178,7 +178,7 @@
             onMarkRead={() => confirmMarkRead = { category: { id: null, name: 'Uncategorised' } }}
             onReorderUp={() => {}}
             onReorderDown={() => {}}
-            onReassignFeed={(subId, newCatId) => categories.reassignSubscription(subId, newCatId)}
+            onReassignFeed={(subId, newCatId) => void categories.reassignSubscription(subId, newCatId).catch(console.error)}
           />
         {/if}
       </div>
@@ -197,7 +197,7 @@
   {#if confirmMarkRead}
     <CategoryMarkReadDialog
       categoryName={confirmMarkRead.category.name}
-      unread={confirmMarkRead.category.id == null ? uncatUnread() : (confirmMarkRead.category as Category).unread}
+      unread={confirmMarkRead.category.id == null ? uncatUnread : (confirmMarkRead.category as Category).unread}
       feedCount={confirmMarkRead.category.id == null ? uncatFeeds.length : feedsFor((confirmMarkRead.category as Category).id).length}
       onCancel={() => confirmMarkRead = null}
       onConfirm={performMarkRead}

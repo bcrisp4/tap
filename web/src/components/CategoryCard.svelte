@@ -12,7 +12,7 @@
     isLast: boolean;
     isUncategorised?: boolean;
     isMobile?: boolean;
-    onRename: (newName: string) => void;
+    onRename: (newName: string) => void | Promise<void>;
     onDelete: () => void;
     onMarkRead: () => void;
     onReorderUp: () => void;
@@ -37,11 +37,15 @@
     renaming = true;
   }
   function cancelRename() { renaming = false; }
-  function commitRename() {
+  async function commitRename() {
     const v = renameValue.trim();
     if (!v) { renaming = false; return; }
-    onRename(v);
-    renaming = false;
+    try {
+      await onRename(v);
+      renaming = false;
+    } catch (e) {
+      console.error('rename failed:', e);
+    }
   }
 
   $effect(() => { if (renaming && renameInput) renameInput.focus(); });
