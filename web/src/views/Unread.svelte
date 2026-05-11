@@ -1,12 +1,11 @@
 <script lang="ts">
   import { onMount, onDestroy, getContext } from 'svelte';
-  import Sidebar from '../components/Sidebar.svelte';
-  import TopBar from '../components/TopBar.svelte';
   import EntryRow from '../components/EntryRow.svelte';
+  import Button from '../components/Button.svelte';
+  import EmptyState from '../components/EmptyState.svelte';
   import { entries, subscriptions } from '../lib/store';
   import { navigate } from '../lib/router';
   import { pullToRefresh } from '../lib/pulltorefresh';
-  import PollerStatus from '../components/PollerStatus.svelte';
 
   let mainEl = $state<HTMLElement | null>(null);
   let refreshing = $state(false);
@@ -69,57 +68,49 @@
   }
 </script>
 
-<div class="layout">
-  <Sidebar />
-  <main class="main" bind:this={mainEl}>
-    <TopBar
-      title="Unread"
-      countShown={$entries.items.length}
-      countTotal={$entries.items.length}
-      onRefresh={doRefresh}
-      onMarkAllRead={markAllRead}
-    />
-    <PollerStatus />
-    {#if $entries.loading}
-      <p class="status">Loading…</p>
-    {:else if $entries.error}
-      <p class="status err">{$entries.error}</p>
-    {:else if $entries.items.length === 0}
-      <p class="status empty">No unread entries. Subscribe to a feed in the sidebar.</p>
-    {:else}
-      <ul
-        class="list"
-        role="list"
-        aria-label="Unread entries"
-        {@attach pullToRefresh({
-          onRefresh: doRefresh,
-          getScrollTop: () => mainEl?.scrollTop ?? 0,
-        })}
-      >
-        {#if refreshing}
-          <li class="refresh-indicator" aria-live="polite">
-            <span class="pulse" aria-hidden="true"></span>
-          </li>
-        {/if}
-        {#each $entries.items as entry (entry.id)}
-          <li role="listitem">
-            <EntryRow
-              {entry}
-              feed={feedFor(entry.subscription_id)}
-              isSelected={selectedId === entry.id}
-              onToggleRead={() => entries.toggleRead(entry.id, !entry.read)}
-              onToggleSaved={() => {}}
-            />
-          </li>
-        {/each}
-      </ul>
-    {/if}
-  </main>
+<div class="actions">
+  <Button variant="quiet" onclick={doRefresh}>Refresh</Button>
+  <Button variant="quiet" onclick={markAllRead}>Mark all read</Button>
 </div>
 
+{#if $entries.loading}
+  <p class="status">Loading…</p>
+{:else if $entries.error}
+  <p class="status err">{$entries.error}</p>
+{:else if $entries.items.length === 0}
+  <EmptyState title="No unread entries." subtitle="Subscribe to a feed in the sidebar." />
+{:else}
+  <ul
+    class="list"
+    role="list"
+    aria-label="Unread entries"
+    bind:this={mainEl}
+    {@attach pullToRefresh({
+      onRefresh: doRefresh,
+      getScrollTop: () => mainEl?.scrollTop ?? 0,
+    })}
+  >
+    {#if refreshing}
+      <li class="refresh-indicator" aria-live="polite">
+        <span class="pulse" aria-hidden="true"></span>
+      </li>
+    {/if}
+    {#each $entries.items as entry (entry.id)}
+      <li role="listitem">
+        <EntryRow
+          {entry}
+          feed={feedFor(entry.subscription_id)}
+          isSelected={selectedId === entry.id}
+          onToggleRead={() => entries.toggleRead(entry.id, !entry.read)}
+          onToggleSaved={() => {}}
+        />
+      </li>
+    {/each}
+  </ul>
+{/if}
+
 <style>
-  .layout { display: flex; height: 100vh; }
-  .main { flex: 1; display: flex; flex-direction: column; overflow-y: auto; background: var(--bg); }
+  .actions { display: flex; gap: 8px; justify-content: flex-end; margin: 8px 0 16px; }
   .status { padding: 24px; color: var(--ink-3); font-family: var(--mono); font-size: 11px; }
   .status.err { color: #b14; }
   .list { flex: 1; list-style: none; margin: 0; padding: 0; }

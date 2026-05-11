@@ -3,11 +3,7 @@ import { render, screen, waitFor } from '@testing-library/svelte';
 import type { EntryListItem, Subscription } from '../../lib/types';
 
 // Mock child Svelte components before importing the view under test.
-// vi.mock hoists automatically so these run before the module graph loads.
-vi.mock('../../components/Sidebar.svelte', () => ({ default: vi.fn() }));
-vi.mock('../../components/TopBar.svelte', () => ({ default: vi.fn() }));
 vi.mock('../../components/EntryRow.svelte', () => ({ default: vi.fn() }));
-vi.mock('../../components/PollerStatus.svelte', () => ({ default: vi.fn() }));
 
 // Mock the router so navigate doesn't touch window.location.
 vi.mock('../../lib/router', () => ({
