@@ -89,11 +89,19 @@
       </a>
       <span class="dot" aria-hidden="true"></span>
       {#if feed.error_count > 0}
-        <span class="err">last poll <b>{formatAgo(feed.lastPollAgo)}</b> ago</span>
+        {#if feed.lastPollAgo === Number.POSITIVE_INFINITY}
+          <span class="err">never polled</span>
+        {:else}
+          <span class="err">last poll <b>{formatAgo(feed.lastPollAgo)}</b> ago</span>
+        {/if}
         <span class="dot" aria-hidden="true"></span>
         <button class="ts-feeds-util-btn" type="button" onclick={onToggleExpand}>
           {isExpanded ? 'Hide details' : 'Why?'}
         </button>
+      {:else if feed.lastPollAgo === Number.POSITIVE_INFINITY}
+        <span>never polled</span>
+        <span class="dot" aria-hidden="true"></span>
+        <span class="unread">unread <b>{feed.unread}</b></span>
       {:else}
         <span>polled <b>{formatAgo(feed.lastPollAgo)}</b> ago</span>
         <span class="dot" aria-hidden="true"></span>

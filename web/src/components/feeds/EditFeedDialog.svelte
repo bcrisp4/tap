@@ -2,6 +2,7 @@
   import Dialog from '../Dialog.svelte';
   import type { Subscription, Category } from '../../lib/types';
   import { api } from '../../lib/api';
+  import { notifySW } from '../../lib/auth';
 
   type Props = {
     feed: Subscription;
@@ -39,6 +40,7 @@
       if (basicAuthPass) patch.basic_auth_pass = basicAuthPass;
       if (selectedCategory !== originalCategoryId) patch.category_id = selectedCategory;
       await api.updateSubscription(feed.id, patch);
+      notifySW({ type: 'invalidate', paths: ['/api/v1/subscriptions', '/api/v1/categories'] });
       onSaved();
     } catch (e) {
       error = (e as Error).message;

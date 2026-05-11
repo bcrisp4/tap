@@ -83,7 +83,7 @@
   async function refreshAll() {
     refreshingAll = true;
     const ids = visible.map((f) => f.id);
-    const results = await Promise.allSettled(ids.map((id) => subscriptions.refresh(id)));
+    const results = await subscriptions.refreshMany(ids);
     const failed = results.filter((r) => r.status === 'rejected').length;
     refreshingAll = false;
     if (failed > 0) foot = `Refreshed ${ids.length - failed} of ${ids.length} · ${failed} failed`;
@@ -91,7 +91,7 @@
   }
 
   async function bulkDelete(ids: number[]) {
-    const results = await Promise.allSettled(ids.map((id) => subscriptions.remove(id)));
+    const results = await subscriptions.removeMany(ids);
     const failed = results.filter((r) => r.status === 'rejected').length;
     selected = new Set();
     if (failed > 0) foot = `Removed ${ids.length - failed} of ${ids.length} · ${failed} failed`;
@@ -99,13 +99,13 @@
   }
 
   async function bulkRefresh(ids: number[]) {
-    const results = await Promise.allSettled(ids.map((id) => subscriptions.refresh(id)));
+    const results = await subscriptions.refreshMany(ids);
     const failed = results.filter((r) => r.status === 'rejected').length;
     if (failed > 0) foot = `Refreshed ${ids.length - failed} of ${ids.length} · ${failed} failed`;
   }
 
   async function bulkReassign(ids: number[], categoryId: number | null) {
-    const results = await Promise.allSettled(ids.map((id) => subscriptions.setCategory(id, categoryId)));
+    const results = await subscriptions.setCategoryMany(ids, categoryId);
     const failed = results.filter((r) => r.status === 'rejected').length;
     selected = new Set();
     if (failed > 0) foot = `Moved ${ids.length - failed} of ${ids.length} · ${failed} failed`;

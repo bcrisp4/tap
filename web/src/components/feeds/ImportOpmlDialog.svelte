@@ -1,6 +1,7 @@
 <script lang="ts">
   import Dialog from '../Dialog.svelte';
   import { api } from '../../lib/api';
+  import { notifySW } from '../../lib/auth';
   import type { OPMLImportResult } from '../../lib/types';
 
   type Props = {
@@ -25,6 +26,7 @@
       try {
         const buf = e.target!.result as ArrayBuffer;
         result = await api.importOPML(buf);
+        notifySW({ type: 'invalidate', paths: ['/api/v1/subscriptions', '/api/v1/categories', '/api/v1/entries'] });
         stage = 'done';
       } catch (err) {
         errorMsg = (err as Error).message;

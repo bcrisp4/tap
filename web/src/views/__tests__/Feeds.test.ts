@@ -14,6 +14,9 @@ vi.mock('../../lib/store', () => {
     remove: vi.fn().mockResolvedValue(undefined),
     setCategory: vi.fn(),
     add: vi.fn(),
+    refreshMany: vi.fn().mockResolvedValue([]),
+    removeMany: vi.fn().mockResolvedValue([]),
+    setCategoryMany: vi.fn().mockResolvedValue([]),
   };
   return {
     subscriptions: subStore,
@@ -87,19 +90,20 @@ describe('Feeds view', () => {
     expect(screen.getByText(/1 selected/i)).toBeInTheDocument();
   });
 
-  it('Refresh all calls subscriptions.refresh for every visible feed', async () => {
-    vi.mocked(subscriptions.refresh).mockResolvedValue(undefined);
+  it('Refresh all calls subscriptions.refreshMany with all visible feed ids', async () => {
+    vi.mocked(subscriptions.refreshMany).mockResolvedValue([]);
     render(Feeds);
     await fireEvent.click(screen.getByRole('button', { name: /refresh all/i }));
-    await waitFor(() => expect(vi.mocked(subscriptions.refresh)).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(vi.mocked(subscriptions.refreshMany)).toHaveBeenCalledWith([1, 2]));
   });
 });
 
 describe('Feeds view — bulk delete', () => {
   it('bulk delete partial failure surfaces foot message', async () => {
-    vi.mocked(subscriptions.remove).mockImplementation(async (id: number) => {
-      if (id === 2) throw new Error('csrf invalid');
-    });
+    vi.mocked(subscriptions.removeMany).mockResolvedValue([
+      { status: 'fulfilled', value: undefined },
+      { status: 'rejected', reason: new Error('csrf invalid') },
+    ] as PromiseSettledResult<unknown>[]);
     const { container } = render(Feeds);
     for (const cb of Array.from(container.querySelectorAll<HTMLButtonElement>('.ts-feed-check'))) {
       await fireEvent.click(cb);

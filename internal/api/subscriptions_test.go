@@ -470,7 +470,7 @@ func newPatchHarness(t *testing.T, poked *int) (db.Subscription, http.Handler, s
 	require.NoError(t, err)
 
 	mux := NewTestMux(d, TestMuxOpts{
-		MuxOpts:     MuxOpts{Poke: func() { *poked++ }},
+		MuxOpts:     MuxOpts{Poke: func() { (*poked)++ }},
 		TestUser:    u,
 		TestSession: sess,
 	})
