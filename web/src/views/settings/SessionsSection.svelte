@@ -3,6 +3,7 @@
   import SetSection from './SetSection.svelte';
   import SetRow from './SetRow.svelte';
   import { api } from '../../lib/api';
+  import { formatAgo } from '../../lib/url';
   import type { Session } from '../../lib/types';
 
   let sessions = $state<Session[]>([]);
@@ -31,12 +32,10 @@
     return 'desktop';
   }
 
-  function formatAgo(ts: number): string {
-    const ago = Math.max(0, Math.round((Date.now() / 1000 - ts) / 60));
-    if (ago < 1) return 'now';
-    if (ago < 60) return `${ago}m ago`;
-    if (ago < 24 * 60) return `${Math.round(ago / 60)}h ago`;
-    return `${Math.round(ago / 1440)}d ago`;
+  function elapsed(ts: number): string {
+    const secs = Math.max(0, Math.round(Date.now() / 1000 - ts));
+    const s = formatAgo(secs);
+    return s === '—' ? 'now' : `${s} ago`;
   }
 </script>
 
@@ -69,7 +68,7 @@
                 <span>{s.address || 'Unknown'}</span>
               </div>
             </div>
-            <span class="sess-when">{formatAgo(s.last_seen_at)}</span>
+            <span class="sess-when">{elapsed(s.last_seen_at)}</span>
             <button
               type="button"
               class="sess-revoke"

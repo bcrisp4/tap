@@ -69,7 +69,8 @@ export const density = makePref<Density>('tap.density', 'comfortable', DENSITIES
 export const measure = makePref<Measure>('tap.measure', 'comfortable', MEASURES);
 export const markOnScroll = makeBoolPref('tap.markOnScroll', true);
 
-// Reading-section toggles — persistent boolean prefs using 'true'/'false' strings.
+// Uses 'true'/'false' strings rather than the legacy '1'/'0' encoding so values
+// are human-readable in DevTools. The two factories intentionally coexist.
 function makeReadingBoolPref(key: string, def: boolean) {
   const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(key) : null;
   const parsed = raw === 'true' ? true : raw === 'false' ? false : def;

@@ -6,6 +6,7 @@
   import Button from '../../components/Button.svelte';
   import { poll } from '../../lib/preferences.svelte';
   import { api } from '../../lib/api';
+  import { formatAgo } from '../../lib/url';
 
   type PollInterval = '5m' | '15m' | '1h' | 'manual';
   const options: { value: PollInterval; label: string }[] = [
@@ -47,13 +48,11 @@
     }
   }
 
-  function formatAgo(ts: number | null): string {
+  function lastSyncLabel(ts: number | null): string {
     if (!ts) return 'never';
-    const ago = Math.max(0, Math.round((Date.now() / 1000 - ts) / 60));
-    if (ago < 1) return 'just now';
-    if (ago < 60) return `${ago}m ago`;
-    if (ago < 24 * 60) return `${Math.round(ago / 60)}h ago`;
-    return `${Math.round(ago / 1440)}d ago`;
+    const secs = Math.max(0, Math.round(Date.now() / 1000 - ts));
+    const s = formatAgo(secs);
+    return s === '—' ? 'just now' : `${s} ago`;
   }
 </script>
 
@@ -66,7 +65,7 @@
       <Segmented value={poll.interval} options={options} onChange={(v) => (poll.interval = v)} ariaLabel="Poll interval" />
     {/snippet}
   </SetRow>
-  <SetRow label="Last sync" desc="Last sync {formatAgo(lastSyncAt)}">
+  <SetRow label="Last sync" desc="Last sync {lastSyncLabel(lastSyncAt)}">
     {#snippet control()}
       <Button onclick={refreshAll} disabled={busy}>Refresh all now</Button>
     {/snippet}

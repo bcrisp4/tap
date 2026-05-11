@@ -254,7 +254,6 @@ func deleteUserHandler(d *sql.DB) http.Handler {
 			writeError(w, http.StatusBadRequest, ErrCodeCannotDeleteSelf, "cannot delete yourself")
 			return
 		}
-		// Verify user exists before deleting so we can return 404 on miss.
 		if _, err := db.GetUserByID(r.Context(), d, id); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				writeError(w, http.StatusNotFound, ErrCodeNotFound, "user not found")
