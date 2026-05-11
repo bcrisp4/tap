@@ -11,6 +11,17 @@ vi.mock('../api', () => ({
   },
 }));
 
+// Mock auth so notifySW doesn't touch real navigator.serviceWorker.
+vi.mock('../auth', () => ({
+  notifySW: vi.fn(),
+  auth: {
+    subscribe: vi.fn(() => () => {}),
+    clearOn401: vi.fn(),
+    setCSRFToken: vi.fn(),
+  },
+  ERR_UNAUTHORIZED: 'unauthorized',
+}));
+
 function makeEntry(overrides: Partial<EntryListItem> = {}): EntryListItem {
   return {
     id: 1,
@@ -180,5 +191,96 @@ describe('subscriptionsStore', () => {
 
     expect(api.addSubscription).toHaveBeenCalledWith({ feed_url: 'https://example.com/feed' });
     expect(api.listSubscriptions).toHaveBeenCalled();
+  });
+
+  it('notifies SW to invalidate subscriptions cache after add()', async () => {
+    const { api } = await import('../api');
+    const { notifySW } = await import('../auth');
+    vi.mocked(api.addSubscription).mockResolvedValueOnce({ id: 3, title: 'Feed' } as never);
+    vi.mocked(api.listSubscriptions).mockResolvedValue([] as never);
+
+    const { subscriptions: store } = await import('../store');
+    await store.add('https://example.com/feed');
+
+    expect(notifySW).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'invalidate', paths: expect.arrayContaining(['/api/v1/subscriptions']) }),
+    );
+  });
+});
+
+describe('entriesStore.toggleSaved', () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('optimistically marks the entry as saved before the API responds', async () => {
+    const { api } = await import('../api');
+    const entry = makeEntry({ id: 7, saved: false });
+    vi.mocked(api.listEntries).mockResolvedValueOnce({ data: [entry] });
+
+    let resolvePatch!: () => void;
+    vi.mocked(api.patchEntry).mockReturnValueOnce(
+      new Promise<EntryListItem>((res) => { resolvePatch = () => res({ ...entry, saved: true }); }),
+    );
+
+    const { entries: store } = await import('../store');
+    await store.load();
+
+    const togglePromise = store.toggleSaved(7, true);
+    const optimistic = getStoreValue(store);
+    expect(optimistic.items.find((e) => e.id === 7)?.saved).toBe(true);
+
+    resolvePatch();
+    await togglePromise;
+  });
+
+  it('rolls back optimistic update on API failure', async () => {
+    const { api } = await import('../api');
+    const entry = makeEntry({ id: 7, saved: false });
+    vi.mocked(api.listEntries).mockResolvedValueOnce({ data: [entry] });
+    vi.mocked(api.patchEntry).mockRejectedValueOnce(new Error('Server error'));
+
+    const { entries: store } = await import('../store');
+    await store.load();
+
+    await expect(store.toggleSaved(7, true)).rejects.toThrow('Server error');
+    const state = getStoreValue(store);
+    expect(state.items.find((e) => e.id === 7)?.saved).toBe(false);
+  });
+
+  it('notifies SW to invalidate entries cache after toggleSaved succeeds', async () => {
+    const { api } = await import('../api');
+    const { notifySW } = await import('../auth');
+    const entry = makeEntry({ id: 7, saved: false });
+    vi.mocked(api.listEntries).mockResolvedValueOnce({ data: [entry] });
+    vi.mocked(api.patchEntry).mockResolvedValueOnce({ ...entry, saved: true } as never);
+
+    const { entries: store } = await import('../store');
+    await store.load();
+    await store.toggleSaved(7, true);
+
+    expect(notifySW).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'invalidate', paths: expect.arrayContaining(['/api/v1/entries']) }),
+    );
+  });
+
+  it('notifies SW to invalidate entries cache after toggleRead succeeds', async () => {
+    const { api } = await import('../api');
+    const { notifySW } = await import('../auth');
+    const entry = makeEntry({ id: 5, read: false });
+    vi.mocked(api.listEntries).mockResolvedValueOnce({ data: [entry] });
+    vi.mocked(api.patchEntry).mockResolvedValueOnce({ ...entry, read: true } as never);
+
+    const { entries: store } = await import('../store');
+    await store.load();
+    await store.toggleRead(5, true);
+
+    expect(notifySW).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'invalidate', paths: expect.arrayContaining(['/api/v1/entries']) }),
+    );
   });
 });

@@ -64,6 +64,22 @@ self.addEventListener('message', (event: ExtendableMessageEvent) => {
         userId = null;
       })
     );
+  } else if (data.type === 'invalidate') {
+    const paths = (data as SWMessage & { type: 'invalidate' }).paths;
+    if (userId !== null) {
+      const cacheName = apiCacheName('tap-api', userId);
+      event.waitUntil(
+        caches.open(cacheName).then(cache =>
+          cache.keys().then(keys =>
+            Promise.all(
+              keys
+                .filter(req => paths.some(path => req.url.includes(path)))
+                .map(req => cache.delete(req))
+            )
+          )
+        )
+      );
+    }
   }
 });
 

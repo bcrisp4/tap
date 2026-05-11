@@ -32,7 +32,7 @@
         entry = fetched;
         if (fetched && !fetched.read) {
           try {
-            await api.patchEntry(targetId, { read: true });
+            await entries.toggleRead(targetId, true);
             if (cancelled) return;
             entry = { ...fetched, read: true };
           } catch { /* swallow — reader still shows content */ }
@@ -48,19 +48,23 @@
   async function toggleRead() {
     if (!entry) return;
     const want = !entry.read;
+    entry = { ...entry, read: want };
     try {
-      await api.patchEntry(entry.id, { read: want });
-      entry = { ...entry, read: want };
-    } catch (e) { error = (e as Error).message; }
+      await entries.toggleRead(entry.id, want);
+    } catch {
+      entry = { ...entry, read: !want };
+    }
   }
 
   async function toggleSaved() {
     if (!entry) return;
     const want = !entry.saved;
+    entry = { ...entry, saved: want };
     try {
-      await api.patchEntry(entry.id, { saved: want });
-      entry = { ...entry, saved: want };
-    } catch (e) { error = (e as Error).message; }
+      await entries.toggleSaved(entry.id, want);
+    } catch {
+      entry = { ...entry, saved: !want };
+    }
   }
 
   function viewOriginal() {
