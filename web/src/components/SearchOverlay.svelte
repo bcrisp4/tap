@@ -21,6 +21,9 @@
       restoreFocusTo?.focus?.();
       restoreFocusTo = null;
     }
+    return () => {
+      if (debounceTimer !== null) { clearTimeout(debounceTimer); debounceTimer = null; }
+    };
   });
 
   async function runSearch(q: string) {
