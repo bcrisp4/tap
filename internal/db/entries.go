@@ -272,9 +272,14 @@ func UpdateAfterPoll(ctx context.Context, d *sql.DB, subID int64, r PollResult) 
 		    next_poll_at      = ?,
 		    error_count       = 0,
 		    last_error        = NULL,
-		    velocity_24h_x100 = ?
+		    velocity_24h_x100 = ?,
+		    title             = CASE
+		        WHEN ? <> '' AND title = feed_url THEN ?
+		        ELSE title
+		    END
 		WHERE id = ?
-	`, r.NewETag, r.NewLastModified, r.NowUnix, nextPoll.Unix(), velocity, subID); err != nil {
+	`, r.NewETag, r.NewLastModified, r.NowUnix, nextPoll.Unix(), velocity,
+		r.FeedTitle, r.FeedTitle, subID); err != nil {
 		err = fmt.Errorf("update subscription: %w", err)
 		return 0, err
 	}
