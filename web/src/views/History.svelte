@@ -12,6 +12,7 @@
   let items = $state<EntryListItem[]>([]);
   let loading = $state(true);
   let error = $state<string | null>(null);
+  let loadMoreError = $state<string | null>(null);
   let cursor = $state<string | undefined>(undefined);
   let loadingMore = $state(false);
 
@@ -46,12 +47,13 @@
   async function loadMore() {
     if (!cursor || loadingMore) return;
     loadingMore = true;
+    loadMoreError = null;
     try {
       const r = await api.listEntries({ limit: 100, cursor });
       items = [...items, ...r.data];
       cursor = r.next_cursor;
     } catch (e) {
-      error = (e as Error).message;
+      loadMoreError = (e as Error).message;
     } finally {
       loadingMore = false;
     }
@@ -100,6 +102,9 @@
         >
           {loadingMore ? 'Loading…' : 'Load more'}
         </Button>
+        {#if loadMoreError}
+          <p class="load-more-err" role="alert">{loadMoreError}</p>
+        {/if}
       </div>
     {/if}
   {/if}
@@ -129,7 +134,15 @@
   .ts-list li { display: contents; }
   .load-more-row {
     display: flex;
-    justify-content: center;
+    flex-direction: column;
+    align-items: center;
     padding: 24px 0;
+    gap: 8px;
   }
+  .load-more-err {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: #c43a3a;
+  }
+  :global(html.theme-dark) .load-more-err { color: #ec7a7a; }
 </style>

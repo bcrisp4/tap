@@ -18,6 +18,18 @@ vi.mock('../../lib/store', () => ({
 
 vi.mock('../../components/EntryRow.svelte', () => ({ default: vi.fn() }));
 
+// Fixed reference time — avoids flakiness around local midnight and DST.
+// Pattern mirrors web/src/lib/__tests__/dayBands.test.ts.
+const NOW_MS = new Date('2026-05-11T12:00:00Z').getTime();
+const todayStart = new Date(NOW_MS);
+todayStart.setHours(0, 0, 0, 0);
+const todayStartSec = Math.floor(todayStart.getTime() / 1000);
+
+// published_at relative to local start-of-day (positive = today, negative = past).
+function pub(secFromTodayStart: number): number {
+  return todayStartSec + secFromTodayStart;
+}
+
 const { default: History } = await import('../History.svelte');
 
 describe('History view', () => {
@@ -40,7 +52,7 @@ describe('History view', () => {
     expect(await screen.findByText('boom')).toBeTruthy();
   });
 
-  // Task 1: empty path
+  // Task 1 / Task 7: empty path with EmptyState primitive
   it('renders the empty-state copy when there is no history', async () => {
     vi.mocked(api.listEntries as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ data: [], next_cursor: undefined });
     render(History);
@@ -48,7 +60,7 @@ describe('History view', () => {
     expect(await screen.findByText(/Subscribed feeds will accumulate/i)).toBeTruthy();
   });
 
-  // Task 2: call shape
+  // Task 2: call shape — no unread, no saved
   it('calls api.listEntries with no unread and no saved filters', async () => {
     const spy = vi.mocked(api.listEntries as ReturnType<typeof vi.fn>);
     spy.mockResolvedValueOnce({ data: [], next_cursor: undefined });
@@ -61,32 +73,28 @@ describe('History view', () => {
 
   // Task 3: renders rows
   it('renders one list item per entry returned', async () => {
-    const now = Math.floor(Date.now() / 1000);
     vi.mocked(api.listEntries as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       data: [
         { id: 1, subscription_id: 1, title: 'one', url: 'https://x/1',
-          published_at: now - 60, fetched_at: 1, read: true, saved: false, extract_failed: false },
+          published_at: pub(3600), fetched_at: 1, read: true, saved: false, extract_failed: false },
         { id: 2, subscription_id: 1, title: 'two', url: 'https://x/2',
-          published_at: now - 120, fetched_at: 1, read: true, saved: false, extract_failed: false },
+          published_at: pub(7200), fetched_at: 1, read: true, saved: false, extract_failed: false },
       ],
       next_cursor: undefined,
     });
     const { container } = render(History);
     await waitFor(() => expect(container.querySelector('ul[role="list"]')).toBeTruthy());
-    const items = container.querySelectorAll('li[role="listitem"]');
-    expect(items).toHaveLength(2);
+    expect(container.querySelectorAll('li[role="listitem"]')).toHaveLength(2);
   });
 
-  // Task 4: day-band ordering
+  // Task 4: day-band ordering — fixed time, local-day-relative offsets
   it('renders day-band group headings in Today → Yesterday → This week → Earlier order', async () => {
-    const now = Math.floor(Date.now() / 1000);
-    const day = 86400;
     vi.mocked(api.listEntries as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       data: [
-        { id: 1, subscription_id: 1, title: 'today',     url: 'https://x/1', published_at: now - 60,           fetched_at: 1, read: true,  saved: false, extract_failed: false },
-        { id: 2, subscription_id: 1, title: 'yesterday', url: 'https://x/2', published_at: now - 1 * day - 60, fetched_at: 1, read: true,  saved: false, extract_failed: false },
-        { id: 3, subscription_id: 1, title: 'thisweek',  url: 'https://x/3', published_at: now - 3 * day,      fetched_at: 1, read: true,  saved: false, extract_failed: false },
-        { id: 4, subscription_id: 1, title: 'earlier',   url: 'https://x/4', published_at: now - 30 * day,     fetched_at: 1, read: true,  saved: false, extract_failed: false },
+        { id: 1, subscription_id: 1, title: 'today',     url: 'https://x/1', published_at: pub(3600),           fetched_at: 1, read: true,  saved: false, extract_failed: false },
+        { id: 2, subscription_id: 1, title: 'yesterday', url: 'https://x/2', published_at: pub(-86400 + 3600),   fetched_at: 1, read: true,  saved: false, extract_failed: false },
+        { id: 3, subscription_id: 1, title: 'thisweek',  url: 'https://x/3', published_at: pub(-3 * 86400),      fetched_at: 1, read: true,  saved: false, extract_failed: false },
+        { id: 4, subscription_id: 1, title: 'earlier',   url: 'https://x/4', published_at: pub(-30 * 86400),     fetched_at: 1, read: true,  saved: false, extract_failed: false },
       ],
       next_cursor: undefined,
     });
@@ -101,12 +109,10 @@ describe('History view', () => {
 
   // Task 4: empty bands are skipped
   it('omits day-band sections that have no entries', async () => {
-    const now = Math.floor(Date.now() / 1000);
-    const day = 86400;
     vi.mocked(api.listEntries as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       data: [
-        { id: 1, subscription_id: 1, title: 'only today',   url: 'https://x/1', published_at: now - 60,      fetched_at: 1, read: true, saved: false, extract_failed: false },
-        { id: 2, subscription_id: 1, title: 'only earlier', url: 'https://x/2', published_at: now - 30 * day, fetched_at: 1, read: true, saved: false, extract_failed: false },
+        { id: 1, subscription_id: 1, title: 'only today',   url: 'https://x/1', published_at: pub(3600),       fetched_at: 1, read: true, saved: false, extract_failed: false },
+        { id: 2, subscription_id: 1, title: 'only earlier', url: 'https://x/2', published_at: pub(-30 * 86400), fetched_at: 1, read: true, saved: false, extract_failed: false },
       ],
       next_cursor: undefined,
     });
@@ -121,9 +127,8 @@ describe('History view', () => {
 
   // Task 5: Load more button visibility
   it('shows a Load more button only when next_cursor is present', async () => {
-    const now = Math.floor(Date.now() / 1000);
     vi.mocked(api.listEntries as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-      data: [{ id: 1, subscription_id: 1, title: 't', url: 'https://x/1', published_at: now - 60, fetched_at: 1, read: true, saved: false, extract_failed: false }],
+      data: [{ id: 1, subscription_id: 1, title: 't', url: 'https://x/1', published_at: pub(3600), fetched_at: 1, read: true, saved: false, extract_failed: false }],
       next_cursor: 'CURSOR-1',
     });
     const { container } = render(History);
@@ -132,9 +137,8 @@ describe('History view', () => {
   });
 
   it('hides Load more when next_cursor is undefined', async () => {
-    const now = Math.floor(Date.now() / 1000);
     vi.mocked(api.listEntries as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-      data: [{ id: 1, subscription_id: 1, title: 't', url: 'https://x/1', published_at: now - 60, fetched_at: 1, read: true, saved: false, extract_failed: false }],
+      data: [{ id: 1, subscription_id: 1, title: 't', url: 'https://x/1', published_at: pub(3600), fetched_at: 1, read: true, saved: false, extract_failed: false }],
       next_cursor: undefined,
     });
     const { container } = render(History);
@@ -144,16 +148,14 @@ describe('History view', () => {
 
   // Task 5: pagination
   it('appends entries and consumes the cursor when Load more is clicked', async () => {
-    const now = Math.floor(Date.now() / 1000);
-    const day = 86400;
     const spy = vi.mocked(api.listEntries as ReturnType<typeof vi.fn>);
     spy
       .mockResolvedValueOnce({
-        data: [{ id: 1, subscription_id: 1, title: 'page1-today', url: 'https://x/1', published_at: now - 60, fetched_at: 1, read: true, saved: false, extract_failed: false }],
+        data: [{ id: 1, subscription_id: 1, title: 'page1-today', url: 'https://x/1', published_at: pub(3600), fetched_at: 1, read: true, saved: false, extract_failed: false }],
         next_cursor: 'CURSOR-1',
       })
       .mockResolvedValueOnce({
-        data: [{ id: 2, subscription_id: 1, title: 'page2-earlier', url: 'https://x/2', published_at: now - 30 * day, fetched_at: 1, read: true, saved: false, extract_failed: false }],
+        data: [{ id: 2, subscription_id: 1, title: 'page2-earlier', url: 'https://x/2', published_at: pub(-30 * 86400), fetched_at: 1, read: true, saved: false, extract_failed: false }],
         next_cursor: undefined,
       });
 
@@ -167,5 +169,27 @@ describe('History view', () => {
 
     expect(spy.mock.calls[1][0]).toEqual(expect.objectContaining({ cursor: 'CURSOR-1', limit: 100 }));
     expect(container.querySelectorAll('li[role="listitem"]')).toHaveLength(2);
+  });
+
+  // loadMoreError is isolated — does not hide the loaded list
+  it('shows inline error on load-more failure without hiding the loaded list', async () => {
+    const spy = vi.mocked(api.listEntries as ReturnType<typeof vi.fn>);
+    spy
+      .mockResolvedValueOnce({
+        data: [{ id: 1, subscription_id: 1, title: 'existing', url: 'https://x/1', published_at: pub(3600), fetched_at: 1, read: true, saved: false, extract_failed: false }],
+        next_cursor: 'CURSOR-1',
+      })
+      .mockRejectedValueOnce(new Error('network error'));
+
+    const { container } = render(History);
+    await waitFor(() => expect(container.querySelector('[data-action="load-more"]')).toBeTruthy());
+
+    (container.querySelector('[data-action="load-more"]') as HTMLButtonElement).click();
+
+    await waitFor(() => expect(screen.getByText('network error')).toBeTruthy());
+    // Loaded list must still be visible
+    expect(container.querySelectorAll('li[role="listitem"]')).toHaveLength(1);
+    // Error banner (initial-load error branch) must NOT appear
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe('network error');
   });
 });
