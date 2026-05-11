@@ -51,7 +51,20 @@ function makePref<T extends string>(key: string, def: T, allowed: T[]) {
   }
 })();
 
+function makeBoolPref(key: string, def: boolean) {
+  const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(key) : null;
+  let value = $state<boolean>(raw == null ? def : raw === '1');
+  return {
+    get value() { return value; },
+    set value(v: boolean) {
+      value = v;
+      try { localStorage.setItem(key, v ? '1' : '0'); } catch { /* ignore */ }
+    },
+  };
+}
+
 export const theme = makeTheme();
 export const font = makePref<Font>('tap.font', 'serif', FONTS);
 export const density = makePref<Density>('tap.density', 'comfortable', DENSITIES);
 export const measure = makePref<Measure>('tap.measure', 'comfortable', MEASURES);
+export const markOnScroll = makeBoolPref('tap.markOnScroll', true);
