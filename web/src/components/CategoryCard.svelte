@@ -86,7 +86,7 @@
     {:else}
       <h2 class="ts-cat-title" onclick={beginRename}>
         <span>{category.name}</span>
-        {#if !isUncategorised}<span class="ts-cat-title-edit">click to rename</span>{/if}
+        {#if !isUncategorised}<span class="ts-cat-title-edit" aria-hidden="true">click to rename</span>{/if}
       </h2>
     {/if}
     <div class="ts-cat-stats" class:is-zero={unread === 0}>
