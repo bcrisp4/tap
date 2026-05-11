@@ -83,6 +83,7 @@ The backend cost is small: one migration, one column, one endpoint, one DB helpe
 - `web/src/components/__tests__/CategoryCard.test.ts`
 - `web/src/components/CategoryReassignPopover.svelte` — **cross-milestone shared component.** Desktop popover (built on M1's `Popover.svelte`) listing categories + Uncategorised + leading check on current. M4 owns it; M-Redesign-5 (Feeds management) consumes it as-is for both per-row and bulk reassign actions. Public contract documented in Task 7.
 - `web/src/components/__tests__/CategoryReassignPopover.test.ts`
+- `web/src/components/__tests__/helpers/PopoverPassThrough.svelte` — two-line shim that renders `{#if open}<div>{@render children?.()}</div>{/if}` (or matches whatever child API M1's `Popover.svelte` actually exposes). Used by the `CategoryReassignPopover` test (and any other test that needs to mock out M1's positioning math) so content + callbacks can be exercised without the real Popover primitive. M1's Popover has its own tests; this shim is purely a test boundary.
 - `web/src/components/CategoryReassignSheet.svelte` — mobile bottom sheet variant (`.m-cat-sheet`).
 - `web/src/components/__tests__/CategoryReassignSheet.test.ts`
 - `web/src/components/CategoryDeleteDialog.svelte` — uses `Dialog`. Lists up to 5 affected feeds + "+ N more".
