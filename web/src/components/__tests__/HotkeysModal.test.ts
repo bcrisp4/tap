@@ -31,6 +31,13 @@ describe('HotkeysModal', () => {
     render(HotkeysModal, { props: { open: true, onClose: () => {} } });
     expect(screen.getByText('Next entry')).toBeTruthy();
     expect(screen.getByText('Toggle read')).toBeTruthy();
-    expect(screen.getByText('This modal')).toBeTruthy();
+    expect(screen.getByText('This help')).toBeTruthy();
+  });
+
+  it('renders three groups (Navigation, Actions, App)', () => {
+    render(HotkeysModal, { props: { open: true, onClose: () => {} } });
+    expect(screen.getByText('Navigation')).toBeTruthy();
+    expect(screen.getByText('Actions')).toBeTruthy();
+    expect(screen.getByText('App')).toBeTruthy();
   });
 });
