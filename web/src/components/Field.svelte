@@ -7,11 +7,11 @@
     mono?: boolean;
     description?: string;
     trailing?: import('svelte').Snippet;
-    autocomplete?: string;
+    autocomplete?: AutoFill;
     autofocus?: boolean;
     required?: boolean;
     disabled?: boolean;
-    inputmode?: string;
+    inputmode?: 'none' | 'text' | 'decimal' | 'numeric' | 'tel' | 'search' | 'email' | 'url';
     pattern?: string;
     maxlength?: number;
     name?: string;

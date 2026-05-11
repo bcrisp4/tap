@@ -26,9 +26,9 @@ describe('pollStatus store', () => {
     });
     startPollStatus();
     await vi.advanceTimersByTimeAsync(0);
-    let snapshot: { active: number | null } | null = null;
-    const off = pollStatus.subscribe(s => { snapshot = s as typeof snapshot; });
-    expect(snapshot?.active).toBe(3);
+    let snapshot: { active: number | null } = { active: null };
+    const off = pollStatus.subscribe(s => { snapshot = s; });
+    expect(snapshot.active).toBe(3);
     off();
   });
 
@@ -39,9 +39,9 @@ describe('pollStatus store', () => {
     startPollStatus();
     await vi.advanceTimersByTimeAsync(0);
     await vi.advanceTimersByTimeAsync(30000);
-    let snapshot: { active: number | null } | null = null;
-    const off = pollStatus.subscribe(s => { snapshot = s as typeof snapshot; });
-    expect(snapshot?.active).toBe(2);
+    let snapshot: { active: number | null } = { active: null };
+    const off = pollStatus.subscribe(s => { snapshot = s; });
+    expect(snapshot.active).toBe(2);
     off();
   });
 });

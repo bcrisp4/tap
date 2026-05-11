@@ -7,24 +7,25 @@
   import { warmCache } from './lib/warmCache';
   import { theme, font, density } from './lib/preferences.svelte';
   import { buildHandler } from './lib/keyboard';
+  import { searchOverlay } from './lib/searchOverlay.svelte';
   import { useRegisterSW } from 'virtual:pwa-register/svelte';
+
+  import AppShell from './components/AppShell.svelte';
+  import HotkeysModal from './components/HotkeysModal.svelte';
+  import SearchOverlay from './components/SearchOverlay.svelte';
+
   import Login from './views/Login.svelte';
   import Unread from './views/Unread.svelte';
   import Reader from './views/Reader.svelte';
   import Saved from './views/Saved.svelte';
-  import Search from './views/Search.svelte';
-  import Category from './views/Category.svelte';
+  import Categories from './views/Categories.svelte';
+  import Feeds from './views/Feeds.svelte';
+  import History from './views/History.svelte';
   import Settings from './views/Settings.svelte';
   import Admin from './views/Admin.svelte';
-  import HotkeysModal from './components/HotkeysModal.svelte';
-  import TabBar from './components/TabBar.svelte';
 
   const { needRefresh, updateServiceWorker } = useRegisterSW();
-
   let hotkeysOpen = $state(false);
-  let isMobile = $state(
-    typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches
-  );
 
   const dispatch = $state({
     onNext: () => {}, onPrev: () => {}, onOpen: () => {},
@@ -40,6 +41,7 @@
     get onToggleSaved() { return dispatch.onToggleSaved; },
     get onViewOriginal() { return dispatch.onViewOriginal; },
     onEscape: () => {
+      if (searchOverlay.open) { searchOverlay.close(); return; }
       if (hotkeysOpen) { hotkeysOpen = false; return; }
       if ($route.name === 'reader') navigate('/');
     },
@@ -54,11 +56,6 @@
         setTimeout(() => { void warmCache(user.id); }, 2000);
       }
     });
-
-    const mq768 = window.matchMedia('(max-width: 768px)');
-    const onResize = (e: MediaQueryListEvent) => { isMobile = e.matches; };
-    mq768.addEventListener('change', onResize);
-
     const handleOnline = async () => {
       const user = get(auth).user;
       if (user) {
@@ -67,11 +64,7 @@
       }
     };
     window.addEventListener('online', handleOnline);
-
-    return () => {
-      mq768.removeEventListener('change', onResize);
-      window.removeEventListener('online', handleOnline);
-    };
+    return () => window.removeEventListener('online', handleOnline);
   });
 
   $effect(() => {
@@ -86,20 +79,30 @@
 
   $effect(() => {
     const html = document.documentElement;
-    html.classList.remove('density-compact', 'density-comfortable');
-    if (density.value !== 'default') html.classList.add(`density-${density.value}`);
+    html.classList.remove('density-compact', 'density-comfortable', 'density-cosy');
+    html.classList.add(`density-${density.value}`);
+  });
+
+  // Auth-route redirect contract:
+  //   - Unauthenticated and NOT already on /sign-in → navigate('/sign-in').
+  //   - Authenticated and ON /sign-in → navigate('/').
+  $effect(() => {
+    if (!$auth.bootstrapped) return;
+    if ($auth.user == null && $route.name !== 'signin') {
+      navigate('/sign-in');
+    } else if ($auth.user != null && $route.name === 'signin') {
+      navigate('/');
+    }
   });
 </script>
 
 <svelte:window onkeydown={(e) => {
-  // '/' focuses search; only fires outside form controls.
   if (e.key === '/' && !hotkeysOpen) {
     const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
     if (tag !== 'input' && tag !== 'textarea' && tag !== 'select') {
       e.preventDefault();
-      if ($route.name !== 'search') navigate('/search');
-      // Focus happens in Search.svelte onMount; also dispatch a custom event.
-      window.dispatchEvent(new CustomEvent('tap:focus-search'));
+      searchOverlay.openOverlay();
+      return;
     }
   }
   keyHandler(e);
@@ -112,59 +115,51 @@
   </div>
 {/if}
 
-<HotkeysModal open={hotkeysOpen} onClose={() => { hotkeysOpen = false; }} />
+<HotkeysModal open={hotkeysOpen} onClose={() => hotkeysOpen = false} />
+<SearchOverlay />
 
-<div class="app-shell" class:is-mobile={isMobile}>
-  {#if !$auth.bootstrapped}
-    <!-- empty during bootstrap window -->
-  {:else if $auth.user == null}
-    <Login />
-  {:else if $route.name === 'reader'}
-    <Reader id={$route.params.id} />
-  {:else if $route.name === 'saved'}
-    <Saved />
-  {:else if $route.name === 'search'}
-    <Search />
-  {:else if $route.name === 'category'}
-    <Category id={$route.params.id} />
-  {:else if $route.name === 'settings'}
-    <Settings />
-  {:else if $route.name === 'admin'}
-    {#if $auth.user.role === 'admin'}
-      <Admin />
+{#if !$auth.bootstrapped}
+  <!-- empty during bootstrap window -->
+{:else if $route.name === 'signin' || $auth.user == null}
+  <Login />
+{:else}
+  <AppShell>
+    {#if $route.name === 'reader'}
+      <Reader id={$route.params.id} />
+    {:else if $route.name === 'saved'}
+      <Saved />
+    {:else if $route.name === 'categories'}
+      <Categories />
+    {:else if $route.name === 'feeds'}
+      <Feeds />
+    {:else if $route.name === 'history'}
+      <History />
+    {:else if $route.name === 'settings'}
+      <Settings />
+    {:else if $route.name === 'admin'}
+      {#if $auth.user.role === 'admin'}<Admin />{:else}<p>Access denied.</p>{/if}
     {:else}
-      <p>Access denied.</p>
+      <Unread />
     {/if}
-  {:else}
-    <Unread />
-  {/if}
-  {#if isMobile && $auth.user != null && $auth.bootstrapped}
-    <TabBar />
-  {/if}
-</div>
+  </AppShell>
+{/if}
 
 <style>
-  :global(.app-shell) { display: flex; flex-direction: column; height: 100vh; }
-
   .sw-update-banner {
     position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
+    top: 0; left: 0; right: 0;
     z-index: 9999;
-    background: var(--accent, #002FA7);
+    background: var(--accent);
     color: #fff;
-    padding: 0.5rem 1rem;
-    font-size: 0.875rem;
-    display: flex;
-    align-items: center;
-    gap: 1rem;
+    padding: 8px 16px;
+    font-size: 13px;
+    display: flex; align-items: center; gap: 16px;
   }
   .sw-update-banner button {
     background: rgba(255,255,255,0.2);
     border: 1px solid rgba(255,255,255,0.5);
     color: #fff;
-    padding: 0.25rem 0.75rem;
+    padding: 4px 12px;
     border-radius: 4px;
     cursor: pointer;
   }

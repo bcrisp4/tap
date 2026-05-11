@@ -1,6 +1,6 @@
 <script lang="ts">
   import FeedAvatar from './FeedAvatar.svelte';
-  import FeedSettingsModal from './FeedSettingsModal.svelte';
+
   import { api } from '../lib/api';
   import { subscriptions } from '../lib/store';
   import type { Subscription, Category } from '../lib/types';
@@ -77,14 +77,6 @@
   {/if}
 </div>
 
-{#if settingsOpen}
-  <FeedSettingsModal
-    {subscription}
-    categories={cats}
-    onClose={() => { settingsOpen = false; }}
-    onSaved={() => { settingsOpen = false; void subscriptions.load(); }}
-  />
-{/if}
 
 <style>
   .feedrow {
