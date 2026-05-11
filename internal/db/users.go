@@ -141,18 +141,13 @@ func ListUsers(ctx context.Context, d *sql.DB) ([]User, error) {
 }
 
 // DeleteUser permanently deletes a user and cascades to sessions, subscriptions,
-// entries, passkeys, totp_secrets, recovery_codes.
+// entries, passkeys, totp_secrets, recovery_codes. Deleting a non-existent user
+// is a no-op — callers that need to distinguish "user existed" vs "not found"
+// should call GetUserByID first.
 func DeleteUser(ctx context.Context, d *sql.DB, id int64) error {
-	res, err := d.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, id)
+	_, err := d.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("delete user: %w", err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("rows affected: %w", err)
-	}
-	if n == 0 {
-		return sql.ErrNoRows
 	}
 	return nil
 }

@@ -142,8 +142,44 @@ func TestDeleteUser(t *testing.T) {
 	_, err = GetUserByID(ctx, d, id)
 	require.ErrorIs(t, err, sql.ErrNoRows)
 
-	err = DeleteUser(ctx, d, id)
+	// Deleting a non-existent user is a no-op.
+	require.NoError(t, DeleteUser(ctx, d, id))
+}
+
+func TestDeleteUser_RemovesRowAndCascades(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	ctx := context.Background()
+
+	id, err := InsertUser(ctx, d, NewUser{Username: "to-delete@example.com", PasswordHash: "x", Role: "user", CreatedAt: 0})
+	require.NoError(t, err)
+
+	sub, err := InsertSubscription(ctx, d, NewSubscription{UserID: id, FeedURL: "https://example.com/feed", Title: "ex"})
+	require.NoError(t, err)
+	_, err = InsertSession(ctx, d, NewSession{UserID: id, TokenHash: "th", CSRFToken: "csrf"})
+	require.NoError(t, err)
+
+	require.NoError(t, DeleteUser(ctx, d, id))
+
+	_, err = GetUserByID(ctx, d, id)
 	require.ErrorIs(t, err, sql.ErrNoRows)
+
+	var count int
+	require.NoError(t, d.QueryRowContext(ctx, "SELECT COUNT(*) FROM subscriptions WHERE user_id = ?", id).Scan(&count))
+	require.Equal(t, 0, count, "subscriptions cascade failed")
+	require.NoError(t, d.QueryRowContext(ctx, "SELECT COUNT(*) FROM sessions WHERE user_id = ?", id).Scan(&count))
+	require.Equal(t, 0, count, "sessions cascade failed")
+
+	// entries cascade via subscription FK.
+	require.NoError(t, d.QueryRowContext(ctx, "SELECT COUNT(*) FROM entries WHERE subscription_id = ?", sub).Scan(&count))
+	require.Equal(t, 0, count, "entries cascade failed")
+}
+
+func TestDeleteUser_Missing(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	err := DeleteUser(context.Background(), d, 99999)
+	require.NoError(t, err)
 }
 
 func TestEnableUser(t *testing.T) {
