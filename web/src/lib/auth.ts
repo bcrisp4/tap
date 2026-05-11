@@ -3,7 +3,7 @@ import type { User, SessionResponse } from './types';
 import { offlineQueue } from './offlineQueue';
 import type { SWMessage } from '../sw/workerTypes';
 
-function notifySW(msg: SWMessage): void {
+export function notifySW(msg: SWMessage): void {
   const sw = navigator.serviceWorker;
   if (!sw) return;
   if (sw.controller) {

@@ -64,6 +64,23 @@ self.addEventListener('message', (event: ExtendableMessageEvent) => {
         userId = null;
       })
     );
+  } else if (data.type === 'invalidate') {
+    const raw = (data as SWMessage & { type: 'invalidate' }).paths;
+    const paths = Array.isArray(raw) ? raw.filter((p): p is string => typeof p === 'string') : [];
+    if (userId !== null && paths.length > 0) {
+      const cacheName = apiCacheName('tap-api', userId);
+      event.waitUntil(
+        caches.open(cacheName).then(cache =>
+          cache.keys().then(keys =>
+            Promise.all(
+              keys
+                .filter(req => paths.some(path => req.url.includes(path)))
+                .map(req => cache.delete(req))
+            )
+          )
+        )
+      );
+    }
   }
 });
 

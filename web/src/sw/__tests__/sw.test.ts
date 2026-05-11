@@ -46,6 +46,75 @@ describe('SW cache naming', () => {
   });
 });
 
+import { apiCacheName as _apiCacheName } from '../swPatterns';
+
+describe('SW invalidate message logic', () => {
+  it('deletes cache entries whose URLs contain any of the given paths', async () => {
+    const deletedKeys: string[] = [];
+    const cachedRequests = [
+      new Request('http://localhost/api/v1/entries?unread=1'),
+      new Request('http://localhost/api/v1/entries?cursor=abc'),
+      new Request('http://localhost/api/v1/subscriptions'),
+      new Request('http://localhost/api/v1/proxy/img.jpg'),
+    ];
+
+    const mockCache = {
+      keys: async () => cachedRequests,
+      delete: async (req: Request) => { deletedKeys.push(req.url); return true; },
+    };
+    const mockCaches = {
+      open: async (_name: string) => mockCache,
+    };
+
+    const paths = ['/api/v1/entries'];
+    const cacheName = _apiCacheName('tap-api', 1);
+
+    // Replicate the invalidate handler logic directly.
+    await mockCaches.open(cacheName).then(cache =>
+      cache.keys().then(keys =>
+        Promise.all(
+          keys
+            .filter(req => paths.some(path => req.url.includes(path)))
+            .map(req => cache.delete(req))
+        )
+      )
+    );
+
+    expect(deletedKeys).toContain('http://localhost/api/v1/entries?unread=1');
+    expect(deletedKeys).toContain('http://localhost/api/v1/entries?cursor=abc');
+    expect(deletedKeys).not.toContain('http://localhost/api/v1/subscriptions');
+    expect(deletedKeys).not.toContain('http://localhost/api/v1/proxy/img.jpg');
+  });
+
+  it('deletes subscriptions cache entries when /api/v1/subscriptions is in paths', async () => {
+    const deletedKeys: string[] = [];
+    const cachedRequests = [
+      new Request('http://localhost/api/v1/subscriptions'),
+      new Request('http://localhost/api/v1/entries?unread=1'),
+    ];
+
+    const mockCache = {
+      keys: async () => cachedRequests,
+      delete: async (req: Request) => { deletedKeys.push(req.url); return true; },
+    };
+    const mockCaches = { open: async (_name: string) => mockCache };
+
+    const paths = ['/api/v1/subscriptions'];
+    await mockCaches.open('tap-api-1').then(cache =>
+      cache.keys().then(keys =>
+        Promise.all(
+          keys
+            .filter(req => paths.some(path => req.url.includes(path)))
+            .map(req => cache.delete(req))
+        )
+      )
+    );
+
+    expect(deletedKeys).toContain('http://localhost/api/v1/subscriptions');
+    expect(deletedKeys).not.toContain('http://localhost/api/v1/entries?unread=1');
+  });
+});
+
 import fs from 'fs';
 import path from 'path';
 

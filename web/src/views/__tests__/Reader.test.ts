@@ -7,11 +7,14 @@ vi.mock('../../components/FeedAvatar.svelte', () => ({ default: vi.fn() }));
 vi.mock('../../components/JunctionDot.svelte', () => ({ default: vi.fn() }));
 vi.mock('../../components/Sidebar.svelte', () => ({ default: vi.fn() }));
 
-// Mock store (Reader doesn't use entries store directly, but import chain needs it).
+// Mock store.
+const mockToggleRead = vi.fn().mockResolvedValue(undefined);
+const mockToggleSaved = vi.fn().mockResolvedValue(undefined);
 vi.mock('../../lib/store', () => ({
   entries: {
     subscribe: (fn: (v: { items: unknown[] }) => void) => { fn({ items: [] }); return () => {}; },
-    toggleRead: vi.fn(),
+    toggleRead: (...args: unknown[]) => mockToggleRead(...args),
+    toggleSaved: (...args: unknown[]) => mockToggleSaved(...args),
   },
   subscriptions: { subscribe: (fn: (v: unknown[]) => void) => { fn([]); return () => {}; }, load: vi.fn() },
 }));
@@ -94,19 +97,18 @@ describe('Reader view', () => {
     });
   });
 
-  it('auto-marks unread entry as read on mount via api.patchEntry (not via store)', async () => {
+  it('auto-marks unread entry as read on mount via entries.toggleRead', async () => {
     const entry = makeEntry({ read: false });
     mockGetEntry.mockResolvedValueOnce(entry);
-    mockPatchEntry.mockResolvedValueOnce({ ...entry, read: true });
 
     render(Reader, { props: { id: 42 } });
 
     await waitFor(() => {
-      expect(mockPatchEntry).toHaveBeenCalledWith(42, { read: true });
+      expect(mockToggleRead).toHaveBeenCalledWith(42, true);
     });
   });
 
-  it('does NOT call patchEntry if the entry is already read', async () => {
+  it('does NOT call toggleRead if the entry is already read', async () => {
     const entry = makeEntry({ read: true });
     mockGetEntry.mockResolvedValueOnce(entry);
 
@@ -115,13 +117,12 @@ describe('Reader view', () => {
     await waitFor(() => {
       expect(screen.getByText('Test Entry Title')).toBeInTheDocument();
     });
-    expect(mockPatchEntry).not.toHaveBeenCalled();
+    expect(mockToggleRead).not.toHaveBeenCalled();
   });
 
-  it('toggleRead button calls api.patchEntry directly (not via store)', async () => {
+  it('toggleRead button calls entries.toggleRead via store', async () => {
     const entry = makeEntry({ read: true }); // already read → no auto-patch
     mockGetEntry.mockResolvedValueOnce(entry);
-    mockPatchEntry.mockResolvedValueOnce({ ...entry, read: false });
 
     render(Reader, { props: { id: 42 } });
 
@@ -133,7 +134,7 @@ describe('Reader view', () => {
     await fireEvent.click(btn);
 
     await waitFor(() => {
-      expect(mockPatchEntry).toHaveBeenCalledWith(42, { read: false });
+      expect(mockToggleRead).toHaveBeenCalledWith(42, false);
     });
   });
 
