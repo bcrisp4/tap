@@ -1,5 +1,4 @@
 <script lang="ts">
-  import Sidebar from '../components/Sidebar.svelte';
   import { onMount } from 'svelte';
   import { get } from 'svelte/store';
   import { auth } from '../lib/auth';
@@ -117,10 +116,8 @@
 {#if authState?.user?.role !== 'admin'}
   <p>Access denied.</p>
 {:else}
-  <div class="layout">
-    <Sidebar />
-    <main class="admin-main">
-      <div class="admin">
+  <div class="admin-wrap">
+    <div class="admin">
         <h1>User Management</h1>
         {#if error}
           <p role="alert" class="error">{error}</p>
@@ -189,14 +186,12 @@
             {/each}
           </tbody>
         </table>
-      </div>
-    </main>
+    </div>
   </div>
 {/if}
 
 <style>
-  .layout { display: flex; height: 100vh; }
-  .admin-main { flex: 1; overflow-y: auto; background: var(--bg); padding: 24px 32px; }
+  .admin-wrap { padding: 0; }
   .admin { max-width: 64rem; margin: 0 auto; }
   table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
   th, td { text-align: left; padding: 0.5rem; border-bottom: 1px solid #eee; }
