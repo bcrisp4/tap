@@ -206,7 +206,7 @@
 </script>
 
 <div class="security">
-  <h1>Security Settings</h1>
+  <h2 id="security-heading">Security Settings</h2>
   {#if error}
     <p role="alert" class="error">{error}</p>
   {/if}
