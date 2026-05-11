@@ -14,7 +14,6 @@
   let { onClose, onSuccess }: Props = $props();
 
   let secret = $state('');
-  let secretUri = $state('');
   let qrDataUrl = $state('');
   let code = $state('');
   let busy = $state(false);
@@ -24,7 +23,6 @@
     try {
       const res = await api.beginTOTPEnrolment();
       secret = res.secret;
-      secretUri = res.secret_uri;
       qrDataUrl = await QRCode.toDataURL(res.secret_uri, { margin: 1, width: 140 });
     } catch (e) {
       error = e instanceof Error ? e.message : 'Could not start enrolment.';

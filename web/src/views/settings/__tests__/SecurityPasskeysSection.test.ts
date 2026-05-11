@@ -1,4 +1,4 @@
-import { render, fireEvent, waitFor } from '@testing-library/svelte';
+import { render, fireEvent } from '@testing-library/svelte';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('../../../lib/auth', () => {

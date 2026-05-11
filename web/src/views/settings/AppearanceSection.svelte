@@ -4,22 +4,27 @@
   import Segmented from '../../components/Segmented.svelte';
   import { theme, font, density, measure } from '../../lib/preferences.svelte';
 
-  const themeOptions = [
+  type Theme = 'system' | 'light' | 'dark' | 'sepia';
+  type Font = 'serif' | 'sans';
+  type Density = 'compact' | 'comfortable' | 'cosy';
+  type Measure = 'narrow' | 'comfortable' | 'wide';
+
+  const themeOptions: { value: Theme; label: string }[] = [
     { value: 'system', label: 'System' },
     { value: 'light',  label: 'Light' },
     { value: 'dark',   label: 'Dark' },
     { value: 'sepia',  label: 'Sepia' },
   ];
-  const fontOptions = [
+  const fontOptions: { value: Font; label: string }[] = [
     { value: 'serif', label: 'Serif' },
     { value: 'sans',  label: 'Sans' },
   ];
-  const densityOptions = [
+  const densityOptions: { value: Density; label: string }[] = [
     { value: 'compact',     label: 'Compact' },
     { value: 'comfortable', label: 'Default' },
     { value: 'cosy',        label: 'Comfortable' },
   ];
-  const measureOptions = [
+  const measureOptions: { value: Measure; label: string }[] = [
     { value: 'narrow',      label: 'Narrow' },
     { value: 'comfortable', label: 'Comfortable' },
     { value: 'wide',        label: 'Wide' },

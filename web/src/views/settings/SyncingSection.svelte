@@ -7,7 +7,8 @@
   import { poll } from '../../lib/preferences.svelte';
   import { api } from '../../lib/api';
 
-  const options = [
+  type PollInterval = '5m' | '15m' | '1h' | 'manual';
+  const options: { value: PollInterval; label: string }[] = [
     { value: '5m',     label: '5m' },
     { value: '15m',    label: '15m' },
     { value: '1h',     label: '1h' },
