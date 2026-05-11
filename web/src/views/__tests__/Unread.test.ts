@@ -4,6 +4,11 @@ import type { EntryListItem, Subscription } from '../../lib/types';
 
 // Mock child Svelte components before importing the view under test.
 vi.mock('../../components/EntryRow.svelte', () => ({ default: vi.fn() }));
+vi.mock('../../components/GroupHeading.svelte', () => ({ default: vi.fn() }));
+
+vi.mock('../../lib/preferences.svelte', () => ({
+  density: { get value() { return 'comfortable'; } },
+}));
 
 // Mock the router so navigate doesn't touch window.location.
 vi.mock('../../lib/router', () => ({
@@ -94,6 +99,16 @@ describe('Unread view', () => {
   it('renders a <ul role="list"> for entry items', () => {
     setEntries({ items: [
       { id: 1, title: 'Entry One', read: false, saved: false, subscription_id: 10, published_at: 1700000000, fetched_at: 1700000001, url: 'https://a.com', extract_failed: false },
+    ], loading: false, error: null });
+    const { container } = render(Unread);
+    expect(container.querySelector('ul[role="list"]')).toBeTruthy();
+  });
+
+  it('renders entries grouped across day bands without crashing', () => {
+    const now = Math.floor(Date.now() / 1000);
+    setEntries({ items: [
+      { id: 1, title: 'Today entry', read: false, saved: false, subscription_id: 10, published_at: now - 600, fetched_at: now, url: 'https://a.com', extract_failed: false },
+      { id: 2, title: 'Old entry', read: false, saved: false, subscription_id: 10, published_at: now - 26 * 3600, fetched_at: now, url: 'https://b.com', extract_failed: false },
     ], loading: false, error: null });
     const { container } = render(Unread);
     expect(container.querySelector('ul[role="list"]')).toBeTruthy();
