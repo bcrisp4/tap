@@ -240,11 +240,7 @@ export const api = {
   deleteUser: (id: number) =>
     request<void>(`/admin/users/${id}`, { method: 'DELETE' }),
 
-  // Alias expected by FeedRow / FeedSettingsModal (same shape as patchSubscription).
-  updateSubscription: (
-    id: number,
-    patch: Record<string, unknown>,
-  ) =>
+  updateSubscription: (id: number, patch: Record<string, unknown>) =>
     request<Subscription>(`/subscriptions/${id}`, {
       method: 'PATCH',
       body: JSON.stringify(patch),

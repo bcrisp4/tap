@@ -6,7 +6,8 @@
     subscription,
     categories = [],
     onClose,
-  }: { subscription: Subscription; categories?: Category[]; onClose: () => void } = $props();
+    onSaved = onClose,
+  }: { subscription: Subscription; categories?: Category[]; onClose: () => void; onSaved?: () => void } = $props();
 
   // Snapshot initial prop values into local edit state (modal edits a local copy).
   let categoryId = $state<number | null>(subscription.category_id ?? null);
@@ -31,7 +32,7 @@
       if (basicPass) patch.basic_auth_pass = basicPass;
       if (categoryId !== subscription.category_id) patch.category_id = categoryId;
       await api.updateSubscription(subscription.id, patch);
-      onClose();
+      onSaved();
     } catch (e) {
       error = (e as Error).message;
     } finally {

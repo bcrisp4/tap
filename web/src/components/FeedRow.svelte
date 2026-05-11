@@ -17,8 +17,6 @@
   async function doDelete() {
     await api.deleteSubscription(subscription.id);
     await subscriptions.load();
-    confirmingDelete = false;
-    menuOpen = false;
   }
 
   async function assignCategory(catId: number | null) {
@@ -67,7 +65,8 @@
   <FeedSettingsModal
     {subscription}
     categories={cats}
-    onClose={() => { settingsOpen = false; void subscriptions.load(); }}
+    onClose={() => { settingsOpen = false; }}
+    onSaved={() => { settingsOpen = false; void subscriptions.load(); }}
   />
 {/if}
 
