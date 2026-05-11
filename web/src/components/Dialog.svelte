@@ -9,23 +9,53 @@
   };
   let { open, onClose, title, wide = false, foot, children }: Props = $props();
 
+  let dialogEl = $state<HTMLElement | null>(null);
+
+  const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+
+  function getFocusable(): HTMLElement[] {
+    return dialogEl ? Array.from(dialogEl.querySelectorAll<HTMLElement>(FOCUSABLE)) : [];
+  }
+
   $effect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
+
+    const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onEsc);
+
+    // Focus first focusable element on open.
+    const focusable = getFocusable();
+    focusable[0]?.focus();
+
+    return () => document.removeEventListener('keydown', onEsc);
   });
+
+  function onDialogKey(e: KeyboardEvent) {
+    if (e.key !== 'Tab') return;
+    const focusable = getFocusable();
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (e.shiftKey) {
+      if (document.activeElement === first) { e.preventDefault(); last.focus(); }
+    } else {
+      if (document.activeElement === last) { e.preventDefault(); first.focus(); }
+    }
+  }
 </script>
 
 {#if open}
   <div class="scrim" onclick={onClose} role="presentation"></div>
   <div
+    bind:this={dialogEl}
     class="dialog"
     class:is-wide={wide}
     role="dialog"
     aria-modal="true"
     aria-label={title}
+    tabindex="-1"
     onclick={(e) => e.stopPropagation()}
+    onkeydown={onDialogKey}
   >
     <div class="head">
       <span class="title">{title}</span>

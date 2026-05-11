@@ -12,6 +12,7 @@
   import KbdChip from '../components/KbdChip.svelte';
   import OtpInput from '../components/OtpInput.svelte';
   import { auth, ERR_UNAUTHORIZED } from '../lib/auth';
+  import { isMobile } from '../lib/breakpoints.svelte';
 
   type Mode = 'password' | 'passkey' | 'otp';
 
@@ -116,7 +117,7 @@
   }
 </script>
 
-<div class="tl-root">
+<div class="tl-root" class:is-mobile={$isMobile}>
   <header class="tl-header">
     <a class="wordmark" href="/" aria-label="Tap home">tap<span class="dot" aria-hidden="true"></span></a>
   </header>
@@ -229,4 +230,9 @@
   .tl-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
   .otp-row { display: flex; flex-direction: column; gap: 8px; }
   .otp-label { font-family: var(--mono); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3); }
+  /* Mobile overrides per tap-login.css §MOBILE */
+  .tl-root.is-mobile { padding-top: 50px; }
+  .tl-root.is-mobile .tl-title { font-size: 28px; }
+  /* Hide keyboard shortcut hint chip on mobile (no hardware kbd) */
+  .tl-root.is-mobile :global(.kbd) { display: none; }
 </style>
