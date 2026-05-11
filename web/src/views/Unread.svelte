@@ -61,7 +61,7 @@
 
   async function markAllRead() {
     const ids = $entries.items.map(e => e.id);
-    await Promise.all(ids.map(id => entries.toggleRead(id, true)));
+    await Promise.allSettled(ids.map(id => entries.toggleRead(id, true)));
   }
 
   function feedFor(subId: number) {

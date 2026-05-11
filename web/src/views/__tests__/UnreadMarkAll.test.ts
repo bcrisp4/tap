@@ -5,6 +5,7 @@ import type { EntryListItem, Subscription } from '../../lib/types';
 // Mock heavy child components but NOT TopBar — we need real TopBar to test the button.
 vi.mock('../../components/Sidebar.svelte', () => ({ default: vi.fn() }));
 vi.mock('../../components/EntryRow.svelte', () => ({ default: vi.fn() }));
+vi.mock('../../components/PollerStatus.svelte', () => ({ default: vi.fn() }));
 
 // Mock the router.
 vi.mock('../../lib/router', () => ({

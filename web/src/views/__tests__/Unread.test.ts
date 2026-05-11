@@ -7,6 +7,7 @@ import type { EntryListItem, Subscription } from '../../lib/types';
 vi.mock('../../components/Sidebar.svelte', () => ({ default: vi.fn() }));
 vi.mock('../../components/TopBar.svelte', () => ({ default: vi.fn() }));
 vi.mock('../../components/EntryRow.svelte', () => ({ default: vi.fn() }));
+vi.mock('../../components/PollerStatus.svelte', () => ({ default: vi.fn() }));
 
 // Mock the router so navigate doesn't touch window.location.
 vi.mock('../../lib/router', () => ({

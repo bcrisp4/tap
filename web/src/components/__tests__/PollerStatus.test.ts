@@ -11,22 +11,25 @@ describe('PollerStatus', () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(JSON.stringify({ status: 'ok', polls_active: 3, uptime_seconds: 100 })),
     );
-    const { findByText } = render(PollerStatus);
+    const { findByText, unmount } = render(PollerStatus);
     expect(await findByText(/3 active/)).toBeTruthy();
     expect(fetchSpy).toHaveBeenCalledWith('/healthz');
+    unmount();
   });
 
   it('shows idle when polls_active is 0', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(JSON.stringify({ status: 'ok', polls_active: 0, uptime_seconds: 50 })),
     );
-    const { findByText } = render(PollerStatus);
+    const { findByText, unmount } = render(PollerStatus);
     expect(await findByText(/idle/i)).toBeTruthy();
+    unmount();
   });
 
   it('shows waking up before healthz resolves', async () => {
     vi.spyOn(globalThis, 'fetch').mockReturnValue(new Promise(() => {}));
-    const { getByText } = render(PollerStatus);
+    const { getByText, unmount } = render(PollerStatus);
     expect(getByText(/waking up/i)).toBeTruthy();
+    unmount();
   });
 });

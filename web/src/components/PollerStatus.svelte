@@ -2,7 +2,8 @@
   import { onMount, onDestroy } from 'svelte';
 
   let active = $state<number | null>(null);
-  let interval: ReturnType<typeof setInterval>;
+  let destroyed = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
 
   async function poll() {
     try {
@@ -12,13 +13,16 @@
         active = body.polls_active ?? 0;
       }
     } catch { /* offline — leave value alone */ }
+    if (!destroyed) {
+      timer = setTimeout(poll, 30000);
+    }
   }
 
-  onMount(() => {
-    void poll();
-    interval = setInterval(poll, 30000);
+  onMount(() => { void poll(); });
+  onDestroy(() => {
+    destroyed = true;
+    clearTimeout(timer);
   });
-  onDestroy(() => clearInterval(interval));
 </script>
 
 <div class="poller-strip" role="status" aria-live="polite">
