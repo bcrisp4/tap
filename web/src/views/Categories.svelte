@@ -81,7 +81,7 @@
   }
 </script>
 
-<main class="ts-main">
+<div class="ts-main">
   <div class="ts-cats">
     <header class="ts-set-head">
       <div class="ts-set-eyebrow">
@@ -203,7 +203,7 @@
       onConfirm={performMarkRead}
     />
   {/if}
-</main>
+</div>
 
 <style>
   .ts-main {
