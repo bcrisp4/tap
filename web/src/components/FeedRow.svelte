@@ -12,7 +12,7 @@
 
   let menuOpen = $state(false);
   let confirmingDelete = $state(false);
-  let settingsOpen = $state(false);
+
   let rowError = $state<string | null>(null);
 
   async function doDelete() {
@@ -50,9 +50,7 @@
 
   {#if menuOpen}
     <div class="menu" role="menu">
-      <button
-        type="button"
-        onclick={() => { settingsOpen = true; menuOpen = false; }}>Edit settings…</button>
+
       <details>
         <summary>Move to category</summary>
         <button type="button" onclick={() => assignCategory(null)}>— Uncategorised —</button>
