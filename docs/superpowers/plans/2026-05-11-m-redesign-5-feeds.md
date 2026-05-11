@@ -24,16 +24,35 @@ This milestone **blocks on M-Redesign-1 (Foundations)**. Specifically it consume
 - `web/src/components/Button.svelte` (default / primary / quiet / danger; size; icon slot).
 - `web/src/components/Field.svelte` (label + input; mono variant via prop or class).
 - `web/src/components/Chip.svelte` (pill chip with count; `is-active`; `is-warn` variants).
-- `web/src/components/Popover.svelte` (scrim + positioned content; click-outside dismiss; Esc closes).
+- `web/src/components/Popover.svelte` (scrim + positioned content; click-outside dismiss; Esc closes). Pinned shape used by `CategoryReassignPopover` from M4: takes `open`, `anchor: HTMLElement | null`, `onClose`.
 - `web/src/components/Dialog.svelte` (head + body + foot; `is-wide` variant; focus trap; Esc closes; warn callout).
-- `web/src/components/EmptyState.svelte` (dot + serif title + sans sub + optional CTA slot).
+- `web/src/components/EmptyState.svelte` (dot + serif title + sans sub + optional CTA). **Pinned contract** to coordinate with M1: `{ title: string; sub?: string | Snippet; cta?: { label: string; onClick: () => void } }`. M5 uses the object-form `cta` (label + onClick) — both empty states need a click handler. If M1 ships a different shape, the milestone is blocked until reconciled in the M1 PR; do not silently adapt.
 - `web/src/components/FeedAvatar.svelte` (existing; uses `colorForFeed(feed_url)`; 18 px size supported via the existing `size` prop).
 - Stub `views/Feeds.svelte` from M1 (renders "Coming soon — M5" EmptyState); this milestone **replaces** that stub file wholesale.
 - Router has `/feeds` registered as `feeds` and the desktop top tab + mobile bottom tab are present.
 
-If any primitive interface diverges from what this plan assumes, fix the call sites in this plan's `Feeds.svelte` and child components — do **not** monkey-patch the primitives.
+**Cross-milestone shared composite (M4 owns, M5 consumes):**
 
-**Coordinates with M-Redesign-4 (Categories management):** M4 may add a `position INTEGER` column to `categories`. This plan does **not** care about category ordering — the only thing the Feeds page needs from categories is `{ id, name, unread }`. Render categories in the order returned by `api.listCategories()`. M4 controls that order.
+- `web/src/components/CategoryReassignPopover.svelte` — built and merged by M-Redesign-4 (PR #56, commit 69d467c). M5 imports it for two call sites: per-row category chip click and bulk Set-category from the bulk bar. Pinned public contract (from M4):
+
+  ```ts
+  type Props = {
+    open: boolean;
+    anchor: HTMLElement | null;
+    feedName: string;                       // eyebrow renders "Move <b>jvns</b> to" (or "Assign …" for uncategorised)
+    currentCategoryId: number | null;       // null for bulk mode (nothing highlighted)
+    categories: Category[];                 // caller-ordered
+    label?: 'Move' | 'Assign';              // defaults 'Move'
+    onPick: (id: number | null) => void;    // null means "Uncategorised"
+    onClose: () => void;
+  };
+  ```
+
+  Uncategorised renders as the *last* row (separator + italic ink-3), per brand spec §6.4 convention. M5 accepts that order — there's no Feeds-page reason to override it. See Task 7 for the consumption pattern.
+
+If any other primitive interface diverges from what this plan assumes, fix the call sites in this plan's `Feeds.svelte` and child components — do **not** monkey-patch the primitives.
+
+**Coordinates with M-Redesign-4 (Categories management):** beyond the popover above, M4 may add a `position INTEGER` column to `categories`. This plan does **not** care about category ordering — the only thing the Feeds page needs from categories is `{ id, name, unread }`. Render categories in the order returned by `api.listCategories()`. M4 controls that order.
 
 ---
 
@@ -92,9 +111,8 @@ web/src/components/feeds/EditFeedDialog.svelte      Wide dialog. Replaces FeedSe
 web/src/components/feeds/DeleteFeedsDialog.svelte   Single + bulk confirm. Avatars + URL list (first 5, "…and N more").
 web/src/components/feeds/ImportOpmlDialog.svelte    Drop zone or file picker → POST → result summary. is-wide.
 web/src/components/feeds/ExportOpmlDialog.svelte    Optional. The M5 spec calls for a button; using the dialog (stats + preview + Download) matches §6.5 better. is-wide.
-web/src/components/feeds/ReassignCategoryPopover.svelte
-                                                    Popover used by both per-row "change category" and bulk reassign. Reused selector pattern from the design.
 web/src/lib/feedsFilter.ts                          Pure functions: filterFeeds(), sortFeeds(), bulk* helpers. Easy to unit-test without DOM.
+web/src/lib/url.ts                                  Small helpers: originOf(absUrl), displayUrl(absUrl), formatAgo(seconds). See Task 5.1.
 
 web/src/views/__tests__/Feeds.test.ts               View-level integration tests (filter+sort+search; bulk selection wiring; mobile branch).
 web/src/components/feeds/__tests__/FeedsToolbar.test.ts
@@ -105,15 +123,15 @@ web/src/components/feeds/__tests__/EditFeedDialog.test.ts
 web/src/components/feeds/__tests__/DeleteFeedsDialog.test.ts
 web/src/components/feeds/__tests__/ImportOpmlDialog.test.ts
 web/src/components/feeds/__tests__/ExportOpmlDialog.test.ts
-web/src/components/feeds/__tests__/ReassignCategoryPopover.test.ts
 web/src/lib/__tests__/feedsFilter.test.ts
+web/src/lib/__tests__/url.test.ts
 ```
 
 ### Files modified
 
 ```
 web/src/lib/api.ts                                  + refreshSubscription(id) helper that PATCHes {refresh_now:true}.
-                                                    + bulkUpdateSubscription helper (thin wrapper for ergonomics; not strictly required).
+                                                    + extend addSubscription body type to include category_id?: number | null (server already accepts it).
 web/src/lib/store.ts                                + subscriptions.refresh(id), subscriptions.remove(id), subscriptions.setCategory(id, catId).
                                                       Keeps the optimistic-write pattern already in entriesStore.toggleSaved().
 web/src/lib/router.ts                               No change expected (M1 already registered /feeds). If /feeds is not registered, add it here.
@@ -163,26 +181,35 @@ The Feeds page's per-row Refresh icon (and the toolbar's "Refresh all") need a w
 **Files:**
 - Modify: `internal/api/subscriptions_test.go`
 
-- [ ] **Step 1: Add failing test** — append to `TestPatchSubscription` (or add a new top-level test `TestPatchSubscriptionRefreshNow`):
+> **Important context for the implementer.** The existing PATCH handler at `internal/api/subscriptions.go:180-323` decodes into `var rawMap map[string]json.RawMessage` and then re-decodes each known key via a `switch k {}` loop (lines 213-231) plus a separate `if raw, ok := rawMap["category_id"]; ok { ... }` block (lines 285-315). Unknown keys are silently dropped. **You cannot add `refresh_now` by extending the inner `body` struct** — the value would never be read. Add the new key by extending the rawMap-driven dispatch, exactly the way `category_id` is handled.
+>
+> The test harness in `internal/api/testing.go:25-26` embeds `MuxOpts` inside `TestMuxOpts`. `MuxOpts.Poke func()` (`internal/api/api.go:17-19`) is the field that flows into `registerSubscriptionRoutes(subsMux, db, opts.Poke)` (`internal/api/api.go:151`). Substitute a counter in the test by passing `api.TestMuxOpts{ MuxOpts: api.MuxOpts{ Poke: func() { poked++ } } }`. No harness change required — the wiring exists.
+
+- [ ] **Step 1: Add failing test** — add `TestPatchSubscriptionRefreshNow` to `internal/api/subscriptions_test.go`:
 
 ```go
 func TestPatchSubscriptionRefreshNow(t *testing.T) {
     t.Parallel()
-    h := newSubsHarness(t)
-    sub := h.insertSubscription(t, "https://example.com/feed.xml")
+    poked := 0
+    // newPatchHarness is a fixture local to subscriptions_test.go that returns
+    // (sub, mux, sessionCookie, csrfToken, db). It constructs the mux via
+    //   api.NewTestMux(d, api.TestMuxOpts{MuxOpts: api.MuxOpts{Poke: func() { poked++ }}})
+    // and matches the helper pattern already used by neighbouring PATCH tests.
+    sub, mux, sessionCookie, csrfToken, d := newPatchHarness(t, &poked)
 
-    // Push next_poll_at into the future so the test can prove it gets reset.
-    _, err := h.DB.ExecContext(t.Context(),
-        `UPDATE subscriptions SET next_poll_at = ? WHERE id = ?`, time.Now().Add(1*time.Hour).Unix(), sub.ID)
+    futureTime := time.Now().Add(time.Hour).Unix()
+    _, err := d.ExecContext(t.Context(),
+        `UPDATE subscriptions SET next_poll_at = ? WHERE id = ?`, futureTime, sub.ID)
     require.NoError(t, err)
 
-    poked := 0
-    h.poke = func() { poked++ }
-
-    req := h.authenticated(t, "PATCH", "/api/v1/subscriptions/"+strconv.FormatInt(sub.ID, 10),
+    req := httptest.NewRequest(http.MethodPatch,
+        "/api/v1/subscriptions/"+strconv.FormatInt(sub.ID, 10),
         strings.NewReader(`{"refresh_now":true}`))
+    req.AddCookie(&http.Cookie{Name: "tap_session", Value: sessionCookie})
+    req.Header.Set("X-CSRF-Token", csrfToken)
+    req.Header.Set("Content-Type", "application/json")
     rec := httptest.NewRecorder()
-    h.mux.ServeHTTP(rec, req)
+    mux.ServeHTTP(rec, req)
 
     require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
@@ -191,11 +218,62 @@ func TestPatchSubscriptionRefreshNow(t *testing.T) {
     require.Equal(t, int64(0), dto.NextPollAt, "next_poll_at must reset to 0")
     require.Equal(t, 1, poked, "scheduler must be poked exactly once")
 }
+
+func TestPatchSubscriptionRefreshNow_WrongType(t *testing.T) {
+    // refresh_now must be a boolean; a string value should yield 400 and never poke.
+    t.Parallel()
+    poked := 0
+    sub, mux, sessionCookie, csrfToken, _ := newPatchHarness(t, &poked)
+
+    req := httptest.NewRequest(http.MethodPatch,
+        "/api/v1/subscriptions/"+strconv.FormatInt(sub.ID, 10),
+        strings.NewReader(`{"refresh_now":"yes"}`))
+    req.AddCookie(&http.Cookie{Name: "tap_session", Value: sessionCookie})
+    req.Header.Set("X-CSRF-Token", csrfToken)
+    req.Header.Set("Content-Type", "application/json")
+    rec := httptest.NewRecorder()
+    mux.ServeHTTP(rec, req)
+
+    require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+    require.Zero(t, poked)
+}
+
+func TestPatchSubscriptionRefreshNow_False(t *testing.T) {
+    // refresh_now:false is a no-op: next_poll_at unchanged, poke not called.
+    t.Parallel()
+    poked := 0
+    sub, mux, sessionCookie, csrfToken, d := newPatchHarness(t, &poked)
+
+    futureTime := time.Now().Add(time.Hour).Unix()
+    _, err := d.ExecContext(t.Context(),
+        `UPDATE subscriptions SET next_poll_at = ? WHERE id = ?`, futureTime, sub.ID)
+    require.NoError(t, err)
+
+    req := httptest.NewRequest(http.MethodPatch,
+        "/api/v1/subscriptions/"+strconv.FormatInt(sub.ID, 10),
+        strings.NewReader(`{"refresh_now":false}`))
+    req.AddCookie(&http.Cookie{Name: "tap_session", Value: sessionCookie})
+    req.Header.Set("X-CSRF-Token", csrfToken)
+    req.Header.Set("Content-Type", "application/json")
+    rec := httptest.NewRecorder()
+    mux.ServeHTTP(rec, req)
+
+    require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+    var dto subscriptionDTO
+    require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &dto))
+    require.Equal(t, futureTime, dto.NextPollAt, "next_poll_at must be unchanged")
+    require.Zero(t, poked)
+}
 ```
 
-Reuse whatever helpers the existing `subscriptions_test.go` uses; if a `poke` field doesn't exist on the test harness, wire it through the same mechanism the existing `POST /api/v1/subscriptions` test already uses (see the `NewMux` call in `internal/api/testing.go`).
+If `newPatchHarness` (or an equivalent) doesn't exist yet in `subscriptions_test.go`, write it as part of this step. It should:
+1. Spin up an in-memory DB and run migrations.
+2. Insert a test user, log them in (or directly create a session row + CSRF token).
+3. Insert one subscription owned by that user, return it.
+4. Build the mux via `api.NewTestMux(d, api.TestMuxOpts{MuxOpts: api.MuxOpts{Poke: func() { *poked++ }}})`.
+5. Return the tuple.
 
-- [ ] **Step 2: Run the test to confirm RED** — `go test ./internal/api -run TestPatchSubscriptionRefreshNow -race -count=1`. Expect failure: PATCH handler ignores unknown fields, `next_poll_at` stays at the future timestamp, `poked == 0`.
+- [ ] **Step 2: Run the test to confirm RED** — `go test ./internal/api -run TestPatchSubscriptionRefreshNow -race -count=1`. Expect all three to behave wrongly: the first yields 200 but `next_poll_at` is unchanged (`refresh_now` is silently dropped) and `poked == 0`; the second yields 200 not 400; the third happens to pass for the wrong reason (no-op because the field is dropped).
 
 #### Task 1.2: DB function `UpdateSubscriptionRefreshNow` (GREEN)
 
@@ -265,18 +343,48 @@ func UpdateSubscriptionRefreshNow(ctx context.Context, d *sql.DB, id, userID int
 #### Task 1.3: Wire `refresh_now` into the PATCH handler (GREEN)
 
 **Files:**
-- Modify: `internal/api/subscriptions.go` (around line 180 — the existing `PATCH /api/v1/subscriptions/{id}` HandleFunc)
+- Modify: `internal/api/subscriptions.go` (the existing `PATCH /api/v1/subscriptions/{id}` HandleFunc at lines 180-323)
 
-- [ ] **Step 1: Implement** — extend the request struct used by the PATCH decoder with `RefreshNow *bool \`json:"refresh_now,omitempty"\``. After the existing patch path completes (or in lieu of it when the body only contains `refresh_now`), call `db.UpdateSubscriptionRefreshNow(ctx, d, id, u.ID)` and then `h.poke()`. Order:
-  1. Decode body.
-  2. If any standard PATCH field is present, run the existing patch transaction.
-  3. If `refresh_now` is true, run `db.UpdateSubscriptionRefreshNow`. On `sql.ErrNoRows`, return 404 via `writeError(w, 404, "subscription_not_found", ...)`.
-  4. After the row update succeeds and `refresh_now` was true, call `h.poke()` exactly once (do not call it for non-refresh PATCHes — those don't change `next_poll_at`).
-  5. Re-read the subscription row and write the existing DTO response.
+- [ ] **Step 1: Implement** — extend the rawMap dispatch. **Do not** add `RefreshNow` to the inner `body` struct; that field would never be read. Follow the same pattern as the existing `category_id` block (lines 285-315). Add immediately after the `category_id` block, before the final `writeJSON`:
 
-Do not introduce a separate handler; do not change the route. The reason is mechanical: this is the smallest possible surface change and the umbrella spec explicitly permits "narrow additions a milestone explicitly justifies."
+```go
+// Handle refresh_now: when true, reset next_poll_at = 0 and poke the scheduler.
+if raw, ok := rawMap["refresh_now"]; ok {
+    var refreshNow bool
+    if err := json.Unmarshal(raw, &refreshNow); err != nil {
+        writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "refresh_now must be a boolean")
+        return
+    }
+    if refreshNow {
+        if err := db.UpdateSubscriptionRefreshNow(r.Context(), d, id, u.ID); err != nil {
+            if errors.Is(err, sql.ErrNoRows) {
+                writeError(w, http.StatusNotFound, ErrCodeNotFound, "subscription not found")
+                return
+            }
+            writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())
+            return
+        }
+        if poke != nil {
+            poke()
+        }
+        // Re-read the row so the DTO reflects the new next_poll_at.
+        s, err = db.GetSubscription(r.Context(), d, id, u.ID)
+        if err != nil {
+            writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())
+            return
+        }
+    }
+}
+```
 
-- [ ] **Step 2: Run** — `go test ./internal/api -run TestPatchSubscription -race -count=1`. Existing PATCH tests still pass, new `TestPatchSubscriptionRefreshNow` goes green.
+Notes:
+
+- `poke` is the closure parameter of `registerSubscriptionRoutes(m, d, poke)` and is the same value `MuxOpts.Poke` was set to. Guard with `if poke != nil` because some callers (notably tests that don't pass a Poke) leave it nil.
+- The block follows `category_id`'s handling deliberately, so a body like `{"category_id": 4, "refresh_now": true}` first reassigns the category, then forces the immediate poll, then re-reads. The re-read overwrites the local `s` variable used by the trailing `writeJSON(w, http.StatusOK, toDTO(s))`.
+- Do not poke for `refresh_now:false` — the handler should be a no-op for the next_poll_at and the scheduler.
+- Do not introduce a separate handler or route. The umbrella spec §1 explicitly permits "narrow additions a milestone explicitly justifies"; this is that addition.
+
+- [ ] **Step 2: Run** — `go test ./internal/api -run TestPatchSubscription -race -count=1`. All three new tests go green; the existing PATCH tests still pass.
 
 - [ ] **Step 3: Commit**
 
@@ -833,9 +941,9 @@ type Props = {
   onToggleSelect: () => void;
   onToggleExpand: () => void;
   onRefresh: () => void;
-  onChangeCategory: () => void;   // opens a Popover positioned to the row's category chip
-  onEdit: () => void;             // opens EditFeedDialog
-  onDelete: () => void;           // opens DeleteFeedsDialog with [feed.id]
+  onChangeCategory: (anchor: HTMLElement) => void;   // opens M4's CategoryReassignPopover anchored to the category chip
+  onEdit: () => void;                                 // opens EditFeedDialog
+  onDelete: () => void;                               // opens DeleteFeedsDialog with [feed.id]
 };
 ```
 
@@ -906,9 +1014,14 @@ it('more menu emits onEdit when its first item is clicked', async () => {
 
 - [ ] **Step 2: RED**
 
-- [ ] **Step 3: Implement** — match `tap-feeds-page.jsx` `TFFeedRow` (lines 123–248) structure:
+- [ ] **Step 3: Implement** — match `tap-feeds-page.jsx` `TFFeedRow` (lines 123–248) structure. Bind the category chip element so the parent's reassign popover can anchor to it:
 
 ```svelte
+<script lang="ts">
+  // …other props…
+  let catChipEl = $state<HTMLElement | null>(null);
+</script>
+
 <div class="ts-feed-row" class:is-selected={isSelected} class:has-error={feed.error_count > 0} class:is-busy={isRefreshing}>
   <button class="ts-feed-check" class:is-checked={isSelected} onclick={onToggleSelect} aria-label={isSelected ? 'Deselect' : 'Select'}>
     {#if isSelected}<svg …check icon… />{/if}
@@ -917,7 +1030,8 @@ it('more menu emits onEdit when its first item is clicked', async () => {
   <div class="ts-feed-body">
     <div class="ts-feed-line1">
       <h3 class="ts-feed-name">{feed.title}</h3>
-      <button class="ts-feed-cat" class:is-uncat={!feed.category_id} onclick={onChangeCategory}>
+      <button class="ts-feed-cat" class:is-uncat={!feed.category_id} bind:this={catChipEl}
+              onclick={() => onChangeCategory(catChipEl!)}>
         {categoryName ?? 'uncategorised'}
       </button>
       {#if feed.error_count > 0}
@@ -927,8 +1041,8 @@ it('more menu emits onEdit when its first item is clicked', async () => {
       {/if}
     </div>
     <div class="ts-feed-line2">
-      <a class="ts-feed-url" href={feed.site_url || `https://${feed.feed_url}`} target="_blank" rel="noopener noreferrer">
-        {feed.feed_url}<span class="ico"><svg …external… /></span>
+      <a class="ts-feed-url" href={feed.site_url || originOf(feed.feed_url)} target="_blank" rel="noopener noreferrer">
+        {displayUrl(feed.feed_url)}<span class="ico"><svg …external… /></span>
       </a>
       <span class="dot" aria-hidden="true"></span>
       {#if feed.error_count > 0}
@@ -953,7 +1067,74 @@ it('more menu emits onEdit when its first item is clicked', async () => {
 </div>
 ```
 
-`formatAgo(seconds)` is a small helper local to this file (or in `web/src/lib/time.ts`): seconds < 60 → "Xs", < 3600 → "Xm", < 86400 → "Xh", otherwise "Xd". Test it via the row's rendered output, not separately.
+Three small helpers live in this file (or in `web/src/lib/time.ts` / `web/src/lib/url.ts` if shared by other views):
+
+```ts
+// formatAgo: seconds < 60 → "Xs", < 3600 → "Xm", < 86400 → "Xh", else "Xd"; +Infinity → "—".
+function formatAgo(seconds: number): string {
+  if (!Number.isFinite(seconds)) return '—';
+  if (seconds < 60)    return `${Math.floor(seconds)}s`;
+  if (seconds < 3600)  return `${Math.floor(seconds / 60)}m`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
+  return `${Math.floor(seconds / 86400)}d`;
+}
+
+// originOf: feed.feed_url is always an absolute http(s) URL (validated server-side in
+// internal/api/subscriptions.go:121 — see `url.Parse` + "must use http or https" branch
+// at lines 121-128). Don't concatenate "https://" — that produces "https://https://...".
+function originOf(absUrl: string): string {
+  try { return new URL(absUrl).origin; } catch { return absUrl; }
+}
+
+// displayUrl: strip the scheme for the mono URL line (the design shows hostnames, not
+// schemes — see styles.css:3888 and JSX line 170). Falls back to the input on parse error.
+function displayUrl(absUrl: string): string {
+  try {
+    const u = new URL(absUrl);
+    return u.host + u.pathname.replace(/\/$/, '');
+  } catch {
+    return absUrl;
+  }
+}
+```
+
+Add a small unit test covering each helper (`web/src/lib/__tests__/url.test.ts`):
+
+```ts
+import { describe, it, expect } from 'vitest';
+import { originOf, displayUrl, formatAgo } from '../url';
+
+describe('originOf', () => {
+  it('returns the scheme + host for an absolute http(s) URL', () => {
+    expect(originOf('https://jvns.ca/atom.xml')).toBe('https://jvns.ca');
+    expect(originOf('http://example.com:8080/feed.xml')).toBe('http://example.com:8080');
+  });
+  it('does NOT double-prepend a scheme', () => {
+    expect(originOf('https://jvns.ca/atom.xml')).not.toContain('https://https://');
+  });
+  it('returns the input unchanged on parse failure', () => {
+    expect(originOf('not a url')).toBe('not a url');
+  });
+});
+
+describe('displayUrl', () => {
+  it('strips the scheme', () => {
+    expect(displayUrl('https://jvns.ca/atom.xml')).toBe('jvns.ca/atom.xml');
+  });
+  it('trims trailing slash', () => {
+    expect(displayUrl('https://jvns.ca/')).toBe('jvns.ca');
+  });
+});
+
+describe('formatAgo', () => {
+  it.each([
+    [0, '0s'], [59, '59s'], [60, '1m'], [120, '2m'], [3599, '59m'],
+    [3600, '1h'], [86399, '23h'], [86400, '1d'], [Number.POSITIVE_INFINITY, '—'],
+  ])('formatAgo(%i) === %s', (s, want) => expect(formatAgo(s)).toBe(want));
+});
+```
+
+This separate test exists deliberately so the URL-double-prepend regression has a sentinel. Without it, the row markup compiles fine but produces broken links in production.
 
 - [ ] **Step 4: GREEN**
 
@@ -1014,7 +1195,7 @@ type Props = {
   count: number;
   onClear: () => void;
   onRefresh: () => void;
-  onReassign: () => void;
+  onReassign: (anchor: HTMLElement) => void;   // CategoryReassignPopover needs the trigger element
   onDelete: () => void;
 };
 ```
@@ -1036,18 +1217,19 @@ it('emits each handler when its button is clicked', async () => {
   render(FeedsBulkBar, { props: { count: 2, onClear, onRefresh, onReassign, onDelete } });
   await fireEvent.click(screen.getByRole('button', { name: /clear/i }));
   await fireEvent.click(screen.getByRole('button', { name: /refresh/i }));
-  await fireEvent.click(screen.getByRole('button', { name: /set category/i }));
+  const setCatBtn = screen.getByRole('button', { name: /set category/i });
+  await fireEvent.click(setCatBtn);
   await fireEvent.click(screen.getByRole('button', { name: /delete/i }));
   expect(onClear).toHaveBeenCalledOnce();
   expect(onRefresh).toHaveBeenCalledOnce();
-  expect(onReassign).toHaveBeenCalledOnce();
+  expect(onReassign).toHaveBeenCalledWith(setCatBtn);   // anchor is the Set category button itself
   expect(onDelete).toHaveBeenCalledOnce();
 });
 ```
 
 - [ ] **Step 2: RED**
 
-- [ ] **Step 3: Implement** — match `tap-feeds-page.jsx` `TFBulkBar` (lines 253–270). Selectors `.ts-feeds-bulk`, `.ts-feeds-bulk-count`, `.ts-feeds-bulk-clear`, `.ts-feeds-bulk-spacer`, `.ts-feeds-bulk-btn`, `.ts-feeds-bulk-btn.is-danger`. Delete button takes `.is-danger`.
+- [ ] **Step 3: Implement** — match `tap-feeds-page.jsx` `TFBulkBar` (lines 253–270). Selectors `.ts-feeds-bulk`, `.ts-feeds-bulk-count`, `.ts-feeds-bulk-clear`, `.ts-feeds-bulk-spacer`, `.ts-feeds-bulk-btn`, `.ts-feeds-bulk-btn.is-danger`. Delete button takes `.is-danger`. The "Set category…" button uses `onclick={(e) => onReassign(e.currentTarget as HTMLElement)}` so the parent can anchor its popover to the trigger.
 
 - [ ] **Step 4: GREEN**
 
@@ -1061,74 +1243,99 @@ git commit -m "FeedsBulkBar: N selected + clear/refresh/reassign/delete actions"
 
 ---
 
-### Task 7: `ReassignCategoryPopover.svelte`
+### Task 7: Consume M4's `CategoryReassignPopover`
 
-**Files:**
-- Create: `web/src/components/feeds/ReassignCategoryPopover.svelte`
-- Create: `web/src/components/feeds/__tests__/ReassignCategoryPopover.test.ts`
+**Status:** **M4 owns and ships this component.** Path: `web/src/components/CategoryReassignPopover.svelte` (PR #56, commit 69d467c). M5 imports and consumes — no new component, no new tests for the popover itself.
 
-Used by:
-- Per-row "change category" (clicking the category chip on a row).
-- Bulk "Set category…" (clicking the bulk bar's Reassign button).
+Original plan called for a `feeds/ReassignCategoryPopover.svelte` here. Team-lead decision (2026-05-11): the popover is a cross-milestone shared composite, M4 ships it, M5 + M4 both consume it. Reviewer concurred (round-1 item #6 retracted).
 
-Mounted inside the M1 `Popover` primitive. Renders the category list with a leading check on the current selection. "Uncategorised" is always the first row.
+**Files (no creates, no deletes — only call-site preparation):**
+- No files in this task.
+- Task 5.1 (row markup) and Task 6 (bulk bar wiring) and Task 12 (view) each import `CategoryReassignPopover` from `web/src/components/CategoryReassignPopover.svelte`. Update those tasks to reflect the import path; the M5 `Feeds.svelte` already does (see Task 12 skeleton).
 
-Props:
+**Pinned contract** (verbatim from M4, do not deviate):
 
 ```ts
 type Props = {
-  categories: Category[];
-  currentId: number | null;  // ignored in bulk mode where there's no single current
-  onPick: (id: number | null) => void;
-  onDismiss: () => void;
+  open: boolean;
+  anchor: HTMLElement | null;
+  feedName: string;                      // eyebrow renders "Move <b>jvns</b> to" (or "Assign …")
+  currentCategoryId: number | null;      // null for bulk mode (nothing highlighted)
+  categories: Category[];                // caller-ordered
+  label?: 'Move' | 'Assign';             // defaults 'Move'
+  onPick: (id: number | null) => void;   // null means "Uncategorised"
+  onClose: () => void;
 };
 ```
 
-- [ ] **Step 1: Failing test**:
+**Per-row consumption pattern** (single feed; not yet uncategorised):
 
-```ts
-it('renders Uncategorised first followed by each category', () => {
-  render(ReassignCategoryPopover, { props: { categories, currentId: null, onPick: noop, onDismiss: noop } });
-  const rows = screen.getAllByRole('button');
-  expect(rows[0].textContent).toMatch(/uncategorised/i);
-  expect(rows[1].textContent).toContain('People');
-});
+```svelte
+<script lang="ts">
+  let catChipEl = $state<HTMLElement | null>(null);
+  let popoverOpen = $state(false);
+</script>
 
-it('marks the current selection with a check column / is-current class', () => {
-  const { container } = render(ReassignCategoryPopover, { props: { categories, currentId: categories[0].id, onPick: noop, onDismiss: noop } });
-  const row = container.querySelector(`button[data-cat-id="${categories[0].id}"]`)!;
-  expect(row.classList.contains('is-current')).toBe(true);
-});
+<button bind:this={catChipEl} class="ts-feed-cat" onclick={() => (popoverOpen = !popoverOpen)}>
+  {categoryName ?? 'uncategorised'}
+</button>
 
-it('calls onPick with null for Uncategorised, and onDismiss after', async () => {
-  const onPick = vi.fn(), onDismiss = vi.fn();
-  render(ReassignCategoryPopover, { props: { categories, currentId: 1, onPick, onDismiss } });
-  await fireEvent.click(screen.getAllByRole('button')[0]);
-  expect(onPick).toHaveBeenCalledWith(null);
-  expect(onDismiss).toHaveBeenCalledOnce();
-});
-
-it('calls onPick with the category id when a row is clicked', async () => {
-  const onPick = vi.fn();
-  render(ReassignCategoryPopover, { props: { categories, currentId: null, onPick, onDismiss: noop } });
-  await fireEvent.click(screen.getAllByRole('button')[1]);
-  expect(onPick).toHaveBeenCalledWith(categories[0].id);
-});
+<CategoryReassignPopover
+  open={popoverOpen}
+  anchor={catChipEl}
+  feedName={feed.title}
+  currentCategoryId={feed.category_id}
+  categories={$categories}
+  label={feed.category_id == null ? 'Assign' : 'Move'}
+  onPick={(id) => { subscriptions.setCategory(feed.id, id); popoverOpen = false; }}
+  onClose={() => (popoverOpen = false)}
+/>
 ```
 
-- [ ] **Step 2: RED**
+**Bulk-mode consumption pattern** (multiple feeds; anchored to the bulk bar's "Set category…" button):
 
-- [ ] **Step 3: Implement** — markup mirroring §4.9 / `.ts-cat-pop`. Each row: leading 10 px check column + sans 13/500 name. `data-cat-id` is for tests. On click: call `onPick(id)` then `onDismiss()`.
+```svelte
+<script lang="ts">
+  let bulkSetCatEl = $state<HTMLElement | null>(null);
+  let bulkReassignOpen = $state(false);
+</script>
 
-- [ ] **Step 4: GREEN**
+<button bind:this={bulkSetCatEl} class="ts-feeds-bulk-btn" onclick={() => (bulkReassignOpen = true)}>
+  Set category <Caret />
+</button>
 
-- [ ] **Step 5: Commit**
+<CategoryReassignPopover
+  open={bulkReassignOpen}
+  anchor={bulkSetCatEl}
+  feedName={`${selected.size} feeds`}
+  currentCategoryId={null}
+  categories={$categories}
+  label="Assign"
+  onPick={(id) => { void bulkReassign([...selected], id); bulkReassignOpen = false; }}
+  onClose={() => (bulkReassignOpen = false)}
+/>
+```
+
+**Baseline check** (Task 0, sanity gate — add a one-line `bash`-style precondition the implementer runs before starting):
 
 ```bash
-git add web/src/components/feeds/ReassignCategoryPopover.svelte \
-        web/src/components/feeds/__tests__/ReassignCategoryPopover.test.ts
-git commit -m "ReassignCategoryPopover: shared popover for per-row + bulk reassign"
+test -f web/src/components/CategoryReassignPopover.svelte || \
+  { echo 'M4 popover not present — wait for M-Redesign-4 to merge first'; exit 1; }
 ```
+
+If M4 hasn't merged when this milestone starts, **stop** and ping `planner-m4` or `team-lead`. Do **not** copy M4's component into M5 to unblock. Do **not** stub a different component with the same name. (The umbrella spec §3.2 paragraph on cross-milestone shared composites is being codified to prevent the duplicate-ownership pattern that originally drove this clarification.)
+
+**Tests:** M5 owns *only* the consumer-side wiring tests (covered in Task 5.1 for per-row, Task 6 for bulk, Task 12 for view-level). Component-level tests for the popover itself live in M4's suite — don't duplicate them. For Task 5 / 6 / 12, mock the popover when the surrounding test doesn't care about its internals:
+
+```ts
+vi.mock('../../components/CategoryReassignPopover.svelte', () => ({
+  default: vi.fn(),
+}));
+```
+
+When a test *does* want the popover to render (e.g. asserting the eyebrow text in an integration test), don't mock; let it render normally.
+
+**Risk:** if M4 lands a contract diff post-merge (e.g. renames a prop), M5's call sites break. Mitigation: the baseline check above catches an outright missing file; svelte-check catches prop-name mismatches at build time. The contract is frozen per M4's message, so the risk surface is "M4 ships a follow-up commit that changes the shape" — escalate to team-lead if that happens.
 
 ---
 
@@ -1247,24 +1454,60 @@ it('renders Uncategorised + a button for each category', async () => {
 
 - [ ] **Step 2: Implement** — use `.ts-feeds-edit-cat-list` with `.ts-feeds-edit-cat-btn` per category. Default selected: `null` (Uncategorised). Clicking flips the `is-active` class.
 
-#### Task 8.4: Subscribe
+#### Task 8.4: Subscribe (single call)
 
-- [ ] **Step 1: Failing test**:
+`POST /api/v1/subscriptions` already accepts `category_id` server-side (`internal/api/subscriptions.go:110-156`); the M5 add-feed flow uses one call, not two. Eliminates a partial-failure window where step 1 (insert) succeeds but step 2 (category PATCH) fails and the feed ends up in Uncategorised.
+
+The current `api.addSubscription` helper (`web/src/lib/api.ts:80-91`) does **not** include `category_id` in its body type. Extend it as part of this task.
+
+- [ ] **Step 1: Extend the `api.addSubscription` helper signature** — modify `web/src/lib/api.ts`:
 
 ```ts
-it('Subscribe calls api.addSubscription with feed_url, then api.updateSubscription if a category is picked, then onAdded', async () => {
+addSubscription: (body: {
+  feed_url: string;
+  title?: string;
+  extract?: boolean;
+  cookie?: string;
+  basic_auth_user?: string;
+  basic_auth_pass?: string;
+  category_id?: number | null;     // new — passed through to POST body
+}) =>
+  request<Subscription>('/subscriptions', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  }),
+```
+
+The server already accepts the field; this is purely a TypeScript type widening.
+
+- [ ] **Step 2: Failing test** for the dialog (in `AddFeedDialog.test.ts`):
+
+```ts
+it('Subscribe calls api.addSubscription once with feed_url + category_id, then onAdded', async () => {
   vi.mocked(api.discoverFeeds).mockResolvedValue({ candidates: [{ title: 'X', feed_url: 'https://x/feed.xml', site_url: '', type: 'rss' }] });
-  vi.mocked(api.addSubscription).mockResolvedValue({ id: 99, …subFields });
-  vi.mocked(api.updateSubscription).mockResolvedValue(undefined);
+  vi.mocked(api.addSubscription).mockResolvedValue({ id: 99, /* …subFields… */ } as Subscription);
   const onAdded = vi.fn();
   render(AddFeedDialog, { props: { categories: [{ id: 3, name: 'People', unread: 0, created_at: 0 }], onClose: noop, onAdded } });
   await fireEvent.input(screen.getByPlaceholderText(/example.com/i), { target: { value: 'https://x' } });
   await fireEvent.click(screen.getByRole('button', { name: /look up/i }));
   await fireEvent.click(screen.getByRole('button', { name: /people/i }));
   await fireEvent.click(screen.getByRole('button', { name: /^subscribe$/i }));
-  expect(api.addSubscription).toHaveBeenCalledWith({ feed_url: 'https://x/feed.xml' });
-  expect(api.updateSubscription).toHaveBeenCalledWith(99, { category_id: 3 });
+  expect(api.addSubscription).toHaveBeenCalledOnce();
+  expect(api.addSubscription).toHaveBeenCalledWith({ feed_url: 'https://x/feed.xml', category_id: 3 });
   expect(onAdded).toHaveBeenCalledOnce();
+});
+
+it('Subscribe with Uncategorised omits category_id from the body', async () => {
+  vi.mocked(api.discoverFeeds).mockResolvedValue({ candidates: [{ title: 'X', feed_url: 'https://x/feed.xml', site_url: '', type: 'rss' }] });
+  vi.mocked(api.addSubscription).mockResolvedValue({ id: 99 } as Subscription);
+  render(AddFeedDialog, { props: { categories: [], onClose: noop, onAdded: vi.fn() } });
+  await fireEvent.input(screen.getByPlaceholderText(/example.com/i), { target: { value: 'https://x' } });
+  await fireEvent.click(screen.getByRole('button', { name: /look up/i }));
+  await fireEvent.click(screen.getByRole('button', { name: /^subscribe$/i }));
+  // Either the call has no category_id key at all, or it's explicitly null. Both are equivalent
+  // server-side (no membership in rawMap means no category change for POST). Prefer omission:
+  const callArg = vi.mocked(api.addSubscription).mock.calls[0][0];
+  expect(callArg).toEqual({ feed_url: 'https://x/feed.xml' });
 });
 
 it('Subscribe surfaces api.addSubscription errors inline', async () => {
@@ -1278,9 +1521,9 @@ it('Subscribe surfaces api.addSubscription errors inline', async () => {
 });
 ```
 
-- [ ] **Step 2: RED**
+- [ ] **Step 3: RED**
 
-- [ ] **Step 3: Implement** — Submit handler:
+- [ ] **Step 4: Implement** — single-call submit handler:
 
 ```ts
 async function subscribe() {
@@ -1288,10 +1531,9 @@ async function subscribe() {
   busy = true;
   error = null;
   try {
-    const sub = await api.addSubscription({ feed_url: picked.feed_url });
-    if (selectedCategory !== null) {
-      await api.updateSubscription(sub.id, { category_id: selectedCategory });
-    }
+    const body: Parameters<typeof api.addSubscription>[0] = { feed_url: picked.feed_url };
+    if (selectedCategory !== null) body.category_id = selectedCategory;
+    await api.addSubscription(body);
     onAdded();
   } catch (e) {
     error = (e as Error).message;
@@ -1301,9 +1543,7 @@ async function subscribe() {
 }
 ```
 
-(Why two calls instead of one? `POST /api/v1/subscriptions` does accept `category_id` per M9 — see `internal/api/subscriptions.go`. So this can collapse to one call. **Implementer's choice**: if extending the POST body in this dialog is easier than chaining, do so. Update the test to match.)
-
-- [ ] **Step 4: GREEN**
+- [ ] **Step 5: GREEN**
 
 - [ ] **Step 5: Commit**
 
@@ -1734,7 +1974,7 @@ Skeleton:
   import DeleteFeedsDialog from '../components/feeds/DeleteFeedsDialog.svelte';
   import ImportOpmlDialog from '../components/feeds/ImportOpmlDialog.svelte';
   import ExportOpmlDialog from '../components/feeds/ExportOpmlDialog.svelte';
-  import ReassignCategoryPopover from '../components/feeds/ReassignCategoryPopover.svelte';
+  import CategoryReassignPopover from '../components/CategoryReassignPopover.svelte';   // M4 ships this
   import EmptyState from '../components/EmptyState.svelte';
 
   let search = $state('');
@@ -1751,26 +1991,34 @@ Skeleton:
     | { type: 'delete'; feedIds: number[] }
     | { type: 'import' }
     | { type: 'export' }
-    | { type: 'reassign'; feedIds: number[] }
   >(null);
+  // 'reassign' is a popover (anchored, not a centered dialog); state lives separately — see below.
   let foot = $state<string | null>(null); // ephemeral status string from bulk ops
 
   onMount(() => {
     subscriptions.load();
     categories.load();
+    // Load *unread-only* entries so per-feed and chip counts have data on first
+    // paint. Without this, $entries.items is [] until the user navigates to
+    // /unread first, and every chip shows 0. See Risk #12 for the limit caveat.
+    entries.load(true);
   });
 
-  // Decorate subscriptions with computed unread counts. Reads from a
-  // store of unread counts per feed; the existing entriesStore doesn't
-  // expose this directly. Compute from $entries.items by feed_id, or load
-  // /api/v1/subscriptions which already returns per-feed counts (see types.ts).
-  // For M5 v1 use a simple counter:
   const decorated: FeedRow[] = $derived.by(() => {
     const now = Math.floor(Date.now() / 1000);
     return $subscriptions.map((s) => ({
       ...s,
       unread: countUnreadFor(s.id),
-      lastPollAgo: s.last_poll_at ? now - s.last_poll_at : Number.POSITIVE_INFINITY,
+      // Note: s.last_poll_at is a number (Subscription DTO declares
+      // last_poll_at?: number; in practice the server returns 0 for "never
+      // polled"). Treat 0 explicitly as never-polled so the Stale predicate
+      // doesn't compute (now - 0) seconds of age and flip every never-polled
+      // feed into Stale forever. JS `if (s.last_poll_at)` is wrong because
+      // 0 is falsy in the WRONG direction (we want it to mean +Infinity, not
+      // "use 0 as the timestamp").
+      lastPollAgo: (s.last_poll_at && s.last_poll_at > 0)
+        ? now - s.last_poll_at
+        : Number.POSITIVE_INFINITY,
     }));
   });
   const counts = $derived(countByKey(decorated));
@@ -1778,8 +2026,7 @@ Skeleton:
   const errorCount = $derived(counts.errors);
 
   function countUnreadFor(feedId: number): number {
-    // Naive O(n) over entries; entries are already in memory. Replace with a
-    // store-side memo if needed.
+    // O(n) over the (up to 100) unread entries already in memory. Cheap.
     let n = 0;
     for (const e of $entries.items) if (e.subscription_id === feedId && !e.read) n++;
     return n;
@@ -1856,16 +2103,24 @@ Skeleton:
       count={selected.size}
       onClear={() => { selected = new Set(); }}
       onRefresh={() => bulkRefresh([...selected])}
-      onReassign={() => { dialog = { type: 'reassign', feedIds: [...selected] }; }}
+      onReassign={(anchor) => openBulkReassign(anchor)}
       onDelete={() => { dialog = { type: 'delete', feedIds: [...selected] }; }}
     />
   {/if}
 
   <div class="ts-feeds-list">
     {#if visible.length === 0 && decorated.length === 0}
-      <EmptyState title="No feeds yet" subtitle="Add a feed by URL, or import an OPML export from another reader." cta="Add a feed" onCta={() => { dialog = { type: 'add' }; }} />
+      <EmptyState
+        title="No feeds yet"
+        sub="Add a feed by URL, or import an OPML export from another reader."
+        cta={{ label: 'Add a feed', onClick: () => { dialog = { type: 'add' }; } }}
+      />
     {:else if visible.length === 0}
-      <EmptyState title="No feeds match" subtitle="Nothing matches the current filter." cta="Reset filters" onCta={() => { search = ''; filter = 'all'; }} />
+      <EmptyState
+        title="No feeds match"
+        sub="Nothing matches the current filter."
+        cta={{ label: 'Reset filters', onClick: () => { search = ''; filter = 'all'; } }}
+      />
     {:else}
       {#each visible as feed (feed.id)}
         <FeedsListRow
@@ -1878,7 +2133,7 @@ Skeleton:
           onToggleSelect={() => { selected.has(feed.id) ? selected.delete(feed.id) : selected.add(feed.id); selected = new Set(selected); }}
           onToggleExpand={() => { expanded.has(feed.id) ? expanded.delete(feed.id) : expanded.add(feed.id); expanded = new Set(expanded); }}
           onRefresh={() => refreshOne(feed.id)}
-          onChangeCategory={() => { dialog = { type: 'reassign', feedIds: [feed.id] }; }}
+          onChangeCategory={(anchor) => openReassignForFeed(feed, anchor)}
           onEdit={() => { dialog = { type: 'edit', feedId: feed.id }; }}
           onDelete={() => { dialog = { type: 'delete', feedIds: [feed.id] }; }}
         />
@@ -1916,15 +2171,57 @@ Skeleton:
 {#if dialog?.type === 'export'}
   <ExportOpmlDialog feedCount={decorated.length} categoryCount={$categories.length} onClose={() => { dialog = null; }} />
 {/if}
-{#if dialog?.type === 'reassign'}
-  <ReassignCategoryPopover
+{#if reassign.open}
+  <CategoryReassignPopover
+    open={reassign.open}
+    anchor={reassign.anchor}
+    feedName={reassign.feedName}
+    currentCategoryId={reassign.currentCategoryId}
     categories={$categories}
-    currentId={dialog.feedIds.length === 1 ? $subscriptions.find((x) => x.id === dialog.feedIds[0])?.category_id ?? null : null}
-    onPick={(catId) => bulkReassign(dialog.feedIds, catId)}
-    onDismiss={() => { dialog = null; }}
+    label={reassign.label}
+    onPick={(catId) => { reassign.onPick(catId); reassign.open = false; }}
+    onClose={() => { reassign.open = false; }}
   />
 {/if}
 ```
+
+Reassign state (lifted from the per-row + bulk patterns in Task 7) lives at view scope alongside the other view state:
+
+```ts
+let reassign = $state<{
+  open: boolean;
+  anchor: HTMLElement | null;
+  feedName: string;
+  currentCategoryId: number | null;
+  label: 'Move' | 'Assign';
+  onPick: (id: number | null) => void;
+}>({ open: false, anchor: null, feedName: '', currentCategoryId: null, label: 'Move', onPick: () => {} });
+
+// Per-row reassign — wired from FeedsListRow's onChangeCategory(anchorEl):
+function openReassignForFeed(feed: FeedRow, anchor: HTMLElement) {
+  reassign = {
+    open: true, anchor,
+    feedName: feed.title,
+    currentCategoryId: feed.category_id,
+    label: feed.category_id == null ? 'Assign' : 'Move',
+    onPick: (id) => { void subscriptions.setCategory(feed.id, id); },
+  };
+}
+
+// Bulk reassign — wired from FeedsBulkBar's onReassign(anchorEl):
+function openBulkReassign(anchor: HTMLElement) {
+  const ids = [...selected];
+  reassign = {
+    open: true, anchor,
+    feedName: `${ids.length} feeds`,
+    currentCategoryId: null,
+    label: 'Assign',
+    onPick: (id) => { void bulkReassign(ids, id); },
+  };
+}
+```
+
+Because the popover needs an anchor element ref, `FeedsListRow` exposes `onChangeCategory(anchor: HTMLElement)` (the row binds the chip element via `bind:this` and passes it to the callback). Similarly `FeedsBulkBar` exposes `onReassign(anchor: HTMLElement)`. Update Task 5.1 and Task 6 callback signatures accordingly — the prop type for `onChangeCategory` changes from `() => void` to `(anchor: HTMLElement) => void`.
 
 #### Task 12.1: View test — renders + dispatches dialog opens
 
@@ -2235,7 +2532,7 @@ The page is "done" when **every** bullet below is true.
 ### Bulk bar
 - Renders only when `selected.size > 0`.
 - `.ts-feeds-bulk` strip (solid `--ink` / `--bg-soft` in dark) with `N selected`, `clear`, Refresh, Set category, Delete.
-- Set category opens `ReassignCategoryPopover`.
+- Set category opens M4's `CategoryReassignPopover` anchored to the Set-category button.
 - Delete opens `DeleteFeedsDialog` with the selected ids.
 - After a bulk op, the selection clears and a status string appears in `.ts-feeds-foot`.
 
@@ -2368,7 +2665,9 @@ This is the only backend change. Risk: the M9/M11 scheduler reads `next_poll_at`
 
 ### 4. Categories ordering coupling with M-Redesign-4
 
-If M-Redesign-4 lands `position` on `categories` and `api.listCategories()` starts returning them ordered, the Feeds page benefits automatically because the only place it shows categories is in dropdown chip lists where order is deferred to the API. If M4 ships before this milestone, no change here. If M4 ships after, no change either. **Risk:** if M4 also reuses `ReassignCategoryPopover` (likely), the two milestones must agree on the props shape. This plan owns the popover; M4 should consume it as-is.
+If M-Redesign-4 lands `position` on `categories` and `api.listCategories()` starts returning them ordered, the Feeds page benefits automatically because the only place it shows categories is in dropdown chip lists where order is deferred to the API. If M4 ships before this milestone, no change here. If M4 ships after, no change either.
+
+**Popover ownership resolved (2026-05-11):** Team-lead decided that the reassign popover is a cross-milestone shared composite. **M4 owns** `web/src/components/CategoryReassignPopover.svelte`; M5 consumes it. Public contract is frozen by M4 (Task 7). Risk shifts from "two duplicate components diverge" (resolved) to "M4 ships a contract diff post-merge" (low; the M4 PR is approved with the contract pinned, and svelte-check would catch a rename at build).
 
 ### 5. Group-by-category toggle in the JSX is out of scope
 
@@ -2388,7 +2687,9 @@ Existing pattern (`store.ts:97`) calls `notifySW({ type: 'invalidate', paths: [.
 
 ### 9. The "Stale" filter chip's predicate is debatable
 
-This plan defines `stale` as "last successful poll > 7 days ago AND not currently in error backoff." This is one reasonable interpretation; the brand spec doesn't pin it down. Alternatives: "stale = no new entries in 30 days regardless of error state" (data-driven) or "stale = scheduler-flagged" (would need server support). The 7-day heuristic is the cheapest, most-correct-for-most-users choice. If users complain, retune `STALE_THRESHOLD_SECONDS`.
+This plan defines `stale` as "last successful poll > 7 days ago AND not currently in error backoff." This is one reasonable interpretation; the brand spec doesn't pin it down. Alternatives: "stale = no new entries in 30 days regardless of error state" (data-driven) or "stale = scheduler-flagged" (would need server support). The 7-day heuristic is the cheapest, most-correct-for-most-users choice.
+
+**Confirmed for the record:** `STALE_THRESHOLD_SECONDS` is **tuning, not API**. Changing the constant changes which feeds the chip surfaces, but requires no migration, no DB change, no re-render of stored data, no cache invalidation. Future tweaks to the value are a one-line constant change in `web/src/lib/feedsFilter.ts`. Don't be precious about getting the initial value right.
 
 ### 10. Mobile bulk bar covers the FAB
 
@@ -2396,7 +2697,21 @@ When the bulk bar is open on mobile, it sits at `bottom: env(safe-area-inset-bot
 
 ### 11. Browser-native `<select>` for sort doesn't match design exactly
 
-The CSS rule for `.ts-feeds-sort-select` uses native `<select>` with a CSS-drawn caret. This is fine for keyboard + accessibility. Alternative: implement a custom dropdown via M1 `Popover`. Cost: extra component + tests. Defer; the native version satisfies the design intent at minimum effort.
+The CSS rule for `.ts-feeds-sort-select` uses native `<select>` with a CSS-drawn caret. This is fine for keyboard + accessibility. Alternative: implement a custom dropdown via M1 `Popover`. Cost: extra component + tests. Defer; the native version satisfies the design intent at minimum effort. Confirm with user during visual review; the JSX uses a custom `.ts-feeds-sort-menu` (`styles.css:4846-4900`) and may want a closer match. Not a blocker.
+
+### 12. Per-feed unread counts come from in-memory entries — limit 100, unread-only
+
+The `Subscription` DTO has no `unread_count` field (`web/src/lib/types.ts:1-16`). The Feeds page computes per-feed unread from `$entries.items`. To make this work on first paint without forcing the user to visit `/unread` first, `Feeds.svelte` calls `entries.load(true)` on mount alongside `subscriptions.load()` and `categories.load()`. The existing store implementation (`web/src/lib/store.ts:15-23`) hard-codes `limit: 100`, unread-only.
+
+**Implications:**
+
+- On accounts with > 100 unread entries spread across many feeds, the "Unread (N)" chip on each row and the filter-chip count under-report. The visible-list ordering by "Most unread" sort key will be skewed for the same reason.
+- The `entries.load(true)` adds one API round-trip to the `/feeds` page load. Cheap; mirrors what `/unread` already does on every mount.
+- This is **not** a correctness problem for the typical Tap account (small N, < 100 unread). It is a correctness problem above that scale.
+
+**Future fix path (out of scope for M5):** add `unread_count int64` to the subscription DTO server-side, sourced from a `SELECT subscription_id, COUNT(*) FROM entries WHERE read = 0 GROUP BY subscription_id` co-loaded with `ListSubscriptions`. The Feeds page would then ignore `$entries` entirely. M5 documents the gap; a follow-up milestone owns the fix.
+
+**Decision rule for now:** if a user complains that counts are wrong on their account, the fix is the server-side `unread_count` field, not raising the entries `limit`. Don't tune the limit.
 
 ---
 
