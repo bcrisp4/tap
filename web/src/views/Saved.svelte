@@ -69,30 +69,18 @@
   <SavedToolbar count={items.length} />
   <ul class="list" role="list" aria-label="Saved entries">
     {#each items as entry (entry.id)}
+      {@const RowComponent = $isMobile ? SavedMobileRow : SavedRow}
       <li>
-        {#if $isMobile}
-          <SavedMobileRow
-            {entry}
-            feed={feedFor(entry.subscription_id)}
-            isFocused={focusedId === entry.id}
-            onFocus={() => (focusedId = entry.id)}
-            onMouseEnter={() => (focusedId = entry.id)}
-            onOpen={() => navigate(`/entry/${entry.id}`)}
-            onUnsave={() => entries.toggleSaved(entry.id, false)}
-            onToggleRead={() => entries.toggleRead(entry.id, !entry.read)}
-          />
-        {:else}
-          <SavedRow
-            {entry}
-            feed={feedFor(entry.subscription_id)}
-            isFocused={focusedId === entry.id}
-            onFocus={() => (focusedId = entry.id)}
-            onMouseEnter={() => (focusedId = entry.id)}
-            onOpen={() => navigate(`/entry/${entry.id}`)}
-            onUnsave={() => entries.toggleSaved(entry.id, false)}
-            onToggleRead={() => entries.toggleRead(entry.id, !entry.read)}
-          />
-        {/if}
+        <RowComponent
+          {entry}
+          feed={feedFor(entry.subscription_id)}
+          isFocused={focusedId === entry.id}
+          onFocus={() => (focusedId = entry.id)}
+          onMouseEnter={() => (focusedId = entry.id)}
+          onOpen={() => navigate(`/entry/${entry.id}`)}
+          onUnsave={() => entries.toggleSaved(entry.id, false)}
+          onToggleRead={() => entries.toggleRead(entry.id, !entry.read)}
+        />
       </li>
     {/each}
   </ul>
