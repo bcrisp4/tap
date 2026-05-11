@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Tap — Login</title>
+<link rel="stylesheet" href="styles.css" />
+<link rel="stylesheet" href="tap-login.css" />
+<style>
+  html, body, #root { height: 100%; }
+  body {
+    margin: 0;
+    font-family: "Inter Tight", system-ui, sans-serif;
+    background: #ececea;
+    color: #1a1a1a;
+  }
+  .canvas-bg { background: #ececea; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="design-canvas.jsx"></script>
+<script type="text/babel" src="ios-frame.jsx"></script>
+<script type="text/babel" src="browser-window.jsx"></script>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+<script type="text/babel" src="tap-login.jsx"></script>
+
+<script type="text/babel" data-presets="env,react">
+const { useState } = React;
+
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "showSplit": true,
+  "primaryEmail": "ada@example.com"
+}/*EDITMODE-END*/;
+
+function DesktopLoginFrame({ theme = 'light', mode = 'password', error = null, email = 'ada@example.com', height = 720 }) {
+  return (
+    <ChromeWindow
+      url={`tap.local/sign-in${mode !== 'password' ? '?step=' + mode : ''}`}
+      width={1180}
+      height={height}
+      tabs={[{ title: 'Tap — Sign in' }]}
+      activeIndex={0}
+    >
+      <div style={{ width: '100%', height: '100%' }}>
+        <TapLoginDesktop theme={theme} mode={mode} error={error} email={email} />
+      </div>
+    </ChromeWindow>
+  );
+}
+
+function MobileLoginFrame({ theme = 'light', mode = 'password', error = null, email = 'ada@example.com' }) {
+  return (
+    <IOSDevice width={390} height={830} dark={theme === 'dark'}>
+      <TapLoginMobile theme={theme} mode={mode} error={error} email={email} />
+    </IOSDevice>
+  );
+}
+
+function App() {
+  const [tweaks, setTweak] = useTweaks(TWEAK_DEFAULTS);
+  return (
+    <div className="canvas-bg" style={{ width: '100%', height: '100%' }}>
+      <DesignCanvas
+        title="Tap — Sign in"
+        subtitle={
+          <span>
+            One column, three themes. Email + password is the default; passkey and magic-link paths share the same form shell.
+            <span style={{ marginLeft: 12, color: '#9b9b95', fontFamily: 'JetBrains Mono, monospace', fontSize: 11 }}>
+              wordmark · mono eyebrow · serif title · hairlines · Klein-Blue accent
+            </span>
+          </span>
+        }
+      >
+        <DCSection
+          id="desktop-default"
+          title="Desktop · Default"
+          subtitle="Centered single column, ~380px form. Wordmark and tap.local tag in the top strip. Email + password, with passkey as a quiet alternative."
+        >
+          <DCArtboard id="d-light" label="A · Light" width={1180} height={720}>
+            <DesktopLoginFrame theme="light" mode="password" />
+          </DCArtboard>
+          <DCArtboard id="d-sepia" label="B · Sepia" width={1180} height={720}>
+            <DesktopLoginFrame theme="sepia" mode="password" />
+          </DCArtboard>
+          <DCArtboard id="d-dark" label="C · Dark" width={1180} height={720}>
+            <DesktopLoginFrame theme="dark" mode="password" />
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection
+          id="desktop-modes"
+          title="Desktop · Alternate auth paths"
+          subtitle="The same shell, different first action. Passkey-first lifts the device above the form; magic-link drops the password field entirely."
+        >
+          <DCArtboard id="m-passkey" label="A · Passkey-first" width={1180} height={720}>
+            <DesktopLoginFrame theme="light" mode="passkey" />
+          </DCArtboard>
+          <DCArtboard id="m-magic" label="B · Magic link · sepia" width={1180} height={720}>
+            <DesktopLoginFrame theme="sepia" mode="magic" />
+          </DCArtboard>
+          <DCArtboard id="m-otp" label="C · 2-step (TOTP) · dark" width={1180} height={720}>
+            <DesktopLoginFrame theme="dark" mode="otp" />
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection
+          id="desktop-states"
+          title="Desktop · States"
+          subtitle="Error chip slots above the fields, matching .ts-dialog-warn. Empty/loading uses the standard polling pulse pattern at the bottom."
+        >
+          <DCArtboard id="st-error" label="A · Wrong password" width={1180} height={720}>
+            <DesktopLoginFrame
+              theme="light"
+              mode="password"
+              error={<>That password doesn’t match. <strong>2 attempts left</strong> before a 10-minute cooldown.</>}
+            />
+          </DCArtboard>
+          <DCArtboard id="st-otp-error" label="B · 2-step · invalid code" width={1180} height={720}>
+            <DesktopLoginFrame
+              theme="light"
+              mode="otp"
+              error={<>Code didn’t match. Try again, or use a recovery code.</>}
+            />
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection
+          id="mobile-default"
+          title="Mobile · Default"
+          subtitle="Same components, scaled. 50px status-bar inset, ≥44px hit targets, no keyboard hints (touch users don’t use them)."
+        >
+          <DCArtboard id="mb-light" label="A · Light" width={390} height={860}>
+            <MobileLoginFrame theme="light" mode="password" />
+          </DCArtboard>
+          <DCArtboard id="mb-sepia" label="B · Sepia" width={390} height={860}>
+            <MobileLoginFrame theme="sepia" mode="password" />
+          </DCArtboard>
+          <DCArtboard id="mb-dark" label="C · Dark" width={390} height={860}>
+            <MobileLoginFrame theme="dark" mode="password" />
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection
+          id="mobile-modes"
+          title="Mobile · Alternate paths"
+          subtitle="Passkey-first, magic link, and the two-step challenge — each phone-sized."
+        >
+          <DCArtboard id="mb-passkey" label="A · Passkey · light" width={390} height={860}>
+            <MobileLoginFrame theme="light" mode="passkey" />
+          </DCArtboard>
+          <DCArtboard id="mb-magic" label="B · Magic link · sepia" width={390} height={860}>
+            <MobileLoginFrame theme="sepia" mode="magic" />
+          </DCArtboard>
+          <DCArtboard id="mb-otp" label="C · 2-step · dark" width={390} height={860}>
+            <MobileLoginFrame theme="dark" mode="otp" />
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection
+          id="mobile-states"
+          title="Mobile · Error state"
+          subtitle="Same .tl-error chip, full bleed in the form column."
+        >
+          <DCArtboard id="mb-error" label="A · Wrong password" width={390} height={860}>
+            <MobileLoginFrame
+              theme="light"
+              mode="password"
+              error={<>That password doesn’t match. <strong>2 attempts left</strong>.</>}
+            />
+          </DCArtboard>
+        </DCSection>
+      </DesignCanvas>
+
+      <TweaksPanel title="Tweaks">
+        <TweakSection title="Identity">
+          <TweakText
+            label="Default email"
+            value={tweaks.primaryEmail}
+            onChange={(v) => setTweak('primaryEmail', v)}
+          />
+        </TweakSection>
+      </TweaksPanel>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Tap — Mobile</title>
+<link rel="stylesheet" href="styles.css" />
+<style>
+  html, body, #root { height: 100%; }
+  body {
+    margin: 0;
+    font-family: "Inter Tight", system-ui, sans-serif;
+    background: #ececea;
+    color: #1a1a1a;
+  }
+  .canvas-bg { background: #ececea; }
+  .cap {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 11px;
+    color: #6e6e6a;
+    letter-spacing: 0.04em;
+  }
+  .sw-light { background: #fafaf7; border-color: #d8d8d2 !important; }
+  .sw-dark  { background: #0d0d0e; border-color: #2c2c2e !important; }
+  .sw-sepia { background: #f4ecd8; border-color: #d9cca8 !important; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script src="data.js"></script>
+<script type="text/babel" src="design-canvas.jsx"></script>
+<script type="text/babel" src="ios-frame.jsx"></script>
+<script type="text/babel" src="browser-window.jsx"></script>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+<script type="text/babel" src="tap-components.jsx"></script>
+<script type="text/babel" src="tap-mobile-nav.jsx"></script>
+<script type="text/babel" src="tap-reader.jsx"></script>
+<script type="text/babel" src="tap-categories.jsx"></script>
+<script type="text/babel" src="tap-categories-page.jsx"></script>
+<script type="text/babel" src="tap-feeds-page.jsx"></script>
+<script type="text/babel" src="tap-simple.jsx"></script>
+<script type="text/babel" src="tap-settings.jsx"></script>
+<script type="text/babel" src="tap-saved.jsx"></script>
+<script type="text/babel" src="tap-admin.jsx"></script>
+
+<script type="text/babel" data-presets="env,react">
+const { useState } = React;
+
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "fontMode": "serif",
+  "showSummary": true,
+  "grouped": true,
+  "density": "default"
+}/*EDITMODE-END*/;
+
+function MobileFrame({ theme, fontMode }) {
+  return (
+    <IOSDevice width={390} height={830} dark={theme === 'dark'}>
+      <TapSimpleMobile
+        entries={window.TAP_ENTRIES}
+        feeds={window.TAP_FEEDS}
+        theme={theme}
+        fontMode={fontMode}
+      />
+    </IOSDevice>
+  );
+}
+
+function CategoriesMobileFrame({ theme, fontMode, force = {} }) {
+  return (
+    <IOSDevice width={390} height={830} dark={theme === 'dark'}>
+      <TSCategoriesMobile
+        categories={window.TAP_CATEGORIES}
+        feeds={window.TAP_FEEDS}
+        entries={window.TAP_ENTRIES}
+        theme={theme}
+        fontMode={fontMode}
+        force={force}
+      />
+    </IOSDevice>
+  );
+}
+
+function SavedMobileFrame({ theme, fontMode, force = {} }) {
+  return (
+    <IOSDevice width={390} height={830} dark={theme === 'dark'}>
+      <TapSavedMobile
+        entries={window.TAP_ENTRIES}
+        feeds={window.TAP_FEEDS}
+        theme={theme}
+        fontMode={fontMode}
+        force={force}
+      />
+    </IOSDevice>
+  );
+}
+
+function ReaderMobileFrame({ theme, fontMode, entryId = 101, sourceList = "Unread" }) {
+  return (
+    <IOSDevice width={390} height={830} dark={theme === 'dark'}>
+      <TapSimpleReaderMobile
+        entries={window.TAP_ENTRIES}
+        feeds={window.TAP_FEEDS}
+        entryId={entryId}
+        theme={theme}
+        fontMode={fontMode}
+        sourceList={sourceList}
+      />
+    </IOSDevice>
+  );
+}
+
+function App() {
+  const [tweaks, setTweak] = useTweaks(TWEAK_DEFAULTS);
+  const { fontMode } = tweaks;
+
+  return (
+    <div className="canvas-bg" style={{ width: '100%', height: '100%' }}>
+      <DesignCanvas
+        title="Tap — Mobile"
+        subtitle={
+          <span>
+            iOS PWA. Same shell, narrower. Sheet-based edit flows, swipe row actions.
+            <span style={{ marginLeft: 12, color: '#9b9b95', fontFamily: 'JetBrains Mono, monospace', fontSize: 11 }}>
+              desktop views live in “Tap Desktop.html”
+            </span>
+          </span>
+        }
+      >
+        <DCSection
+          id="mobile"
+          title="Mobile · iOS PWA"
+          subtitle="Same shell, narrower. Tabs scroll horizontally."
+        >
+          <DCArtboard id="m-light" label="A · Light" width={420} height={870}>
+            <MobileFrame theme="light" fontMode={fontMode} />
+          </DCArtboard>
+          <DCArtboard id="m-sepia" label="B · Sepia" width={420} height={870}>
+            <MobileFrame theme="sepia" fontMode={fontMode} />
+          </DCArtboard>
+          <DCArtboard id="m-dark" label="C · Dark" width={420} height={870}>
+            <MobileFrame theme="dark" fontMode={fontMode} />
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection
+          id="saved-mobile"
+          title="Mobile · Saved"
+          subtitle="Horizontal swipe surfaces row actions: left reveals Unsave (destructive, accent fill); right reveals Mark read."
+        >
+          <DCArtboard id="sv-m-light" label="A · Default · light" width={420} height={870}>
+            <SavedMobileFrame theme="light" fontMode={fontMode} />
+          </DCArtboard>
+          <DCArtboard id="sv-m-unsave" label="B · Swipe-left · Unsave revealed" width={420} height={870}>
+            <SavedMobileFrame theme="light" fontMode={fontMode} force={{ swipe: { id: 107, dir: "left" } }} />
+          </DCArtboard>
+          <DCArtboard id="sv-m-markread" label="C · Swipe-right · Mark read revealed" width={420} height={870}>
+            <SavedMobileFrame theme="sepia" fontMode={fontMode} force={{ swipe: { id: 102, dir: "right" } }} />
+          </DCArtboard>
+          <DCArtboard id="sv-m-dark" label="D · Dark" width={420} height={870}>
+            <SavedMobileFrame theme="dark" fontMode={fontMode} />
+          </DCArtboard>
+          <DCArtboard id="sv-m-empty" label="E · Empty state" width={420} height={870}>
+            <SavedMobileFrame theme="light" fontMode={fontMode} force={{ empty: true }} />
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection
+          id="categories-mobile"
+          title="Mobile · Categories"
+          subtitle="Same data, stacked. Move feeds via a bottom sheet."
+        >
+          <DCArtboard id="cat-m-default" label="A · Default" width={420} height={870}>
+            <CategoriesMobileFrame theme="light" fontMode={fontMode} />
+          </DCArtboard>
+          <DCArtboard id="cat-m-sheet" label="B · Move-feed sheet" width={420} height={870}>
+            <CategoriesMobileFrame theme="light" fontMode={fontMode} force={{ sheetFor: 7 }} />
+          </DCArtboard>
+          <DCArtboard id="cat-m-dark" label="C · Dark · sheet" width={420} height={870}>
+            <CategoriesMobileFrame theme="dark" fontMode={fontMode} force={{ sheetFor: 4 }} />
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection
+          id="feeds-mobile"
+          title="Mobile · Feeds"
+          subtitle="Same list, one column. Sheet-based edit/add."
+        >
+          <DCArtboard id="feeds-m-default" label="A · Default · light" width={420} height={870}>
+            <FeedsMobileFrame theme="light" fontMode={fontMode} />
+          </DCArtboard>
+          <DCArtboard id="feeds-m-edit" label="B · Edit sheet" width={420} height={870}>
+            <FeedsMobileFrame theme="light" fontMode={fontMode} force={{ sheet: "edit" }} />
+          </DCArtboard>
+          <DCArtboard id="feeds-m-add" label="C · Add sheet · dark" width={420} height={870}>
+            <FeedsMobileFrame theme="dark" fontMode={fontMode} force={{ sheet: "add" }} />
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection
+          id="reader-mobile"
+          title="Mobile · Article reader"
+          subtitle="Single column. Horizontal swipe navigates between entries in the originating list (e.g. opened from Unread → swipes through unread entries)."
+        >
+          <DCArtboard id="r-m-light" label="A · Opened from Unread · light" width={420} height={870}>
+            <ReaderMobileFrame theme="light" fontMode={fontMode} sourceList="Unread" entryId={101} />
+          </DCArtboard>
+          <DCArtboard id="r-m-sepia" label="B · Opened from Saved · sepia" width={420} height={870}>
+            <ReaderMobileFrame theme="sepia" fontMode={fontMode} sourceList="Saved" entryId={102} />
+          </DCArtboard>
+          <DCArtboard id="r-m-dark" label="C · Opened from History · dark" width={420} height={870}>
+            <ReaderMobileFrame theme="dark" fontMode={fontMode} sourceList="History" entryId={103} />
+          </DCArtboard>
+        </DCSection>
+      </DesignCanvas>
+
+      <TweaksPanel title="Tweaks">
+        <TweakSection title="Reading">
+          <TweakRadio
+            label="Font"
+            value={fontMode}
+            options={[
+              { value: 'serif', label: 'Serif' },
+              { value: 'sans', label: 'Sans' },
+            ]}
+            onChange={(v) => setTweak('fontMode', v)}
+          />
+        </TweakSection>
+      </TweaksPanel>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

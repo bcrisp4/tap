@@ -1,0 +1,563 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Tap — Desktop</title>
+<link rel="stylesheet" href="styles.css" />
+<style>
+  html, body, #root { height: 100%; }
+  body {
+    margin: 0;
+    font-family: "Inter Tight", system-ui, sans-serif;
+    background: #ececea;
+    color: #1a1a1a;
+  }
+  .canvas-bg { background: #ececea; }
+  .cap {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 11px;
+    color: #6e6e6a;
+    letter-spacing: 0.04em;
+  }
+  .sw-light { background: #fafaf7; border-color: #d8d8d2 !important; }
+  .sw-dark  { background: #0d0d0e; border-color: #2c2c2e !important; }
+  .sw-sepia { background: #f4ecd8; border-color: #d9cca8 !important; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script src="data.js"></script>
+<script type="text/babel" src="design-canvas.jsx"></script>
+<script type="text/babel" src="ios-frame.jsx"></script>
+<script type="text/babel" src="browser-window.jsx"></script>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+<script type="text/babel" src="tap-components.jsx"></script>
+<script type="text/babel" src="tap-mobile-nav.jsx"></script>
+<script type="text/babel" src="tap-reader.jsx"></script>
+<script type="text/babel" src="tap-categories.jsx"></script>
+<script type="text/babel" src="tap-categories-page.jsx"></script>
+<script type="text/babel" src="tap-feeds-page.jsx"></script>
+<script type="text/babel" src="tap-simple.jsx"></script>
+<script type="text/babel" src="tap-settings.jsx"></script>
+<script type="text/babel" src="tap-saved.jsx"></script>
+<script type="text/babel" src="tap-admin.jsx"></script>
+
+<script type="text/babel" data-presets="env,react">
+const { useState } = React;
+
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "fontMode": "serif",
+  "showSummary": true,
+  "grouped": true,
+  "density": "default"
+}/*EDITMODE-END*/;
+
+function SettingsFrame({ theme, fontMode, density = "default", totp = "off", admin = false, overlay = null, height = 760 }) {
+  return (
+    <ChromeWindow
+      url={`tap.local/settings${overlay ? '#' + overlay : ''}`}
+      width={1180}
+      height={height}
+      tabs={[{ title: 'Tap — Settings' }, { title: 'lobste.rs' }]}
+      activeIndex={0}
+    >
+      <div style={{ width: '100%', height: '100%', position: 'relative', overflow: 'hidden' }}>
+        <div className={`tap theme-${theme} ts-root`} style={fontMode === 'sans' ? { fontFamily: 'var(--sans)' } : {}}>
+          <div className="ts-shell" style={{ position: 'relative', minHeight: '100%' }}>
+            <TopTabs active="settings" unreadCount={12} onNav={() => {}} />
+            <main className="ts-main">
+              <TapSettings
+                theme={theme}
+                fontMode={fontMode}
+                density={density}
+                totp={totp}
+                admin={admin}
+                overlay={overlay}
+              />
+            </main>
+            {admin && (
+              <footer className="ts-admin-footer">
+                <span className="ts-admin-footer-l">tap.local · v1.4.2</span>
+                <span className="grow"></span>
+                <button type="button" className="ts-admin-footer-link">
+                  <span className="ts-admin-footer-dot" aria-hidden="true"></span>
+                  <span>admin →</span>
+                </button>
+              </footer>
+            )}
+          </div>
+        </div>
+      </div>
+    </ChromeWindow>
+  );
+}
+
+function AdminFrame({ theme = "light", fontMode = "serif", overlay = null, overlayUser = null, highlightId = null, live = true, expandedErrors = false, height = 1700 }) {
+  return (
+    <ChromeWindow
+      url={`tap.local/admin${overlay ? '#' + overlay : ''}`}
+      width={1180}
+      height={height}
+      tabs={[{ title: 'Tap — Admin' }, { title: 'lobste.rs' }]}
+      activeIndex={0}
+    >
+      <div style={{ width: '100%', height: '100%', position: 'relative', overflow: 'hidden' }}>
+        <div className={`tap theme-${theme} ts-root`} style={fontMode === 'sans' ? { fontFamily: 'var(--sans)' } : {}}>
+          <div className="ts-shell ts-shell-admin" style={{ position: 'relative', minHeight: '100%' }}>
+            <TopTabs active="settings" unreadCount={12} onNav={() => {}} />
+            <main className="ts-main">
+              <TapAdmin
+                theme={theme}
+                fontMode={fontMode}
+                overlay={overlay}
+                overlayUser={overlayUser}
+                highlightId={highlightId}
+                live={live}
+                expandedErrors={expandedErrors}
+              />
+            </main>
+            <footer className="ts-admin-footer">
+              <span className="ts-admin-footer-l">tap.local · v1.4.2 · uptime 14d 06h</span>
+              <span className="grow"></span>
+              <button type="button" className="ts-admin-footer-link is-active">
+                <span className="ts-admin-footer-dot" aria-hidden="true"></span>
+                <span>admin</span>
+              </button>
+              <span style={{ color: 'var(--ink-4)' }}>·</span>
+              <button type="button" className="ts-admin-footer-link">← back to Settings</button>
+            </footer>
+          </div>
+        </div>
+      </div>
+    </ChromeWindow>
+  );
+}
+
+function DesktopFrame({ theme, fontMode, showSummary, view = "unread", grouped = true }) {
+  return (
+    <ChromeWindow
+      url={`tap.local/${view === 'unread' ? '' : view}`}
+      width={1180}
+      height={760}
+      tabs={[{ title: `Tap — ${view[0].toUpperCase() + view.slice(1)}` }, { title: "lobste.rs" }]}
+      activeIndex={0}
+    >
+      <div style={{ width: '100%', height: '100%' }}>
+        <TapSimple
+          entries={window.TAP_ENTRIES}
+          feeds={window.TAP_FEEDS}
+          theme={theme}
+          fontMode={fontMode}
+          showSummary={showSummary}
+          view={view}
+          grouped={grouped}
+        />
+      </div>
+    </ChromeWindow>
+  );
+}
+
+function CategoriesDesktopFrame({ theme, fontMode, force = {}, height = 1100 }) {
+  return (
+    <ChromeWindow
+      url={`tap.local/categories`}
+      width={1180}
+      height={height}
+      tabs={[{ title: 'Tap — Categories' }, { title: 'lobste.rs' }]}
+      activeIndex={0}
+    >
+      <div style={{ width: '100%', height: '100%', position: 'relative', overflow: 'hidden' }}>
+        <TSCategoriesPage
+          categories={window.TAP_CATEGORIES}
+          feeds={window.TAP_FEEDS}
+          entries={window.TAP_ENTRIES}
+          theme={theme}
+          fontMode={fontMode}
+          force={force}
+        />
+      </div>
+    </ChromeWindow>
+  );
+}
+
+function SavedDesktopFrame({ theme, fontMode, showSummary = true, force = {}, height = 760 }) {
+  return (
+    <ChromeWindow
+      url={`tap.local/saved`}
+      width={1180}
+      height={height}
+      tabs={[{ title: 'Tap \u2014 Saved' }, { title: 'lobste.rs' }]}
+      activeIndex={0}
+    >
+      <div style={{ width: '100%', height: '100%' }}>
+        <TapSavedDesktop
+          entries={window.TAP_ENTRIES}
+          feeds={window.TAP_FEEDS}
+          theme={theme}
+          fontMode={fontMode}
+          showSummary={showSummary}
+          force={force}
+        />
+      </div>
+    </ChromeWindow>
+  );
+}
+
+function ReaderDesktopFrame({ theme, fontMode }) {
+  return (
+    <ChromeWindow
+      url={`tap.local/entry/101`}
+      width={1180}
+      height={760}
+      tabs={[{ title: "Reasons why bugs might feel “impossible” · Tap" }]}
+      activeIndex={0}
+    >
+      <div style={{ width: '100%', height: '100%' }}>
+        <TapSimpleReader
+          entries={window.TAP_ENTRIES}
+          feeds={window.TAP_FEEDS}
+          entryId={101}
+          theme={theme}
+          fontMode={fontMode}
+        />
+      </div>
+    </ChromeWindow>
+  );
+}
+
+function App() {
+  const [tweaks, setTweak] = useTweaks(TWEAK_DEFAULTS);
+  const { fontMode, showSummary, grouped } = tweaks;
+
+  return (
+    <div className="canvas-bg" style={{ width: '100%', height: '100%' }}>
+      <DesignCanvas
+        title="Tap — Desktop"
+        subtitle={
+          <span>
+            Centered single-column. Top tabs, no sidebar. Three themes — light, sepia, dark.
+            <span style={{ marginLeft: 12, color: '#9b9b95', fontFamily: 'JetBrains Mono, monospace', fontSize: 11 }}>
+              j/k navigate · m mark · s save (in any desktop frame) · mobile views live in “Tap Mobile.html”
+            </span>
+          </span>
+        }
+      >
+        <DCSection
+          id="desktop-unread"
+          title="Desktop · Unread"
+          subtitle="The main reading view. Wordmark left, six tabs, list grouped by day."
+        >
+          <DCArtboard id="d-light" label="A · Light" width={1180} height={760}>
+            <DesktopFrame theme="light" fontMode={fontMode} showSummary={showSummary} grouped={grouped} view="unread" />
+          </DCArtboard>
+          <DCArtboard id="d-sepia" label="B · Sepia" width={1180} height={760}>
+            <DesktopFrame theme="sepia" fontMode={fontMode} showSummary={showSummary} grouped={grouped} view="unread" />
+          </DCArtboard>
+          <DCArtboard id="d-dark" label="C · Dark" width={1180} height={760}>
+            <DesktopFrame theme="dark" fontMode={fontMode} showSummary={showSummary} grouped={grouped} view="unread" />
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection
+          id="desktop-other-tabs"
+          title="Desktop · Other tabs"
+          subtitle="History and management tabs share the same shell."
+        >
+          <DCArtboard id="d-history" label="A · History (empty)" width={1180} height={760}>
+            <DesktopFrame theme="light" fontMode={fontMode} showSummary={showSummary} grouped={grouped} view="history" />
+          </DCArtboard>
+          <DCArtboard id="d-settings" label="B · Settings (overview)" width={1180} height={760}>
+            <SettingsFrame theme="light" fontMode={fontMode} density={tweaks.density} totp="off" />
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection
+          id="saved-desktop"
+          title="Desktop · Saved"
+          subtitle="Library, not inbox. Grouped by when you saved, byline-forward, with row-level Open / Mark read / Unsave. Sort menu and empty state are part of the system."
+        >
+          <DCArtboard id="sv-d-light" label="A · Default · light" width={1180} height={920}>
+            <SavedDesktopFrame theme="light" fontMode={fontMode} showSummary={showSummary} height={920} />
+          </DCArtboard>
+          <DCArtboard id="sv-d-sepia" label="B · Sepia" width={1180} height={920}>
+            <SavedDesktopFrame theme="sepia" fontMode={fontMode} showSummary={showSummary} height={920} />
+          </DCArtboard>
+          <DCArtboard id="sv-d-dark" label="C · Dark" width={1180} height={920}>
+            <SavedDesktopFrame theme="dark" fontMode={fontMode} showSummary={showSummary} height={920} />
+          </DCArtboard>
+          <DCArtboard id="sv-d-actions" label="D · Row actions revealed (keyboard selection)" width={1180} height={920}>
+            <SavedDesktopFrame theme="light" fontMode={fontMode} showSummary={showSummary} height={920} force={{ selectedId: 107 }} />
+          </DCArtboard>
+          <DCArtboard id="sv-d-sort" label="E · Sort menu open" width={1180} height={920}>
+            <SavedDesktopFrame theme="light" fontMode={fontMode} showSummary={showSummary} height={920} force={{ sortOpen: true, sort: "recent" }} />
+          </DCArtboard>
+          <DCArtboard id="sv-d-empty" label="F · Empty state" width={1180} height={760}>
+            <SavedDesktopFrame theme="light" fontMode={fontMode} showSummary={showSummary} force={{ empty: true }} />
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection
+          id="categories-desktop"
+          title="Desktop · Categories page"
+          subtitle="Manage buckets for the feed list. One column; same shell. Each artboard shows a state."
+        >
+          <DCArtboard id="cat-default" label="A · Default · light" width={1180} height={1320}>
+            <CategoriesDesktopFrame theme="light" fontMode={fontMode} height={1320} />
+          </DCArtboard>
+          <DCArtboard id="cat-sepia" label="B · Sepia" width={1180} height={1320}>
+            <CategoriesDesktopFrame theme="sepia" fontMode={fontMode} height={1320} />
+          </DCArtboard>
+          <DCArtboard id="cat-dark" label="C · Dark" width={1180} height={1320}>
+            <CategoriesDesktopFrame theme="dark" fontMode={fontMode} height={1320} />
+          </DCArtboard>
+          <DCArtboard id="cat-create" label="D · Creating a category" width={1180} height={1320}>
+            <CategoriesDesktopFrame theme="light" fontMode={fontMode} height={1320} force={{ creating: true, createValue: "Worth re-reading" }} />
+          </DCArtboard>
+          <DCArtboard id="cat-rename" label="E · Renaming inline" width={1180} height={1320}>
+            <CategoriesDesktopFrame theme="light" fontMode={fontMode} height={1320} force={{ renamingId: "systems", renameValue: "Systems, PL & compilers" }} />
+          </DCArtboard>
+          <DCArtboard id="cat-move" label="F · Reassign popover open" width={1180} height={1320}>
+            <CategoriesDesktopFrame theme="light" fontMode={fontMode} height={1320} force={{ pickerFeedId: 7 }} />
+          </DCArtboard>
+          <DCArtboard id="cat-delete" label="G · Delete confirmation" width={1180} height={1320}>
+            <CategoriesDesktopFrame theme="light" fontMode={fontMode} height={1320} force={{ dialog: { type: "delete", catId: "people" } }} />
+          </DCArtboard>
+          <DCArtboard id="cat-mark" label="H · Mark-all-read confirmation" width={1180} height={1320}>
+            <CategoriesDesktopFrame theme="sepia" fontMode={fontMode} height={1320} force={{ dialog: { type: "markread", catId: "aggregators" } }} />
+          </DCArtboard>
+          <DCArtboard id="cat-empty" label="I · Empty (no categories)" width={1180} height={1100}>
+            <CategoriesDesktopFrame theme="light" fontMode={fontMode} height={1100} force={{ empty: true, assignments: { 1: null, 2: null, 3: null, 4: null, 5: null, 6: null, 7: null, 8: null, 9: null, 10: null, 11: null, 12: null } }} />
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection
+          id="feeds-desktop"
+          title="Desktop · Feeds (Feed management)"
+          subtitle="Subscriptions list inside the .ts-shell. Each artboard is a different state of the same page."
+        >
+          <DCArtboard id="feeds-default" label="A · Default · light · sort by title" width={1180} height={1500}>
+            <FeedsDesktopFrame theme="light" fontMode={fontMode} height={1500} />
+          </DCArtboard>
+          <DCArtboard id="feeds-sepia-grouped" label="B · Sepia · grouped by category" width={1180} height={1620}>
+            <FeedsDesktopFrame theme="sepia" fontMode={fontMode} height={1620} force={{ grouped: true }} />
+          </DCArtboard>
+          <DCArtboard id="feeds-dark-last" label="C · Dark · sorted by recent poll" width={1180} height={1500}>
+            <FeedsDesktopFrame theme="dark" fontMode={fontMode} height={1500} force={{ sort: "last" }} />
+          </DCArtboard>
+          <DCArtboard id="feeds-errors-only" label="D · Filter: errors only" width={1180} height={920}>
+            <FeedsDesktopFrame theme="light" fontMode={fontMode} height={920} force={{ filter: "errors", sort: "errors" }} />
+          </DCArtboard>
+          <DCArtboard id="feeds-bulk" label="E · Bulk selection (3 selected)" width={1180} height={1500}>
+            <FeedsDesktopFrame theme="light" fontMode={fontMode} height={1500} force={{ selected: [4, 8, 11] }} />
+          </DCArtboard>
+          <DCArtboard id="feeds-health-expanded" label="F · Health panel expanded · error feed" width={1180} height={920}>
+            <FeedsDesktopFrame theme="light" fontMode={fontMode} height={920} force={{ filter: "errors", sort: "errors", expanded: [12, 7] }} />
+          </DCArtboard>
+          <DCArtboard id="feeds-add" label="G · Add feed dialog · auto-discovery" width={1180} height={1100}>
+            <FeedsDesktopFrame theme="light" fontMode={fontMode} height={1100} force={{ dialog: { type: "add" }, addUrl: "rachelbythebay.com", addState: "site" }} />
+          </DCArtboard>
+          <DCArtboard id="feeds-edit" label="H · Edit feed dialog · all fields" width={1180} height={1500}>
+            <FeedsDesktopFrame theme="light" fontMode={fontMode} height={1500} force={{ dialog: { type: "edit", feedId: 7 } }} />
+          </DCArtboard>
+          <DCArtboard id="feeds-edit-dark" label="I · Edit · dark theme" width={1180} height={1500}>
+            <FeedsDesktopFrame theme="dark" fontMode={fontMode} height={1500} force={{ dialog: { type: "edit", feedId: 1 } }} />
+          </DCArtboard>
+          <DCArtboard id="feeds-delete" label="J · Bulk delete confirmation" width={1180} height={1100}>
+            <FeedsDesktopFrame theme="light" fontMode={fontMode} height={1100} force={{ selected: [4, 8, 11], dialog: { type: "delete", feedIds: [4, 8, 11] } }} />
+          </DCArtboard>
+          <DCArtboard id="feeds-import" label="K · Import OPML · preview stage" width={1180} height={1100}>
+            <FeedsDesktopFrame theme="light" fontMode={fontMode} height={1100} force={{ dialog: { type: "import" }, importStage: "preview" }} />
+          </DCArtboard>
+          <DCArtboard id="feeds-export" label="L · Export OPML" width={1180} height={1100}>
+            <FeedsDesktopFrame theme="sepia" fontMode={fontMode} height={1100} force={{ dialog: { type: "export" } }} />
+          </DCArtboard>
+          <DCArtboard id="feeds-empty" label="M · Empty (no feeds yet)" width={1180} height={760}>
+            <FeedsDesktopFrame theme="light" fontMode={fontMode} height={760} force={{ assignments: {}, _empty: true }} />
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection
+          id="reader-desktop"
+          title="Desktop · Article reader"
+          subtitle="Article opens in the same column. Same top tabs, with a back link replacing the active underline."
+        >
+          <DCArtboard id="r-d-light" label="A · Light" width={1180} height={760}>
+            <ReaderDesktopFrame theme="light" fontMode={fontMode} />
+          </DCArtboard>
+          <DCArtboard id="r-d-sepia" label="B · Sepia" width={1180} height={760}>
+            <ReaderDesktopFrame theme="sepia" fontMode={fontMode} />
+          </DCArtboard>
+          <DCArtboard id="r-d-dark" label="C · Dark" width={1180} height={760}>
+            <ReaderDesktopFrame theme="dark" fontMode={fontMode} />
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection
+          id="settings"
+          title="Desktop · Settings page"
+          subtitle="All sections in one column. Same .ts-shell as the rest of the app. Each artboard shows a different state."
+        >
+          <DCArtboard id="set-default" label="A · Default · not enrolled" width={1180} height={1600}>
+            <SettingsFrame theme="light" fontMode={fontMode} density={tweaks.density} totp="off" height={1600} />
+          </DCArtboard>
+          <DCArtboard id="set-enroll" label="B · TOTP enrolment overlay" width={1180} height={1740}>
+            <SettingsFrame theme="light" fontMode={fontMode} density={tweaks.density} totp="off" overlay="enroll" height={1740} />
+          </DCArtboard>
+          <DCArtboard id="set-codes" label="C · Recovery codes (post-enrol)" width={1180} height={1740}>
+            <SettingsFrame theme="light" fontMode={fontMode} density={tweaks.density} totp="on" overlay="codes" height={1740} />
+          </DCArtboard>
+          <DCArtboard id="set-enrolled-admin" label="D · Enrolled · admin · system status" width={1180} height={2200}>
+            <SettingsFrame theme="light" fontMode={fontMode} density={tweaks.density} totp="on" admin height={2200} />
+          </DCArtboard>
+          <DCArtboard id="set-dark-disable" label="E · Dark · disable TOTP challenge" width={1180} height={1740}>
+            <SettingsFrame theme="dark" fontMode={fontMode} density={tweaks.density} totp="on" overlay="disable" height={1740} />
+          </DCArtboard>
+          <DCArtboard id="set-sepia-regen" label="F · Sepia · regenerate codes" width={1180} height={1740}>
+            <SettingsFrame theme="sepia" fontMode={fontMode} density={tweaks.density} totp="on" overlay="codes-regen" height={1740} />
+          </DCArtboard>
+          <DCArtboard id="set-addpk" label="G · Add passkey dialog" width={1180} height={1740}>
+            <SettingsFrame theme="light" fontMode={fontMode} density={tweaks.density} totp="on" overlay="addpk" height={1740} />
+          </DCArtboard>
+          <DCArtboard id="set-removepk" label="H · Remove passkey challenge" width={1180} height={1740}>
+            <SettingsFrame theme="light" fontMode={fontMode} density={tweaks.density} totp="on" overlay="removepk" height={1740} />
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection
+          id="admin"
+          title="Desktop · Admin page"
+          subtitle="Admin-only surface. User management on top, system status below. Same ts-shell as the rest of the app — a seventh tab (with a junction dot) appears only when the signed-in account is an admin."
+        >
+          <DCArtboard id="adm-default" label="A · Default · light" width={1180} height={1780}>
+            <AdminFrame theme="light" fontMode={fontMode} height={1780} />
+          </DCArtboard>
+          <DCArtboard id="adm-sepia" label="B · Sepia" width={1180} height={1780}>
+            <AdminFrame theme="sepia" fontMode={fontMode} height={1780} />
+          </DCArtboard>
+          <DCArtboard id="adm-dark" label="C · Dark" width={1180} height={1780}>
+            <AdminFrame theme="dark" fontMode={fontMode} height={1780} />
+          </DCArtboard>
+          <DCArtboard id="adm-create" label="D · Create user dialog" width={1180} height={1780}>
+            <AdminFrame theme="light" fontMode={fontMode} height={1780} overlay="create" />
+          </DCArtboard>
+          <DCArtboard id="adm-reset" label="E · Reset password — temp password shown" width={1180} height={1780}>
+            <AdminFrame theme="light" fontMode={fontMode} height={1780} overlay="reset" highlightId="u4" />
+          </DCArtboard>
+          <DCArtboard id="adm-2fa" label="F · Disable 2FA confirmation" width={1180} height={1780}>
+            <AdminFrame theme="light" fontMode={fontMode} height={1780} overlay="disable2fa" highlightId="u3" />
+          </DCArtboard>
+          <DCArtboard id="adm-disable" label="G · Disable account confirmation" width={1180} height={1780}>
+            <AdminFrame theme="sepia" fontMode={fontMode} height={1780} overlay="disable" highlightId="u5" />
+          </DCArtboard>
+          <DCArtboard id="adm-enable" label="H · Re-enable account · dark" width={1180} height={1780}>
+            <AdminFrame theme="dark" fontMode={fontMode} height={1780} overlay="enable" highlightId="u6" />
+          </DCArtboard>
+          <DCArtboard id="adm-delete" label="I · Delete user — guarded" width={1180} height={1780}>
+            <AdminFrame theme="light" fontMode={fontMode} height={1780} overlay="delete" highlightId="u7" />
+          </DCArtboard>
+          <DCArtboard id="adm-expanded" label="J · Recent events · full ring buffer" width={1180} height={1900}>
+            <AdminFrame theme="light" fontMode={fontMode} height={1900} expandedErrors />
+          </DCArtboard>
+          <DCArtboard id="adm-paused" label="K · Auto-refresh paused" width={1180} height={1780}>
+            <AdminFrame theme="light" fontMode={fontMode} height={1780} live={false} />
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection
+          id="brand"
+          title="Brand notes"
+          subtitle="The junction dot is the load-bearing detail."
+        >
+          <DCArtboard id="brand-marks" label="Marks" width={760} height={420}>
+            <div className="tap theme-light" style={{
+              width: '100%', height: '100%', padding: 48,
+              display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 32,
+            }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 18, justifyContent: 'center' }}>
+                <div className="mono" style={{ fontSize: 10, letterSpacing: '0.12em', color: 'var(--ink-3)', textTransform: 'uppercase' }}>Wordmark</div>
+                <div style={{ fontFamily: 'var(--sans)', fontWeight: 600, fontSize: 64, letterSpacing: '-0.04em', display: 'flex', alignItems: 'baseline', gap: 2 }}>
+                  tap<span style={{ display: 'inline-block', width: 16, height: 16, borderRadius: '50%', background: 'var(--accent)', transform: 'translateY(-4px)', marginLeft: 4 }}></span>
+                </div>
+                <div className="sans" style={{ fontSize: 13, color: 'var(--ink-2)', maxWidth: 280, lineHeight: 1.5 }}>
+                  The period reads as a schematic junction dot. Klein Blue, used once.
+                </div>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 18, justifyContent: 'center', alignItems: 'flex-start' }}>
+                <div className="mono" style={{ fontSize: 10, letterSpacing: '0.12em', color: 'var(--ink-3)', textTransform: 'uppercase' }}>Primary mark · favicon</div>
+                <svg width="120" height="120" viewBox="0 0 120 120">
+                  <line x1="20" y1="40" x2="100" y2="40" stroke="#1a1a1a" strokeWidth="6" strokeLinecap="round" />
+                  <line x1="60" y1="40" x2="60" y2="100" stroke="#1a1a1a" strokeWidth="6" strokeLinecap="round" />
+                  <circle cx="60" cy="40" r="9" fill="#002FA7" />
+                </svg>
+                <div className="sans" style={{ fontSize: 13, color: 'var(--ink-2)', maxWidth: 280, lineHeight: 1.5 }}>
+                  T-junction. Doubles as the letter T. Junction dot in Klein Blue.
+                </div>
+              </div>
+            </div>
+          </DCArtboard>
+
+          <DCArtboard id="brand-palette" label="Palette" width={760} height={420}>
+            <div style={{ width: '100%', height: '100%', padding: 48, background: '#fafaf7', fontFamily: 'Inter Tight, sans-serif' }}>
+              <div className="mono" style={{ fontSize: 10, letterSpacing: '0.12em', color: '#8a8a86', textTransform: 'uppercase', marginBottom: 18 }}>Palette · Klein Blue is precious</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
+                {[
+                  { name: 'Light',  bg: '#fafaf7', ink: '#1a1a1a', accent: '#002FA7' },
+                  { name: 'Sepia',  bg: '#f4ecd8', ink: '#3b2e1a', accent: '#002FA7' },
+                  { name: 'Dark',   bg: '#0d0d0e', ink: '#ededea', accent: '#5a7fdc' },
+                ].map((p) => (
+                  <div key={p.name} style={{ background: p.bg, color: p.ink, padding: 18, border: '1px solid rgba(0,0,0,0.08)', borderRadius: 4, height: 240, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                    <div>
+                      <div style={{ fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase', opacity: 0.55, fontFamily: 'JetBrains Mono, monospace' }}>{p.name}</div>
+                      <div style={{ fontFamily: 'Source Serif 4, serif', fontSize: 22, fontWeight: 500, marginTop: 8, lineHeight: 1.2 }}>The lazy fox jumps quietly.</div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'JetBrains Mono, monospace', fontSize: 10 }}>
+                      <span style={{ width: 10, height: 10, borderRadius: '50%', background: p.accent }}></span>
+                      <span style={{ opacity: 0.7 }}>{p.accent.toUpperCase()}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </DCArtboard>
+        </DCSection>
+      </DesignCanvas>
+
+      <TweaksPanel title="Tweaks">
+        <TweakSection title="List">
+          <TweakToggle
+            label="Group by day"
+            value={grouped}
+            onChange={(v) => setTweak('grouped', v)}
+          />
+          <TweakToggle
+            label="Show summaries"
+            value={showSummary}
+            onChange={(v) => setTweak('showSummary', v)}
+          />
+        </TweakSection>
+        <TweakSection title="Reading">
+          <TweakRadio
+            label="Font"
+            value={fontMode}
+            options={[
+              { value: 'serif', label: 'Serif' },
+              { value: 'sans', label: 'Sans' },
+            ]}
+            onChange={(v) => setTweak('fontMode', v)}
+          />
+        </TweakSection>
+      </TweaksPanel>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

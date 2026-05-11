@@ -144,4 +144,4 @@ function MobileReader({ entries, feeds, entryId = 103, theme = "light", fontMode
   );
 }
 
-Object.assign(window, { DesktopReader, MobileReader });
+Object.assign(window, { DesktopReader, MobileReader, READER_BODY });
