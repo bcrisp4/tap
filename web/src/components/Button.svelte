@@ -1,16 +1,13 @@
 <script lang="ts">
+  import type { HTMLButtonAttributes } from 'svelte/elements';
   type Variant = 'default' | 'primary' | 'accent' | 'danger' | 'quiet';
   type Size = 'sm' | 'md';
-  type Props = {
+  type Props = HTMLButtonAttributes & {
     variant?: Variant;
     size?: Size;
-    type?: 'button' | 'submit';
-    disabled?: boolean;
-    title?: string;
-    onclick?: (e: MouseEvent) => void;
     children: import('svelte').Snippet;
   };
-  let { variant = 'default', size = 'md', type = 'button', disabled = false, title, onclick, children }: Props = $props();
+  let { variant = 'default', size = 'md', type = 'button', disabled = false, title, onclick, children, ...rest }: Props = $props();
 </script>
 
 <button
@@ -19,6 +16,7 @@
   {disabled}
   class="btn variant-{variant} size-{size}"
   {onclick}
+  {...rest}
 >
   {@render children()}
 </button>
