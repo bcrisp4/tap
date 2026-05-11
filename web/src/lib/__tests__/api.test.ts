@@ -22,6 +22,21 @@ function makeResponse(body: unknown, status = 200): Response {
   });
 }
 
+describe('api.refreshSubscription', () => {
+  it('PATCHes refresh_now:true to /api/v1/subscriptions/:id', async () => {
+    const { api } = await import('../api');
+    mockFetch.mockResolvedValueOnce(makeResponse({}));
+
+    await api.refreshSubscription(42);
+
+    expect(mockFetch).toHaveBeenCalledOnce();
+    const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/v1/subscriptions/42');
+    expect(init.method).toBe('PATCH');
+    expect(JSON.parse(init.body as string)).toEqual({ refresh_now: true });
+  });
+});
+
 describe('api.listSubscriptions', () => {
   it('calls GET /api/v1/subscriptions and returns the data array', async () => {
     const { api } = await import('../api');

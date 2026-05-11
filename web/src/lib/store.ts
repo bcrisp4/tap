@@ -106,6 +106,21 @@ function subscriptionsStore() {
       notifySW({ type: 'invalidate', paths: ['/api/v1/subscriptions'] });
       await this.load();
     },
+    async refresh(id: number) {
+      await api.refreshSubscription(id);
+      notifySW({ type: 'invalidate', paths: ['/api/v1/subscriptions'] });
+      await this.load();
+    },
+    async remove(id: number) {
+      await api.deleteSubscription(id);
+      notifySW({ type: 'invalidate', paths: ['/api/v1/subscriptions', '/api/v1/entries'] });
+      await this.load();
+    },
+    async setCategory(id: number, categoryId: number | null) {
+      await api.updateSubscription(id, { category_id: categoryId });
+      notifySW({ type: 'invalidate', paths: ['/api/v1/subscriptions', '/api/v1/categories'] });
+      await Promise.all([this.load(), categories.load()]);
+    },
   };
 }
 

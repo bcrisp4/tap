@@ -17,6 +17,9 @@ vi.mock('../api', () => ({
     reorderCategories: vi.fn(),
     markSubscriptionRead: vi.fn(),
     patchSubscription: vi.fn(),
+    updateSubscription: vi.fn(),
+    refreshSubscription: vi.fn(),
+    deleteSubscription: vi.fn(),
   },
 }));
 
@@ -399,6 +402,46 @@ describe('categories store', () => {
     expect(markFeed).toHaveBeenCalledTimes(2);
     expect(markFeed).toHaveBeenCalledWith(1);
     expect(markFeed).toHaveBeenCalledWith(2);
+  });
+
+  it('subscriptions.refresh calls api.refreshSubscription and reloads', async () => {
+    const { api } = await import('../api');
+    const { subscriptions } = await import('../store');
+    vi.mocked(api.refreshSubscription).mockResolvedValueOnce({} as any);
+    vi.mocked(api.listSubscriptions).mockResolvedValueOnce([]);
+    await subscriptions.refresh(11);
+    expect(api.refreshSubscription).toHaveBeenCalledWith(11);
+    expect(api.listSubscriptions).toHaveBeenCalled();
+  });
+
+  it('subscriptions.remove calls api.deleteSubscription and reloads', async () => {
+    const { api } = await import('../api');
+    const { subscriptions } = await import('../store');
+    vi.mocked(api.deleteSubscription).mockResolvedValueOnce(undefined);
+    vi.mocked(api.listSubscriptions).mockResolvedValueOnce([]);
+    await subscriptions.remove(5);
+    expect(api.deleteSubscription).toHaveBeenCalledWith(5);
+    expect(api.listSubscriptions).toHaveBeenCalled();
+  });
+
+  it('subscriptions.setCategory calls api.updateSubscription and reloads', async () => {
+    const { api } = await import('../api');
+    const { subscriptions } = await import('../store');
+    vi.mocked(api.updateSubscription).mockResolvedValueOnce({} as any);
+    vi.mocked(api.listSubscriptions).mockResolvedValueOnce([]);
+    vi.mocked(api.listCategories).mockResolvedValueOnce([]);
+    await subscriptions.setCategory(7, 3);
+    expect(api.updateSubscription).toHaveBeenCalledWith(7, { category_id: 3 });
+  });
+
+  it('subscriptions.setCategory null uncategorises', async () => {
+    const { api } = await import('../api');
+    const { subscriptions } = await import('../store');
+    vi.mocked(api.updateSubscription).mockResolvedValueOnce({} as any);
+    vi.mocked(api.listSubscriptions).mockResolvedValueOnce([]);
+    vi.mocked(api.listCategories).mockResolvedValueOnce([]);
+    await subscriptions.setCategory(7, null);
+    expect(api.updateSubscription).toHaveBeenCalledWith(7, { category_id: null });
   });
 
   it('reorder rolls back the in-memory order when the API rejects', async () => {

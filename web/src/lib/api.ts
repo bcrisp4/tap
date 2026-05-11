@@ -84,6 +84,7 @@ export const api = {
     cookie?: string;
     basic_auth_user?: string;
     basic_auth_pass?: string;
+    category_id?: number | null;
   }) =>
     request<Subscription>('/subscriptions', {
       method: 'POST',
@@ -107,6 +108,12 @@ export const api = {
     }),
 
   get patchSubscription() { return this.updateSubscription; },
+
+  refreshSubscription: (id: number) =>
+    request<Subscription>(`/subscriptions/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ refresh_now: true }),
+    }),
 
   deleteSubscription: (id: number) =>
     request<void>(`/subscriptions/${id}`, { method: 'DELETE' }),
