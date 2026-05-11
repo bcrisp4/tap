@@ -96,7 +96,11 @@ No new client-side route state shapes beyond the new route names.
 
 ### 2.4 Data flow / backend
 
-No new endpoints required for the foundations milestone or for M2 (Unread+Reader), M3 (Saved), M6 (Settings), or M8 (History). The existing `/api/v1/entries` with no `unread` flag returns all entries newest-first; History reuses it. Saved already filters via `?saved=1`. Day-band groupings ("Today / Yesterday / This week / Earlier") are computed client-side from `published_at`.
+No new endpoints required for the foundations milestone or for M2 (Unread+Reader), M3 (Saved), or M8 (History). The existing `/api/v1/entries` with no `unread` flag returns all entries newest-first; History reuses it. Saved already filters via `?saved=1`. Day-band groupings ("Today / Yesterday / This week / Earlier") are computed client-side from `published_at`.
+
+**M5 (Feeds) adds a refresh flag.** Per the Feeds management page's per-row + bulk "Refresh" action, M5 extends `PATCH /api/v1/subscriptions/:id` to accept `{ refresh_now: true }`, which calls `Scheduler.Poke()` to advance the feed's next-poll time. This is the canonical refresh mechanism for the whole SPA — M6's "Refresh all now" in Settings iterates over `/api/v1/subscriptions` and calls this PATCH per feed. No separate `/refresh` endpoint or `POST /api/v1/poll-all`.
+
+**M6 (Settings) adds an account self-delete endpoint.** Brand spec §6.6 row 07 specifies "Delete account (danger, opens confirm dialog)". The existing admin `DELETE /api/v1/admin/users/{id}` is admin-only; M6 adds `DELETE /api/v1/me` for users to delete their own account. Cascade via existing FKs (sessions, passkeys, subscriptions, entries, categories all reference `user_id`). No other backend changes for M6.
 
 **M7 (Admin) needs a small additive backend change.** The existing `/api/v1/status` (admin-gated) returns version, uptime, db health, and poll info, but not instance-wide feeds/entries aggregates. Rather than introduce a new endpoint, M7 extends the existing `statusResponse` struct with `feeds_total`, `feeds_ok`, `feeds_with_errors`, `offending_feeds`, `entries_total`, and `entries_24h` fields. The Admin metric grid (FEEDS / ENTRIES / ERRORS / POLL) then sources every cell from one fetch. Status remains the single instance-level admin endpoint; no new route registration.
 
