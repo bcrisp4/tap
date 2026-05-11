@@ -1,0 +1,420 @@
+/* Tap — login surfaces.
+   Built on the same tokens as the main app (styles.css). Keep this file
+   scoped to .tl-* selectors so nothing leaks. */
+
+.tl-root {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--serif);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+/* ── Header ── */
+.tl-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 22px 32px;
+}
+.tl-header-meta {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+/* ── Main + centered column ── */
+.tl-main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.tl-col {
+  width: 100%;
+  max-width: 380px;
+}
+
+/* ── Form scaffold ── */
+.tl-form { display: flex; flex-direction: column; }
+
+.tl-eyebrow {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-bottom: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tl-title {
+  font-family: var(--serif);
+  font-weight: 600;
+  font-size: 34px;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  margin: 0 0 10px;
+  color: var(--ink);
+  text-wrap: balance;
+}
+
+.tl-sub {
+  font-family: var(--serif);
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  margin: 0 0 26px;
+  max-width: 360px;
+  text-wrap: pretty;
+}
+
+/* ── Fields ── */
+.tl-field { margin-bottom: 14px; }
+.tl-field .ts-field-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-bottom: 8px;
+}
+.tl-field-trailing-link {
+  color: var(--ink-2);
+  text-decoration: none;
+  letter-spacing: 0.14em;
+}
+.tl-field-trailing-link:hover { color: var(--accent); }
+.tl-field-wrap { position: relative; display: flex; gap: 6px; }
+.tl-field-wrap .ts-field { width: 100%; }
+
+/* ── Error chip ── */
+.tl-error {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  background: rgba(196, 58, 58, 0.06);
+  border: 1px solid rgba(196, 58, 58, 0.28);
+  border-left-width: 2px;
+  border-left-color: #c43a3a;
+  border-radius: 4px;
+  padding: 10px 12px;
+  margin-bottom: 18px;
+  color: #c43a3a;
+  font-family: var(--sans);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.theme-dark .tl-error {
+  background: rgba(236, 122, 122, 0.06);
+  border-color: rgba(236, 122, 122, 0.32);
+  border-left-color: #ec7a7a;
+  color: #ec7a7a;
+}
+.tl-error-ico {
+  display: inline-flex;
+  margin-top: 1px;
+  flex-shrink: 0;
+}
+.tl-error-body { color: inherit; }
+.tl-error-body strong { font-weight: 500; }
+
+/* ── OTP row ── */
+.tl-otp-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 4px 0 4px;
+  flex-wrap: wrap;
+}
+.tl-otp-hint {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ── Passkey device card ── */
+.tl-passkey-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--rule);
+  background: var(--bg-soft);
+  border-radius: 4px;
+  margin-bottom: 18px;
+}
+.tl-passkey-ico {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.tl-passkey-title {
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+  line-height: 1.2;
+}
+.tl-passkey-sub {
+  font-size: 10px;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-top: 4px;
+}
+
+/* ── Action stack ── */
+.tl-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 14px;
+}
+.ts-btn.tl-primary {
+  height: 42px;
+  padding: 0 16px;
+  font-family: var(--sans);
+  font-size: 13.5px;
+  font-weight: 500;
+  border-radius: 4px;
+  justify-content: center;
+  gap: 8px;
+}
+.ts-btn.tl-primary .ts-kbd {
+  margin-left: 8px;
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.18);
+  color: var(--bg);
+}
+.theme-dark .ts-btn.tl-primary .ts-kbd {
+  background: rgba(0, 0, 0, 0.24);
+  border-color: rgba(0, 0, 0, 0.32);
+  color: var(--bg);
+}
+.ts-btn.tl-alt {
+  height: 38px;
+  padding: 0 12px;
+  font-family: var(--sans);
+  font-size: 13px;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 4px;
+}
+
+/* ── Switcher row at bottom ── */
+.tl-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 26px;
+  padding-top: 20px;
+  border-top: 1px solid var(--rule);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.tl-switch-link {
+  color: var(--ink);
+  text-decoration: none;
+  letter-spacing: 0.14em;
+}
+.tl-switch-link:hover { color: var(--accent); }
+
+/* ── Footer ── */
+.tl-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 18px 24px 24px;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.tl-footer a {
+  color: var(--ink-3);
+  text-decoration: none;
+}
+.tl-footer a:hover { color: var(--ink); }
+.tl-foot-dot {
+  display: inline-block;
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  margin-right: 6px;
+  vertical-align: 1px;
+}
+.tl-foot-sep { color: var(--ink-4); }
+
+/* ──────────────────────────────────────────────
+   SPLIT layout
+   ────────────────────────────────────────────── */
+.tl-root.tl-split {
+  display: grid;
+  grid-template-columns: 460px 1fr;
+}
+
+.tl-aside {
+  background: var(--bg-soft);
+  border-right: 1px solid var(--rule);
+  padding: 36px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  position: relative;
+  overflow: hidden;
+}
+.tl-aside-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.tl-aside-meta {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.tl-aside-mid {
+  margin-top: auto;
+  margin-bottom: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  max-width: 360px;
+}
+.tl-aside-mark {
+  display: inline-flex;
+  color: var(--ink);
+  width: 80px;
+  height: 80px;
+}
+.tl-aside-h {
+  font-family: var(--serif);
+  font-weight: 600;
+  font-size: 32px;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  margin: 0;
+  color: var(--ink);
+  text-wrap: balance;
+}
+.tl-aside-p {
+  font-family: var(--serif);
+  font-size: 15.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+  margin: 0;
+  max-width: 340px;
+  text-wrap: pretty;
+}
+.tl-aside-foot {
+  border-top: 1px solid var(--rule);
+  padding-top: 22px;
+  margin-top: 8px;
+}
+.tl-aside-quote { display: flex; flex-direction: column; gap: 8px; }
+.tl-aside-q-eyebrow {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.tl-aside-q-body {
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  margin: 0;
+  text-wrap: pretty;
+}
+.tl-aside-q-cite {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.tl-split-main {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  padding: 48px;
+  position: relative;
+}
+.tl-split-main .tl-col {
+  margin: auto;
+}
+.tl-footer.is-split {
+  margin-top: auto;
+  padding: 18px 0 0;
+  justify-content: flex-start;
+}
+
+/* ──────────────────────────────────────────────
+   MOBILE
+   ────────────────────────────────────────────── */
+.tl-root.is-mobile {
+  padding-top: 50px; /* iOS status bar inset */
+  background: var(--bg);
+}
+.tl-m-header {
+  padding: 18px 22px 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.tl-m-main {
+  padding: 30px 22px 16px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+.tl-m-main .tl-form { width: 100%; }
+.tl-form.is-mobile .tl-title { font-size: 28px; }
+.tl-form.is-mobile .tl-sub { font-size: 14.5px; }
+.tl-form.is-mobile .ts-btn.tl-primary { height: 48px; font-size: 14.5px; }
+.tl-form.is-mobile .ts-btn.tl-alt { height: 46px; font-size: 14px; }
+.tl-form.is-mobile .ts-field {
+  height: 46px;
+  font-size: 15px;
+}
+.tl-form.is-mobile .ts-otp-cell { width: 44px; height: 54px; font-size: 19px; }
+
+.tl-m-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px 22px 26px;
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.tl-m-footer a { color: var(--ink-3); text-decoration: none; }

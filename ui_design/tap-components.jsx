@@ -34,6 +34,18 @@ const Icon = {
   history: (s=14) => <svg width={s} height={s} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"><path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9"/><path d="M2.5 2.5V5H5"/><path d="M8 5v3l2 1.5"/></svg>,
   keyboard: (s=14) => <svg width={s} height={s} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"><rect x="1.5" y="3.5" width="13" height="9" rx="1.5"/><path d="M4 6.5h.01M7 6.5h.01M10 6.5h.01M13 6.5h.01M4 9h.01M13 9h.01M5.5 11.5h5"/></svg>,
   warning: (s=14) => <svg width={s} height={s} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"><path d="M8 2.5 14.5 13.5h-13z"/><path d="M8 6.5v3.2"/><circle cx="8" cy="11.6" r="0.5" fill="currentColor"/></svg>,
+  logout: (s=14) => <svg width={s} height={s} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"><path d="M9.5 3.5H4.5a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h5"/><path d="m11 5.5 2.5 2.5L11 10.5"/><path d="M7 8h6.5"/></svg>,
+  user: (s=14) => <svg width={s} height={s} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"><circle cx="8" cy="6" r="2.5"/><path d="M3.5 13.5a4.5 4.5 0 0 1 9 0"/></svg>,
+};
+
+// ────── Default account (placeholder identity used by the chip) ──────
+// Real apps would hydrate this from the session. Kept here so every
+// surface that renders <Sidebar /> shows a consistent user without
+// each caller having to pass props.
+const DEFAULT_USER = {
+  name: "Jodie Park",
+  email: "jodie@thecrisp.io",
+  initial: "J",
 };
 
 // ────── Feed avatar ──────
@@ -115,7 +127,60 @@ function UnreadList({ entries, feeds, selectedId, onSelect, density = "default",
 }
 
 // ────── Sidebar (desktop) ──────
-function Sidebar({ active = "unread", feeds, unreadCounts, onNav, onAddFeed, onOpenShortcuts, onOpenMore }) {
+function AccountChip({ user = DEFAULT_USER, isOpen, onClick }) {
+  return (
+    <button
+      type="button"
+      className={`account-chip ${isOpen ? "is-open" : ""}`}
+      aria-haspopup="menu"
+      aria-expanded={isOpen ? "true" : "false"}
+      onClick={onClick}
+    >
+      <span className="avatar" aria-hidden="true">{user.initial || (user.name || user.email || "?")[0].toUpperCase()}</span>
+      <span className="who">
+        <span className="name">{user.name || "Account"}</span>
+        <span className="email">{user.email}</span>
+      </span>
+      <span className="caret" aria-hidden="true">▾</span>
+    </button>
+  );
+}
+
+function AccountMenu({ open, user = DEFAULT_USER, onClose, onPick }) {
+  if (!open) return null;
+  const pick = (id) => { onPick?.(id); onClose?.(); };
+  return (
+    <div className="tap-popover-scrim" onClick={onClose}>
+      <div className="tap-popover account-menu" role="menu" onClick={(e) => e.stopPropagation()}>
+        <div className="account-menu-head">
+          <div className="account-menu-name">{user.name || "Account"}</div>
+          <div className="account-menu-email">{user.email}</div>
+        </div>
+        <button className="more-item" role="menuitem" onClick={() => pick('account')}>
+          <span className="more-ico" aria-hidden="true">{Icon.user(13)}</span>
+          <span>Account settings</span>
+        </button>
+        <button className="more-item" role="menuitem" onClick={() => pick('theme')}>
+          <span className="more-ico" aria-hidden="true"></span>
+          <span>Switch theme</span>
+        </button>
+        <div className="account-menu-sep" aria-hidden="true"></div>
+        <button className="more-item logout" role="menuitem" onClick={() => pick('logout')}>
+          <span className="more-ico" aria-hidden="true">{Icon.logout(13)}</span>
+          <span>Log out</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function Sidebar({ active = "unread", feeds, unreadCounts, onNav, onAddFeed, onOpenShortcuts, onOpenMore, user, onLogout, onAccount }) {
+  const [accountOpen, setAccountOpen] = useState(false);
+  const handlePick = (id) => {
+    if (id === 'logout') onLogout?.();
+    else if (id === 'account') (onAccount || ((u) => onNav?.('settings')))();
+    else if (id === 'theme') onNav?.('settings');
+  };
   return (
     <aside className="tap-sidebar">
       <div className="brand">
@@ -162,6 +227,7 @@ function Sidebar({ active = "unread", feeds, unreadCounts, onNav, onAddFeed, onO
       ))}
 
       <div className="sidebar-spacer"></div>
+      <AccountChip user={user} isOpen={accountOpen} onClick={() => setAccountOpen(true)} />
       <div className="sidebar-footer">
         <button
           className="footer-btn"
@@ -188,6 +254,12 @@ function Sidebar({ active = "unread", feeds, unreadCounts, onNav, onAddFeed, onO
           {Icon.more(16)}
         </button>
       </div>
+      <AccountMenu
+        open={accountOpen}
+        user={user}
+        onClose={() => setAccountOpen(false)}
+        onPick={handlePick}
+      />
     </aside>
   );
 }
@@ -415,5 +487,6 @@ Object.assign(window, {
   Junction, Wordmark, Icon, FeedAvatar,
   EntryRow, UnreadList, Sidebar,
   ShortcutsModal, MoreMenu,
+  AccountChip, AccountMenu, DEFAULT_USER,
   DesktopUnread, MobileUnread,
 });

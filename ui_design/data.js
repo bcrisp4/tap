@@ -36,19 +36,29 @@ const ICON_DREW =
   '<path d="M3 8 L8 3 L13 8 L8 13 Z" fill="#fff"/>' +
   '</svg>';
 
+// Categories — a soft organisational layer for feeds. Typographic, not
+// chromatic: each category is a mono-caps label. The Klein Blue accent
+// stays reserved; we do not assign per-category accent colours.
+const CATEGORIES = [
+  { id: "people",     name: "People",        slug: "people"      },
+  { id: "systems",    name: "Systems & PL",  slug: "systems"     },
+  { id: "aggregators",name: "Aggregators",   slug: "aggregators" },
+  { id: "letters",    name: "Newsletters",   slug: "letters"     },
+];
+
 const FEEDS = [
-  { id: 1, name: "Julia Evans",       url: "jvns.ca",            color: "#d63384", icon: ICON_JVNS },
-  { id: 2, name: "Dan Luu",           url: "danluu.com",         color: "#1a1a1a" },
-  { id: 3, name: "Drew DeVault",      url: "drewdevault.com",    color: "#7a4ddb", icon: ICON_DREW },
-  { id: 4, name: "Fabien Sanglard",   url: "fabiensanglard.net", color: "#c9520f" },
-  { id: 5, name: "lobste.rs",         url: "lobste.rs",          color: "#a6794d", icon: ICON_LOBSTERS },
-  { id: 6, name: "Hillel Wayne",      url: "buttondown.email/hillelwayne", color: "#2b8a3e" },
-  { id: 7, name: "Computer Things",   url: "buttondown.email/hillelwayne", color: "#1971c2", error: "Last fetch: 502 Bad Gateway" },
-  { id: 8, name: "Eli Bendersky",     url: "eli.thegreenplace.net", color: "#5c940d" },
-  { id: 9, name: "Phoronix",          url: "phoronix.com",       color: "#e67700", icon: ICON_PHORONIX },
-  { id: 10, name: "LWN.net",          url: "lwn.net",            color: "#495057", icon: ICON_LWN },
-  { id: 11, name: "Simon Willison",   url: "simonwillison.net",  color: "#0b7285", icon: ICON_SIMONW },
-  { id: 12, name: "rachelbythebay",   url: "rachelbythebay.com", color: "#862e9c", error: "TLS certificate expired 3 days ago" },
+  { id: 1, name: "Julia Evans",       url: "jvns.ca",            color: "#d63384", icon: ICON_JVNS,     category: "people"      },
+  { id: 2, name: "Dan Luu",           url: "danluu.com",         color: "#1a1a1a",                      category: "people"      },
+  { id: 3, name: "Drew DeVault",      url: "drewdevault.com",    color: "#7a4ddb", icon: ICON_DREW,     category: "people"      },
+  { id: 4, name: "Fabien Sanglard",   url: "fabiensanglard.net", color: "#c9520f",                      category: "systems"     },
+  { id: 5, name: "lobste.rs",         url: "lobste.rs",          color: "#a6794d", icon: ICON_LOBSTERS, category: "aggregators" },
+  { id: 6, name: "Hillel Wayne",      url: "buttondown.email/hillelwayne", color: "#2b8a3e",            category: "letters"     },
+  { id: 7, name: "Computer Things",   url: "buttondown.email/hillelwayne", color: "#1971c2", error: "Last fetch: 502 Bad Gateway", category: "letters" },
+  { id: 8, name: "Eli Bendersky",     url: "eli.thegreenplace.net", color: "#5c940d",                   category: "systems"     },
+  { id: 9, name: "Phoronix",          url: "phoronix.com",       color: "#e67700", icon: ICON_PHORONIX, category: "aggregators" },
+  { id: 10, name: "LWN.net",          url: "lwn.net",            color: "#495057", icon: ICON_LWN,      category: "aggregators" },
+  { id: 11, name: "Simon Willison",   url: "simonwillison.net",  color: "#0b7285", icon: ICON_SIMONW,   category: "people"      },
+  { id: 12, name: "rachelbythebay",   url: "rachelbythebay.com", color: "#862e9c", error: "TLS certificate expired 3 days ago", category: "people" },
 ];
 
 const ENTRIES = [
@@ -146,3 +156,4 @@ const ENTRIES = [
 
 window.TAP_FEEDS = FEEDS;
 window.TAP_ENTRIES = ENTRIES;
+window.TAP_CATEGORIES = CATEGORIES;

@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Tap — screenshot harness</title>
+<link rel="stylesheet" href="styles.css" />
+<style>
+  html, body { margin: 0; padding: 0; background: #ececea; overflow: hidden; width: 100vw; height: 100vh; }
+  body { font-family: "Inter Tight", system-ui, sans-serif; display: flex; align-items: center; justify-content: center; }
+  #root { width: 100vw; height: 100vh; display: flex; align-items: center; justify-content: center; }
+  .fit { transform-origin: center center; }
+  .stage { background: transparent; display: inline-block; }
+</style>
+<script>
+  // Scale the rendered view to fit the viewport, preserving aspect ratio.
+  window.__fit = function() {
+    const el = document.querySelector('.stage');
+    if (!el) return;
+    el.style.transform = 'none';
+    const w = el.scrollWidth, h = el.scrollHeight;
+    const vw = window.innerWidth, vh = window.innerHeight;
+    // Fit to width primarily; only shrink further for height if shorter, so text stays readable.
+    const s = Math.min(vw / w, vh / h, 1);
+    el.style.transform = `scale(${s})`;
+    el.style.transformOrigin = 'center center';
+  };
+  window.addEventListener('resize', () => window.__fit());
+</script>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script src="data.js"></script>
+<script type="text/babel" src="ios-frame.jsx"></script>
+<script type="text/babel" src="browser-window.jsx"></script>
+<script type="text/babel" src="tap-components.jsx"></script>
+<script type="text/babel" src="tap-mobile-nav.jsx"></script>
+<script type="text/babel" src="tap-reader.jsx"></script>
+<script type="text/babel" src="tap-categories.jsx"></script>
+<script type="text/babel" src="tap-categories-page.jsx"></script>
+<script type="text/babel" src="tap-feeds-page.jsx"></script>
+<script type="text/babel" src="tap-simple.jsx"></script>
+<script type="text/babel" src="tap-settings.jsx"></script>
+<script type="text/babel" src="tap-saved.jsx"></script>
+<script type="text/babel" src="tap-admin.jsx"></script>
+
+<script type="text/babel" data-presets="env,react">
+const { useState, useEffect } = React;
+
+// Frame components — same as Tap Desktop.html / Tap Mobile.html
+function SettingsFrame({ theme, fontMode = "serif", density = "default", totp = "off", admin = false, overlay = null, height = 760 }) {
+  return (
+    <ChromeWindow url={`tap.local/settings${overlay ? '#' + overlay : ''}`} width={1180} height={height}
+      tabs={[{ title: 'Tap — Settings' }, { title: 'lobste.rs' }]} activeIndex={0}>
+      <div style={{ width: '100%', height: '100%', position: 'relative', overflow: 'hidden' }}>
+        <div className={`tap theme-${theme} ts-root`} style={fontMode === 'sans' ? { fontFamily: 'var(--sans)' } : {}}>
+          <div className="ts-shell" style={{ position: 'relative', minHeight: '100%' }}>
+            <TopTabs active="settings" unreadCount={12} onNav={() => {}} />
+            <main className="ts-main">
+              <TapSettings theme={theme} fontMode={fontMode} density={density} totp={totp} admin={admin} overlay={overlay} />
+            </main>
+            {admin && (
+              <footer className="ts-admin-footer">
+                <span className="ts-admin-footer-l">tap.local · v1.4.2</span>
+                <span className="grow"></span>
+                <button type="button" className="ts-admin-footer-link">
+                  <span className="ts-admin-footer-dot" aria-hidden="true"></span>
+                  <span>admin →</span>
+                </button>
+              </footer>
+            )}
+          </div>
+        </div>
+      </div>
+    </ChromeWindow>
+  );
+}
+
+function AdminFrame({ theme = "light", fontMode = "serif", overlay = null, overlayUser = null, highlightId = null, live = true, expandedErrors = false, height = 1700 }) {
+  return (
+    <ChromeWindow url={`tap.local/admin${overlay ? '#' + overlay : ''}`} width={1180} height={height}
+      tabs={[{ title: 'Tap — Admin' }, { title: 'lobste.rs' }]} activeIndex={0}>
+      <div style={{ width: '100%', height: '100%', position: 'relative', overflow: 'hidden' }}>
+        <div className={`tap theme-${theme} ts-root`} style={fontMode === 'sans' ? { fontFamily: 'var(--sans)' } : {}}>
+          <div className="ts-shell ts-shell-admin" style={{ position: 'relative', minHeight: '100%' }}>
+            <TopTabs active="settings" unreadCount={12} onNav={() => {}} />
+            <main className="ts-main">
+              <TapAdmin theme={theme} fontMode={fontMode} overlay={overlay} overlayUser={overlayUser} highlightId={highlightId} live={live} expandedErrors={expandedErrors} />
+            </main>
+            <footer className="ts-admin-footer">
+              <span className="ts-admin-footer-l">tap.local · v1.4.2 · uptime 14d 06h</span>
+              <span className="grow"></span>
+              <button type="button" className="ts-admin-footer-link is-active">
+                <span className="ts-admin-footer-dot" aria-hidden="true"></span>
+                <span>admin</span>
+              </button>
+              <span style={{ color: 'var(--ink-4)' }}>·</span>
+              <button type="button" className="ts-admin-footer-link">← back to Settings</button>
+            </footer>
+          </div>
+        </div>
+      </div>
+    </ChromeWindow>
+  );
+}
+
+function DesktopFrame({ theme, fontMode = "serif", showSummary = true, view = "unread", grouped = true }) {
+  return (
+    <ChromeWindow url={`tap.local/${view === 'unread' ? '' : view}`} width={1180} height={760}
+      tabs={[{ title: `Tap — ${view[0].toUpperCase() + view.slice(1)}` }, { title: "lobste.rs" }]} activeIndex={0}>
+      <div style={{ width: '100%', height: '100%' }}>
+        <TapSimple entries={window.TAP_ENTRIES} feeds={window.TAP_FEEDS} theme={theme} fontMode={fontMode} showSummary={showSummary} view={view} grouped={grouped} />
+      </div>
+    </ChromeWindow>
+  );
+}
+
+function CategoriesDesktopFrame({ theme, fontMode = "serif", force = {}, height = 1100 }) {
+  return (
+    <ChromeWindow url={`tap.local/categories`} width={1180} height={height}
+      tabs={[{ title: 'Tap — Categories' }, { title: 'lobste.rs' }]} activeIndex={0}>
+      <div style={{ width: '100%', height: '100%', position: 'relative', overflow: 'hidden' }}>
+        <TSCategoriesPage categories={window.TAP_CATEGORIES} feeds={window.TAP_FEEDS} entries={window.TAP_ENTRIES} theme={theme} fontMode={fontMode} force={force} />
+      </div>
+    </ChromeWindow>
+  );
+}
+
+function SavedDesktopFrame({ theme, fontMode = "serif", showSummary = true, force = {}, height = 760 }) {
+  return (
+    <ChromeWindow url={`tap.local/saved`} width={1180} height={height}
+      tabs={[{ title: 'Tap — Saved' }, { title: 'lobste.rs' }]} activeIndex={0}>
+      <div style={{ width: '100%', height: '100%' }}>
+        <TapSavedDesktop entries={window.TAP_ENTRIES} feeds={window.TAP_FEEDS} theme={theme} fontMode={fontMode} showSummary={showSummary} force={force} />
+      </div>
+    </ChromeWindow>
+  );
+}
+
+function ReaderDesktopFrame({ theme, fontMode = "serif" }) {
+  return (
+    <ChromeWindow url={`tap.local/entry/101`} width={1180} height={760}
+      tabs={[{ title: "Reasons why bugs might feel \u201cimpossible\u201d · Tap" }]} activeIndex={0}>
+      <div style={{ width: '100%', height: '100%' }}>
+        <TapSimpleReader entries={window.TAP_ENTRIES} feeds={window.TAP_FEEDS} entryId={101} theme={theme} fontMode={fontMode} />
+      </div>
+    </ChromeWindow>
+  );
+}
+
+// Mobile
+function MobileFrame({ theme, fontMode = "serif" }) {
+  return (
+    <IOSDevice width={390} height={830} dark={theme === 'dark'}>
+      <TapSimpleMobile entries={window.TAP_ENTRIES} feeds={window.TAP_FEEDS} theme={theme} fontMode={fontMode} />
+    </IOSDevice>
+  );
+}
+function CategoriesMobileFrame({ theme, fontMode = "serif", force = {} }) {
+  return (
+    <IOSDevice width={390} height={830} dark={theme === 'dark'}>
+      <TSCategoriesMobile categories={window.TAP_CATEGORIES} feeds={window.TAP_FEEDS} entries={window.TAP_ENTRIES} theme={theme} fontMode={fontMode} force={force} />
+    </IOSDevice>
+  );
+}
+function SavedMobileFrameW({ theme, fontMode = "serif", force = {} }) {
+  return (
+    <IOSDevice width={390} height={830} dark={theme === 'dark'}>
+      <TapSavedMobile entries={window.TAP_ENTRIES} feeds={window.TAP_FEEDS} theme={theme} fontMode={fontMode} force={force} />
+    </IOSDevice>
+  );
+}
+function ReaderMobileFrame({ theme, fontMode = "serif", entryId = 101, sourceList = "Unread" }) {
+  return (
+    <IOSDevice width={390} height={830} dark={theme === 'dark'}>
+      <TapSimpleReaderMobile entries={window.TAP_ENTRIES} feeds={window.TAP_FEEDS} entryId={entryId} theme={theme} fontMode={fontMode} sourceList={sourceList} />
+    </IOSDevice>
+  );
+}
+
+// View registry — hash -> render fn
+const VIEWS = {
+  // ── DESKTOP · LIGHT (full coverage)
+  "desktop-unread-light":        () => <DesktopFrame theme="light" view="unread" />,
+  "desktop-history-light":       () => <DesktopFrame theme="light" view="history" />,
+
+  "desktop-reader-light":        () => <ReaderDesktopFrame theme="light" />,
+
+  "desktop-saved-light":                () => <SavedDesktopFrame theme="light" height={920} />,
+  "desktop-saved-light-actions":        () => <SavedDesktopFrame theme="light" height={920} force={{ selectedId: 107 }} />,
+  "desktop-saved-light-sort":           () => <SavedDesktopFrame theme="light" height={920} force={{ sortOpen: true, sort: "recent" }} />,
+  "desktop-saved-light-empty":          () => <SavedDesktopFrame theme="light" force={{ empty: true }} />,
+
+  "desktop-categories-light":           () => <CategoriesDesktopFrame theme="light" height={1320} />,
+  "desktop-categories-light-create":    () => <CategoriesDesktopFrame theme="light" height={1320} force={{ creating: true, createValue: "Worth re-reading" }} />,
+  "desktop-categories-light-rename":    () => <CategoriesDesktopFrame theme="light" height={1320} force={{ renamingId: "systems", renameValue: "Systems, PL & compilers" }} />,
+  "desktop-categories-light-reassign":  () => <CategoriesDesktopFrame theme="light" height={1320} force={{ pickerFeedId: 7 }} />,
+  "desktop-categories-light-delete":    () => <CategoriesDesktopFrame theme="light" height={1320} force={{ dialog: { type: "delete", catId: "people" } }} />,
+  "desktop-categories-light-markread":  () => <CategoriesDesktopFrame theme="light" height={1320} force={{ dialog: { type: "markread", catId: "aggregators" } }} />,
+  "desktop-categories-light-empty":     () => <CategoriesDesktopFrame theme="light" height={1100} force={{ empty: true, assignments: { 1: null, 2: null, 3: null, 4: null, 5: null, 6: null, 7: null, 8: null, 9: null, 10: null, 11: null, 12: null } }} />,
+
+  "desktop-feeds-light":                () => <FeedsDesktopFrame theme="light" height={1500} />,
+  "desktop-feeds-light-errors":         () => <FeedsDesktopFrame theme="light" height={920} force={{ filter: "errors", sort: "errors" }} />,
+  "desktop-feeds-light-bulk":           () => <FeedsDesktopFrame theme="light" height={1500} force={{ selected: [4, 8, 11] }} />,
+  "desktop-feeds-light-health":         () => <FeedsDesktopFrame theme="light" height={920} force={{ filter: "errors", sort: "errors", expanded: [12, 7] }} />,
+  "desktop-feeds-light-add":            () => <FeedsDesktopFrame theme="light" height={1100} force={{ dialog: { type: "add" }, addUrl: "rachelbythebay.com", addState: "site" }} />,
+  "desktop-feeds-light-edit":           () => <FeedsDesktopFrame theme="light" height={1500} force={{ dialog: { type: "edit", feedId: 7 } }} />,
+  "desktop-feeds-light-delete":         () => <FeedsDesktopFrame theme="light" height={1100} force={{ selected: [4, 8, 11], dialog: { type: "delete", feedIds: [4, 8, 11] } }} />,
+  "desktop-feeds-light-import":         () => <FeedsDesktopFrame theme="light" height={1100} force={{ dialog: { type: "import" }, importStage: "preview" }} />,
+  "desktop-feeds-light-export":         () => <FeedsDesktopFrame theme="light" height={1100} force={{ dialog: { type: "export" } }} />,
+  "desktop-feeds-light-empty":          () => <FeedsDesktopFrame theme="light" height={760} force={{ assignments: {}, _empty: true }} />,
+
+  "desktop-settings-light":             () => <SettingsFrame theme="light" totp="off" height={1600} />,
+  "desktop-settings-light-enroll":      () => <SettingsFrame theme="light" totp="off" overlay="enroll" height={1740} />,
+  "desktop-settings-light-codes":       () => <SettingsFrame theme="light" totp="on" overlay="codes" height={1740} />,
+  "desktop-settings-light-addpasskey":  () => <SettingsFrame theme="light" totp="on" overlay="addpk" height={1740} />,
+  "desktop-settings-light-removepasskey": () => <SettingsFrame theme="light" totp="on" overlay="removepk" height={1740} />,
+  "desktop-settings-light-admin":       () => <SettingsFrame theme="light" totp="on" admin height={2200} />,
+
+  "desktop-admin-light":                () => <AdminFrame theme="light" height={1780} />,
+  "desktop-admin-light-create":         () => <AdminFrame theme="light" height={1780} overlay="create" />,
+  "desktop-admin-light-reset":          () => <AdminFrame theme="light" height={1780} overlay="reset" highlightId="u4" />,
+  "desktop-admin-light-disable2fa":     () => <AdminFrame theme="light" height={1780} overlay="disable2fa" highlightId="u3" />,
+  "desktop-admin-light-delete":         () => <AdminFrame theme="light" height={1780} overlay="delete" highlightId="u7" />,
+  "desktop-admin-light-events":         () => <AdminFrame theme="light" height={1900} expandedErrors />,
+  "desktop-admin-light-paused":         () => <AdminFrame theme="light" height={1780} live={false} />,
+
+  // ── DESKTOP · SEPIA (sample)
+  "desktop-unread-sepia":               () => <DesktopFrame theme="sepia" view="unread" />,
+  "desktop-reader-sepia":               () => <ReaderDesktopFrame theme="sepia" />,
+
+  // ── DESKTOP · DARK (sample)
+  "desktop-unread-dark":                () => <DesktopFrame theme="dark" view="unread" />,
+  "desktop-reader-dark":                () => <ReaderDesktopFrame theme="dark" />,
+
+  // ── MOBILE · LIGHT (full coverage)
+  "mobile-unread-light":                () => <MobileFrame theme="light" />,
+  "mobile-saved-light":                 () => <SavedMobileFrameW theme="light" />,
+  "mobile-saved-light-swipe-unsave":    () => <SavedMobileFrameW theme="light" force={{ swipe: { id: 107, dir: "left" } }} />,
+  "mobile-saved-light-empty":           () => <SavedMobileFrameW theme="light" force={{ empty: true }} />,
+  "mobile-categories-light":            () => <CategoriesMobileFrame theme="light" />,
+  "mobile-categories-light-sheet":      () => <CategoriesMobileFrame theme="light" force={{ sheetFor: 7 }} />,
+  "mobile-feeds-light":                 () => <FeedsMobileFrame theme="light" />,
+  "mobile-feeds-light-edit":            () => <FeedsMobileFrame theme="light" force={{ sheet: "edit" }} />,
+  "mobile-reader-light":                () => <ReaderMobileFrame theme="light" sourceList="Unread" entryId={101} />,
+
+  // ── MOBILE · SEPIA (sample)
+  "mobile-reader-sepia":                () => <ReaderMobileFrame theme="sepia" sourceList="Saved" entryId={102} />,
+
+  // ── MOBILE · DARK (sample)
+  "mobile-unread-dark":                 () => <MobileFrame theme="dark" />,
+};
+
+window.__VIEWS = VIEWS;
+
+function App() {
+  const [hash, setHash] = useState(window.location.hash.slice(1));
+  useEffect(() => {
+    const h = () => setHash(window.location.hash.slice(1));
+    window.addEventListener('hashchange', h);
+    return () => window.removeEventListener('hashchange', h);
+  }, []);
+
+  React.useEffect(() => { setTimeout(() => window.__fit && window.__fit(), 200); }, [hash]);
+  const render = VIEWS[hash];
+  if (!render) {
+    return (
+      <div style={{ padding: 32, fontFamily: 'JetBrains Mono, monospace', fontSize: 12 }}>
+        <div style={{ marginBottom: 16, color: '#555' }}>Pick a view via URL hash:</div>
+        <ul style={{ columns: 2, columnGap: 40 }}>
+          {Object.keys(VIEWS).map(k => (
+            <li key={k} style={{ breakInside: 'avoid', margin: '2px 0' }}>
+              <a href={`#${k}`}>{k}</a>
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
+  React.useEffect(() => { setTimeout(() => window.__fit && window.__fit(), 200); }, [hash]);
+  return <div className="fit"><div className="stage" data-view={hash}>{render()}</div></div>;
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
