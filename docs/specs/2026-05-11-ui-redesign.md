@@ -146,9 +146,11 @@ Foundations milestone also delivers the **primitive component library** (every v
 | `OtpInput.svelte` | `.ts-otp` | six-cell mono input with paste handling |
 | `RecoveryCodesGrid.svelte` | `.ts-codes` | 2-col grid; used/unused state |
 | `EmptyState.svelte` | `.ts-empty` | dot + serif title + sans sub + optional CTA |
-| `EntryRow.svelte` (rewritten) | `tap-components.jsx` `EntryRow` + `tap-simple.jsx` `TSEntryRow` | `.entry` row with junction dot, density + read/saved states |
+| `EntryRow.svelte` (rewritten) | `tap-components.jsx` `EntryRow` + `tap-simple.jsx` `TSEntryRow` | `.entry` row with junction dot, density + read/saved states. Consumed by Unread (M2) and History (M8). |
 | `GroupHeading.svelte` | `tap-simple.jsx` `TSGroupHeading` | day-band heading inside lists |
 | `FeedAvatar.svelte` (existing, restyled) | existing | 14×14 icon or colour square |
+
+**Saved view uses a separate row component, not `EntryRow`.** The design's `.ts-saved-row` family in `styles.css` (lines 4924–5057) is visually distinct from `.entry`: bookmark rail-mark instead of junction dot, hover-reveal `.ts-saved-actions` strip (Open / Mark read / Unsave), date eyebrow ("published Apr 26, 2026") instead of relative time, dedicated is-read styling. Rather than overload `EntryRow` with a `variant` prop for one consumer, the Saved view ships its own `SavedRow.svelte` as a view-specific component built in **M3**, not in M1's primitive library. `EntryRow` remains the primitive for Unread (M2) and History (M8); History reuses `EntryRow` with `is-read` styling plus `GroupHeading`, with no dedicated `HistoryRow`.
 
 Per-view composites live in `views/*.svelte` and own only layout for that view.
 
