@@ -2,10 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 import type { EntryListItem, Subscription } from '../../lib/types';
 
-// Mock heavy child components but NOT TopBar — we need real TopBar to test the button.
-vi.mock('../../components/Sidebar.svelte', () => ({ default: vi.fn() }));
+// Mock heavy child components but NOT Button — we need real Button to test the button.
 vi.mock('../../components/EntryRow.svelte', () => ({ default: vi.fn() }));
-vi.mock('../../components/PollerStatus.svelte', () => ({ default: vi.fn() }));
 
 // Mock the router.
 vi.mock('../../lib/router', () => ({

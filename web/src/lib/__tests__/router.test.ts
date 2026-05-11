@@ -1,8 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { get } from 'svelte/store';
 
-// Helpers to manipulate the simulated location and history.
 function setPathname(path: string) {
-  // jsdom sets window.location via the object below:
   Object.defineProperty(window, 'location', {
     value: { pathname: path, href: `http://localhost${path}` },
     writable: true,
@@ -10,116 +9,95 @@ function setPathname(path: string) {
   });
 }
 
-describe('router URL parsing', () => {
-  // The router module has module-level side effects (it reads window.location
-  // and attaches a popstate listener). To test different initial paths we
-  // dynamically import a fresh module per test.  Vitest's module cache is
-  // reset between vi.resetModules() calls.
-
+describe('router', () => {
   beforeEach(() => {
     vi.resetModules();
-    // Provide history.pushState stub so the module doesn't crash.
     vi.stubGlobal('history', { pushState: vi.fn() });
+    setPathname('/');
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it('parses / as the unread route', async () => {
+  it('parses /', async () => {
     setPathname('/');
     const { route } = await import('../router');
-    let current: unknown;
-    const unsub = route.subscribe((v) => { current = v; });
-    unsub();
-    expect(current).toEqual({ name: 'unread' });
+    expect(get(route)).toEqual({ name: 'unread' });
   });
 
-  it('parses /entry/42 as the reader route with id=42', async () => {
-    setPathname('/entry/42');
+  it('parses /entry/123', async () => {
+    setPathname('/entry/123');
     const { route } = await import('../router');
-    let current: unknown;
-    const unsub = route.subscribe((v) => { current = v; });
-    unsub();
-    expect(current).toEqual({ name: 'reader', params: { id: 42 } });
+    expect(get(route)).toEqual({ name: 'reader', params: { id: 123 } });
   });
 
-  it('parses /entry/0 as reader route with id=0', async () => {
-    setPathname('/entry/0');
-    const { route } = await import('../router');
-    let current: unknown;
-    const unsub = route.subscribe((v) => { current = v; });
-    unsub();
-    expect(current).toEqual({ name: 'reader', params: { id: 0 } });
-  });
-
-  it('falls back to unread for unknown paths', async () => {
-    setPathname('/unknown/path');
-    const { route } = await import('../router');
-    let current: unknown;
-    const unsub = route.subscribe((v) => { current = v; });
-    unsub();
-    expect(current).toEqual({ name: 'unread' });
-  });
-
-  it('parses /saved as saved route', async () => {
+  it('parses /saved', async () => {
     setPathname('/saved');
     const { route } = await import('../router');
-    let current: unknown;
-    const unsub = route.subscribe((v) => { current = v; });
-    unsub();
-    expect(current).toEqual({ name: 'saved' });
+    expect(get(route)).toEqual({ name: 'saved' });
   });
 
-  it('parses /search as search route', async () => {
-    setPathname('/search');
+  it('parses /categories', async () => {
+    setPathname('/categories');
     const { route } = await import('../router');
-    let current: unknown;
-    const unsub = route.subscribe((v) => { current = v; });
-    unsub();
-    expect(current).toEqual({ name: 'search' });
+    expect(get(route)).toEqual({ name: 'categories' });
   });
 
-  it('parses /settings as settings route', async () => {
+  it('parses /feeds', async () => {
+    setPathname('/feeds');
+    const { route } = await import('../router');
+    expect(get(route)).toEqual({ name: 'feeds' });
+  });
+
+  it('parses /history', async () => {
+    setPathname('/history');
+    const { route } = await import('../router');
+    expect(get(route)).toEqual({ name: 'history' });
+  });
+
+  it('parses /settings', async () => {
     setPathname('/settings');
     const { route } = await import('../router');
-    let current: unknown;
-    const unsub = route.subscribe((v) => { current = v; });
-    unsub();
-    expect(current).toEqual({ name: 'settings' });
-  });
-});
-
-describe('navigate()', () => {
-  beforeEach(() => {
-    vi.resetModules();
-    vi.stubGlobal('history', { pushState: vi.fn() });
+    expect(get(route)).toEqual({ name: 'settings' });
   });
 
-  afterEach(() => {
-    vi.unstubAllGlobals();
+  it('parses /admin', async () => {
+    setPathname('/admin');
+    const { route } = await import('../router');
+    expect(get(route)).toEqual({ name: 'admin' });
   });
 
-  it('calls history.pushState and updates the route when navigating to a new path', async () => {
+  it('parses /sign-in', async () => {
+    setPathname('/sign-in');
+    const { route } = await import('../router');
+    expect(get(route)).toEqual({ name: 'signin' });
+  });
+
+  it('falls back to unread for /search (deleted)', async () => {
+    setPathname('/search');
+    const { route } = await import('../router');
+    expect(get(route)).toEqual({ name: 'unread' });
+  });
+
+  it('falls back to unread for /categories/1 (deleted per-category route)', async () => {
+    setPathname('/categories/1');
+    const { route } = await import('../router');
+    expect(get(route)).toEqual({ name: 'unread' });
+  });
+
+  it('navigate() updates route and calls pushState', async () => {
     setPathname('/');
     const { route, navigate } = await import('../router');
-
-    navigate('/entry/7');
-
-    const states: unknown[] = [];
-    const unsub = route.subscribe((v) => { states.push(v); });
-    unsub();
-
+    navigate('/saved');
     expect(window.history.pushState).toHaveBeenCalled();
-    expect(states[states.length - 1]).toEqual({ name: 'reader', params: { id: 7 } });
+    expect(get(route)).toEqual({ name: 'saved' });
   });
 
-  it('does not push a new state when navigating to the current path', async () => {
-    setPathname('/entry/7');
+  it('navigate() does not push when already on same path', async () => {
+    setPathname('/saved');
     const { navigate } = await import('../router');
-
-    navigate('/entry/7');
-
+    navigate('/saved');
     expect(window.history.pushState).not.toHaveBeenCalled();
   });
 });

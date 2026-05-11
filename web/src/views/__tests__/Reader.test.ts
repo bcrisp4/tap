@@ -4,8 +4,6 @@ import type { EntryDetail } from '../../lib/types';
 
 // Mock child Svelte components.
 vi.mock('../../components/FeedAvatar.svelte', () => ({ default: vi.fn() }));
-vi.mock('../../components/JunctionDot.svelte', () => ({ default: vi.fn() }));
-vi.mock('../../components/Sidebar.svelte', () => ({ default: vi.fn() }));
 
 // Mock store.
 const mockToggleRead = vi.fn().mockResolvedValue(undefined);
@@ -127,10 +125,10 @@ describe('Reader view', () => {
     render(Reader, { props: { id: 42 } });
 
     await waitFor(() => {
-      expect(screen.getByText('MARK UNREAD')).toBeInTheDocument();
+      expect(screen.getByText('Mark unread')).toBeInTheDocument();
     });
 
-    const btn = screen.getByText('MARK UNREAD');
+    const btn = screen.getByText('Mark unread');
     await fireEvent.click(btn);
 
     await waitFor(() => {
@@ -149,21 +147,17 @@ describe('Reader view', () => {
   });
 
   it('back button navigates to / via navigate()', async () => {
-    const entry = makeEntry({ read: true });
-    mockGetEntry.mockResolvedValueOnce(entry);
-
     render(Reader, { props: { id: 42 } });
 
-    const backBtn = screen.getByRole('button', { name: /Back to unread/i });
+    const backBtn = screen.getByRole('button', { name: /Back/i });
     await fireEvent.click(backBtn);
 
     expect(mockNavigate).toHaveBeenCalledWith('/');
   });
 
-  it('renders a two-column layout with sidebar and reader pane', () => {
+  it('renders a reader pane', () => {
     mockGetEntry.mockReturnValueOnce(new Promise(() => {}));
     const { container } = render(Reader, { props: { id: 42 } });
-    expect(container.querySelector('.layout')).toBeTruthy();
     expect(container.querySelector('.reader-pane')).toBeTruthy();
   });
 });

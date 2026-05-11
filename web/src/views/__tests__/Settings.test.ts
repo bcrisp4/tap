@@ -2,12 +2,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/svelte';
 import { userEvent } from '@testing-library/user-event';
 
-vi.mock('../../components/Sidebar.svelte', () => ({ default: vi.fn() }));
-vi.mock('../../components/SystemStatus.svelte', () => ({ default: vi.fn() }));
 vi.mock('../../lib/preferences.svelte', () => ({
   theme: { stored: 'system', resolved: 'light' },
   font: { value: 'serif' },
-  density: { value: 'default' },
+  density: { value: 'comfortable' },
+  measure: { value: 'comfortable' },
 }));
 vi.mock('../../lib/auth', () => ({
   auth: {
@@ -31,9 +30,11 @@ describe('Settings', () => {
 
   it('renders the Appearance section by default', () => {
     render(Settings);
-    expect(screen.getByLabelText('Theme')).toBeTruthy();
-    expect(screen.getByLabelText('Reading font')).toBeTruthy();
-    expect(screen.getByLabelText('Density')).toBeTruthy();
+    // The Segmented component uses aria-label on its radiogroup element
+    expect(screen.getByRole('radiogroup', { name: 'Theme' })).toBeTruthy();
+    expect(screen.getByRole('radiogroup', { name: 'Font' })).toBeTruthy();
+    expect(screen.getByRole('radiogroup', { name: 'Density' })).toBeTruthy();
+    expect(screen.getByRole('radiogroup', { name: 'Article width' })).toBeTruthy();
   });
 
   it('renders the Security panel when the Security tab is selected', async () => {
@@ -47,5 +48,13 @@ describe('Settings', () => {
     render(Settings);
     const appearanceBtn = screen.getByRole('button', { name: 'Appearance' });
     expect(appearanceBtn.getAttribute('aria-current')).toBe('true');
+  });
+
+  it('density Segmented shows Compact / Comfortable / Cosy options', () => {
+    render(Settings);
+    const densityGroup = screen.getByRole('radiogroup', { name: 'Density' });
+    expect(densityGroup.querySelector('[aria-label="Compact"]') || densityGroup.textContent).toContain('Compact');
+    expect(densityGroup.textContent).toContain('Comfortable');
+    expect(densityGroup.textContent).toContain('Cosy');
   });
 });

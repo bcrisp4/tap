@@ -1,4 +1,5 @@
 import '@fontsource-variable/source-serif-4';
+import '@fontsource-variable/source-serif-4/wght-italic.css';
 import '@fontsource-variable/inter-tight';
 import '@fontsource/jetbrains-mono/400.css';
 import '@fontsource/jetbrains-mono/500.css';

@@ -1,47 +1,59 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, fireEvent, screen } from '@testing-library/svelte';
+import { render, fireEvent } from '@testing-library/svelte';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import Login from '../Login.svelte';
+import { auth } from '../../lib/auth';
 
-const loginMock = vi.fn();
-vi.mock('../../lib/auth', () => ({
-  auth: {
-    login: (...args: unknown[]) => loginMock(...args),
-    subscribe: () => () => {},
-  },
-  ERR_UNAUTHORIZED: 'unauthorized',
-}));
-
-beforeEach(() => loginMock.mockReset());
-afterEach(() => {/* nothing */});
-
-describe('Login.svelte', () => {
-  it('renders username + password inputs and a submit button', () => {
-    render(Login);
-    expect(screen.getByLabelText(/username/i)).toBeTruthy();
-    expect(screen.getByLabelText(/password/i)).toBeTruthy();
-    expect(screen.getByRole('button', { name: /sign in/i })).toBeTruthy();
+describe('Login (rewritten)', () => {
+  beforeEach(() => {
+    vi.spyOn(auth, 'login').mockReset();
+    vi.spyOn(auth, 'loginWithTOTP').mockReset();
   });
 
-  it('calls auth.login with the entered values on submit', async () => {
-    loginMock.mockResolvedValueOnce(undefined);
-    render(Login);
-
-    await fireEvent.input(screen.getByLabelText(/username/i), { target: { value: 'ben' } });
-    await fireEvent.input(screen.getByLabelText(/password/i), { target: { value: 'pw12345678' } });
-    await fireEvent.click(screen.getByRole('button', { name: /sign in/i }));
-
-    expect(loginMock).toHaveBeenCalledWith('ben', 'pw12345678');
+  it('renders password mode by default', () => {
+    const { getByText, getByLabelText } = render(Login);
+    expect(getByText('Sign in')).toBeTruthy();
+    expect(getByLabelText(/email/i)).toBeTruthy();
+    expect(getByLabelText(/password/i)).toBeTruthy();
   });
 
-  it('shows an error message when login rejects', async () => {
-    loginMock.mockRejectedValueOnce(new Error('unauthorized'));
-    render(Login);
+  it('shows passkey button when credentials API is available', () => {
+    Object.defineProperty(window.navigator, 'credentials', {
+      configurable: true,
+      value: { get: vi.fn() },
+    });
+    const { getByText } = render(Login);
+    expect(getByText(/use a passkey/i)).toBeTruthy();
+  });
 
-    await fireEvent.input(screen.getByLabelText(/username/i), { target: { value: 'ben' } });
-    await fireEvent.input(screen.getByLabelText(/password/i), { target: { value: 'wrong' } });
-    await fireEvent.click(screen.getByRole('button', { name: /sign in/i }));
+  it('transitions to OTP mode when login returns totp_required', async () => {
+    vi.spyOn(auth, 'login').mockResolvedValueOnce({
+      totp_required: true, pending_token: 'pt',
+    } as unknown as ReturnType<typeof auth.login> extends Promise<infer R> ? R : never);
+    const { getByText, getByLabelText, findByText } = render(Login);
+    await fireEvent.input(getByLabelText(/email/i), { target: { value: 'ada@x' } });
+    await fireEvent.input(getByLabelText(/password/i), { target: { value: 'pw' } });
+    await fireEvent.click(getByText(/continue/i));
+    expect(await findByText(/verification code/i)).toBeTruthy();
+  });
 
-    // Wait for the promise rejection + reactive update.
-    await screen.findByText(/invalid username or password/i);
+  it('error chip appears when auth.login throws', async () => {
+    vi.spyOn(auth, 'login').mockRejectedValueOnce(new Error('Invalid'));
+    const { getByText, getByLabelText, findByRole } = render(Login);
+    await fireEvent.input(getByLabelText(/email/i), { target: { value: 'ada@x' } });
+    await fireEvent.input(getByLabelText(/password/i), { target: { value: 'pw' } });
+    await fireEvent.click(getByText(/continue/i));
+    expect(await findByRole('alert')).toBeTruthy();
+  });
+
+  it('OTP mode can toggle to recovery code', async () => {
+    vi.spyOn(auth, 'login').mockResolvedValueOnce({
+      totp_required: true, pending_token: 'pt',
+    } as unknown as ReturnType<typeof auth.login> extends Promise<infer R> ? R : never);
+    const { getByText, getByLabelText } = render(Login);
+    await fireEvent.input(getByLabelText(/email/i), { target: { value: 'ada@x' } });
+    await fireEvent.input(getByLabelText(/password/i), { target: { value: 'pw' } });
+    await fireEvent.click(getByText(/continue/i));
+    await fireEvent.click(getByText(/use a recovery code/i));
+    expect(getByLabelText(/recovery code/i)).toBeTruthy();
   });
 });

@@ -1,6 +1,6 @@
 <script lang="ts">
   import FeedAvatar from './FeedAvatar.svelte';
-  import FeedSettingsModal from './FeedSettingsModal.svelte';
+
   import { api } from '../lib/api';
   import { subscriptions } from '../lib/store';
   import type { Subscription, Category } from '../lib/types';
@@ -12,7 +12,7 @@
 
   let menuOpen = $state(false);
   let confirmingDelete = $state(false);
-  let settingsOpen = $state(false);
+
   let rowError = $state<string | null>(null);
 
   async function doDelete() {
@@ -50,9 +50,7 @@
 
   {#if menuOpen}
     <div class="menu" role="menu">
-      <button
-        type="button"
-        onclick={() => { settingsOpen = true; menuOpen = false; }}>Edit settings…</button>
+
       <details>
         <summary>Move to category</summary>
         <button type="button" onclick={() => assignCategory(null)}>— Uncategorised —</button>
@@ -77,14 +75,6 @@
   {/if}
 </div>
 
-{#if settingsOpen}
-  <FeedSettingsModal
-    {subscription}
-    categories={cats}
-    onClose={() => { settingsOpen = false; }}
-    onSaved={() => { settingsOpen = false; void subscriptions.load(); }}
-  />
-{/if}
 
 <style>
   .feedrow {
