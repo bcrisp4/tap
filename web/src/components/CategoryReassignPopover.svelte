@@ -22,15 +22,13 @@
     function reposition() {
       if (!anchor) return;
       const r = anchor.getBoundingClientRect();
-      top = r.bottom + window.scrollY + 4;
-      left = r.left + window.scrollX;
+      top = r.bottom + 4;
+      left = r.left;
     }
     reposition();
     window.addEventListener('resize', reposition);
-    window.addEventListener('scroll', reposition, true);
     return () => {
       window.removeEventListener('resize', reposition);
-      window.removeEventListener('scroll', reposition, true);
     };
   });
 </script>
@@ -67,6 +65,7 @@
 
 <style>
   .ts-cat-pop {
+    position: fixed;
     min-width: 220px;
     background: var(--bg);
     border: 1px solid var(--rule);
