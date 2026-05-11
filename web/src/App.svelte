@@ -7,7 +7,7 @@
   import { warmCache } from './lib/warmCache';
   import { theme, font, density, measure } from './lib/preferences.svelte';
   import { buildHandler } from './lib/keyboard';
-  import { subscriptions, entries, categories } from './lib/store';
+  import { subscriptions, entries } from './lib/store';
   import { searchOverlay } from './lib/searchOverlay.svelte';
   import { useRegisterSW } from 'virtual:pwa-register/svelte';
 
