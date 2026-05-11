@@ -406,6 +406,38 @@ func TestMarkSubscriptionRead_WrongUser_NoOp(t *testing.T) {
 	require.Equal(t, 0, n, "u1's entry must remain unread when u2 tried to mark it read")
 }
 
+func TestUpdateSubscriptionRefreshNow(t *testing.T) {
+	t.Parallel()
+	d, uid := newTestUserAndDB(t)
+	ctx := context.Background()
+	s := func() int64 {
+		id, err := InsertSubscription(ctx, d, NewSubscription{UserID: uid, Title: "r", FeedURL: "https://refresh.example/feed", NextPoll: 0, Created: 0})
+		require.NoError(t, err)
+		return id
+	}()
+	_, err := d.ExecContext(ctx, `UPDATE subscriptions SET next_poll_at = ? WHERE id = ?`, time.Now().Add(time.Hour).Unix(), s)
+	require.NoError(t, err)
+
+	require.NoError(t, UpdateSubscriptionRefreshNow(ctx, d, s, uid))
+
+	var n int64
+	require.NoError(t, d.QueryRowContext(ctx, `SELECT next_poll_at FROM subscriptions WHERE id = ?`, s).Scan(&n))
+	require.Equal(t, int64(0), n)
+}
+
+func TestUpdateSubscriptionRefreshNow_WrongUser(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	ctx := context.Background()
+	owner := insertTestUser(t, d, "owner")
+	other := insertTestUser(t, d, "other")
+	id, err := InsertSubscription(ctx, d, NewSubscription{UserID: owner, Title: "r", FeedURL: "https://refresh.example/feed", NextPoll: 0, Created: 0})
+	require.NoError(t, err)
+
+	err = UpdateSubscriptionRefreshNow(ctx, d, id, other)
+	require.ErrorIs(t, err, sql.ErrNoRows)
+}
+
 func TestListDuePollsCarriesCreds(t *testing.T) {
 	t.Parallel()
 	d, uid := newTestUserAndDB(t)

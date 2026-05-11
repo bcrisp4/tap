@@ -281,6 +281,34 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 			return
 		}
 
+		// Handle refresh_now: when true, reset next_poll_at = 0 and poke the scheduler.
+		if raw, ok := rawMap["refresh_now"]; ok {
+			var refreshNow bool
+			if err := json.Unmarshal(raw, &refreshNow); err != nil {
+				writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "refresh_now must be a boolean")
+				return
+			}
+			if refreshNow {
+				if err := db.UpdateSubscriptionRefreshNow(r.Context(), d, id, u.ID); err != nil {
+					if errors.Is(err, sql.ErrNoRows) {
+						writeError(w, http.StatusNotFound, ErrCodeNotFound, "subscription not found")
+						return
+					}
+					writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())
+					return
+				}
+				if poke != nil {
+					poke()
+				}
+				// Re-read the row so the DTO reflects the new next_poll_at.
+				s, err = db.GetSubscription(r.Context(), d, id, u.ID)
+				if err != nil {
+					writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())
+					return
+				}
+			}
+		}
+
 		// Handle category_id: if present in the raw map, update it (null = uncategorise).
 		if raw, ok := rawMap["category_id"]; ok {
 			var catID *int64
