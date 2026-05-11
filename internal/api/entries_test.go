@@ -104,6 +104,51 @@ func TestGetEntry_IncludesExtractFailed(t *testing.T) {
 	require.Contains(t, rr.Body.String(), `"extract_failed":true`)
 }
 
+func TestEntries_SavedFilter(t *testing.T) {
+	t.Parallel()
+	mux, d, uid := newAPIWithUser(t)
+
+	subID, err := db.InsertSubscription(context.Background(), d, db.NewSubscription{
+		UserID: uid, Title: "x", FeedURL: "https://x.example/feed", NextPoll: 0, Created: 0,
+	})
+	require.NoError(t, err)
+
+	// Insert saved and unsaved entries directly.
+	res, err := d.ExecContext(context.Background(), `
+		INSERT INTO entries (user_id, subscription_id, hash, title, url, content, published_at, fetched_at)
+		VALUES (?, ?, 'h-saved', 'saved', 'https://x/1', 'c', 100, 0)
+	`, uid, subID)
+	require.NoError(t, err)
+	savedID, err := res.LastInsertId()
+	require.NoError(t, err)
+	_, err = d.ExecContext(context.Background(), `
+		INSERT INTO entries (user_id, subscription_id, hash, title, url, content, published_at, fetched_at)
+		VALUES (?, ?, 'h-unsaved', 'unsaved', 'https://x/2', 'c', 90, 0)
+	`, uid, subID)
+	require.NoError(t, err)
+
+	// Mark it saved via PATCH.
+	patch, _ := json.Marshal(map[string]bool{"saved": true})
+	pr := httptest.NewRequest(http.MethodPatch, "/api/v1/entries/"+toStr(savedID), bytes.NewReader(patch))
+	pr.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, pr)
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+
+	// GET ?saved=1 must return only the saved entry.
+	rr2 := httptest.NewRecorder()
+	mux.ServeHTTP(rr2, httptest.NewRequest(http.MethodGet, "/api/v1/entries?saved=1", nil))
+	require.Equal(t, http.StatusOK, rr2.Code)
+	var body struct {
+		Data []struct {
+			Title string `json:"title"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.NewDecoder(rr2.Body).Decode(&body))
+	require.Len(t, body.Data, 1)
+	require.Equal(t, "saved", body.Data[0].Title)
+}
+
 func TestPatchEntry_BodyTooLarge(t *testing.T) {
 	t.Parallel()
 	mux, d, uid := newAPIWithUser(t)
