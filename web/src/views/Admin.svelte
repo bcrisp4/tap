@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { get } from 'svelte/store';
   import { auth } from '../lib/auth';
   import { navigate } from '../lib/router';
   import { api } from '../lib/api';
@@ -15,9 +14,8 @@
   import ResetPasswordResultDialog from '../components/admin/ResetPasswordResultDialog.svelte';
   import ConfirmDialog from '../components/admin/ConfirmDialog.svelte';
 
-  const authState = $derived(get(auth));
-  const isAdmin = $derived(authState?.user?.role === 'admin');
-  const currentUserId = $derived(authState?.user?.id ?? -1);
+  const isAdmin = $derived($auth.user?.role === 'admin');
+  const currentUserId = $derived($auth.user?.id ?? -1);
 
   let users = $state<AdminUser[]>([]);
   let status = $state<StatusResponse | null>(null);
@@ -159,7 +157,7 @@
       <div class="eyebrow">Admin</div>
       <h1 class="title">Instance &amp; users</h1>
       <div class="id">
-        <span>Signed in as <b>{authState?.user?.username}</b></span>
+        <span>Signed in as <b>{$auth.user?.username}</b></span>
         <span class="dot" aria-hidden="true"></span>
         <span class="accent">admin</span>
       </div>
