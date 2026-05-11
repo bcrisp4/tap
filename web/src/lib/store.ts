@@ -1,4 +1,4 @@
-import { writable } from 'svelte/store';
+import { get, writable } from 'svelte/store';
 import type { EntryListItem, Subscription, Category } from './types';
 import { api } from './api';
 import { notifySW } from './auth';
@@ -102,8 +102,18 @@ function subscriptionsStore() {
 
 export const subscriptions = subscriptionsStore();
 
+function reorderInMemory(cs: Category[], orderedIds: number[]): Category[] {
+  const byId = new Map(cs.map(c => [c.id, c]));
+  const out: Category[] = [];
+  for (const id of orderedIds) {
+    const c = byId.get(id);
+    if (c) out.push({ ...c, position: out.length });
+  }
+  return out;
+}
+
 function categoriesStore() {
-  const { subscribe, set } = writable<Category[]>([]);
+  const { subscribe, set, update } = writable<Category[]>([]);
   return {
     subscribe,
     async load() {
@@ -112,6 +122,45 @@ function categoriesStore() {
       } catch (e) {
         console.error('categories.load failed:', e);
       }
+    },
+    async create(name: string) {
+      const c = await api.createCategory(name);
+      await this.load();
+      return c;
+    },
+    async rename(id: number, name: string) {
+      await api.renameCategory(id, name);
+      await this.load();
+    },
+    async remove(id: number) {
+      await api.deleteCategory(id);
+      await Promise.all([this.load(), subscriptions.load()]);
+    },
+    async reorder(orderedIds: number[]) {
+      let snapshot: Category[] = [];
+      update(cs => { snapshot = cs.slice(); return reorderInMemory(cs, orderedIds); });
+      try {
+        await api.reorderCategories(orderedIds);
+      } catch (e) {
+        set(snapshot);
+        throw e;
+      }
+      await this.load();
+    },
+    async reassignSubscription(subId: number, categoryId: number | null) {
+      await api.patchSubscription(subId, { category_id: categoryId });
+      await Promise.all([subscriptions.load(), this.load()]);
+      notifySW({ type: 'invalidate', paths: ['/api/v1/subscriptions', '/api/v1/categories'] });
+    },
+    async markRead(categoryId: number | null) {
+      if (categoryId !== null) {
+        await api.markCategoryRead(categoryId);
+      } else {
+        const uncatIds = get(subscriptions).filter(s => s.category_id == null).map(s => s.id);
+        await Promise.all(uncatIds.map(id => api.markSubscriptionRead(id)));
+      }
+      await Promise.all([entries.load(), this.load()]);
+      notifySW({ type: 'invalidate', paths: ['/api/v1/entries', '/api/v1/categories'] });
     },
   };
 }

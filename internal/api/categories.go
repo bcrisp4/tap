@@ -14,6 +14,7 @@ import (
 type categoryDTO struct {
 	ID        int64  `json:"id"`
 	Name      string `json:"name"`
+	Position  int64  `json:"position"`
 	Unread    int    `json:"unread"`
 	CreatedAt int64  `json:"created_at"`
 }
@@ -22,6 +23,7 @@ func toCategoryDTO(c db.Category) categoryDTO {
 	return categoryDTO{
 		ID:        c.ID,
 		Name:      c.Name,
+		Position:  c.Position,
 		Unread:    c.Unread,
 		CreatedAt: c.CreatedAt,
 	}
@@ -152,6 +154,36 @@ func registerCategoryRoutes(m *http.ServeMux, d *sql.DB) {
 		if err := db.DeleteCategory(r.Context(), d, id, u.ID); err != nil {
 			if errors.Is(err, db.ErrCategoryNotFound) {
 				writeError(w, http.StatusNotFound, ErrCodeCategoryNotFound, "category not found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	m.HandleFunc("POST /api/v1/categories/reorder", func(w http.ResponseWriter, r *http.Request) {
+		u, ok := userFromContext(r.Context())
+		if !ok {
+			writeError(w, http.StatusUnauthorized, ErrCodeInvalidSession, "no session")
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		var body struct {
+			Order []int64 `json:"order"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			var mbe *http.MaxBytesError
+			if errors.As(err, &mbe) {
+				writeError(w, http.StatusRequestEntityTooLarge, ErrCodeBadRequest, "request body too large")
+				return
+			}
+			writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "invalid JSON body")
+			return
+		}
+		if err := db.ReorderCategories(r.Context(), d, u.ID, body.Order); err != nil {
+			if errors.Is(err, db.ErrCategoryReorderMismatch) {
+				writeError(w, http.StatusBadRequest, ErrCodeReorderMismatch, "order list does not match this user's categories")
 				return
 			}
 			writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())

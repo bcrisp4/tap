@@ -57,6 +57,20 @@ describe('api.addSubscription', () => {
   });
 });
 
+describe('api.reorderCategories', () => {
+  it('POSTs the ordered ID list to /api/v1/categories/reorder', async () => {
+    const fetchSpy = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', fetchSpy);
+    const { api } = await import('../api');
+    await api.reorderCategories([3, 1, 2]);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('/api/v1/categories/reorder');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({ order: [3, 1, 2] });
+  });
+});
+
 describe('api.deleteSubscription', () => {
   it('sends DELETE /api/v1/subscriptions/:id and returns undefined on 204', async () => {
     const { api } = await import('../api');

@@ -28,10 +28,11 @@ const (
 	ErrCodePasswordTooShort       = "password_too_short"
 
 	// M9 error codes.
-	ErrCodeQueryTooShort    = "query_too_short"
-	ErrCodeNoFeedsFound     = "no_feeds_found"
-	ErrCodeCategoryNotFound = "category_not_found"
+	ErrCodeQueryTooShort     = "query_too_short"
+	ErrCodeNoFeedsFound      = "no_feeds_found"
+	ErrCodeCategoryNotFound  = "category_not_found"
 	ErrCodeCategoryNameTaken = "category_name_taken"
+	ErrCodeReorderMismatch   = "category_reorder_mismatch"
 
 	// M7 error codes.
 	ErrCodeTOTPRequired               = "totp_required"

@@ -269,6 +269,17 @@ export const api = {
   markCategoryRead: (id: number) =>
     request<void>(`/categories/${id}/mark-read`, { method: 'POST', body: '{}' }),
 
+  // --- Categories M-Redesign-4 ---
+  reorderCategories: (orderedIds: number[]) =>
+    request<void>('/categories/reorder', {
+      method: 'POST',
+      body: JSON.stringify({ order: orderedIds }),
+    }),
+
+  // --- Subscriptions M-Redesign-4 (Uncategorised mark-all-read) ---
+  markSubscriptionRead: (id: number) =>
+    request<void>(`/subscriptions/${id}/mark-read`, { method: 'POST', body: '{}' }),
+
   // --- Search (M9) ---
   searchEntries: (q: string, limit = 50) => {
     const qs = new URLSearchParams({ q, limit: String(limit) });

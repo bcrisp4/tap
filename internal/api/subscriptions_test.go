@@ -5,11 +5,13 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bcrisp4/tap/internal/db"
 	"github.com/stretchr/testify/require"
@@ -392,4 +394,61 @@ func TestPatchSubscription_BodyTooLarge(t *testing.T) {
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
 	require.Equal(t, http.StatusRequestEntityTooLarge, rr.Code, rr.Body.String())
+}
+
+func TestSubscriptionsAPI_MarkRead_Happy(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	userID := insertAPITestUser(t, d, "subuser-mr")
+	user := db.User{ID: userID, Username: "subuser-mr", Role: "admin"}
+	mux := NewTestMux(d, TestMuxOpts{TestUser: user})
+
+	subID, err := db.InsertSubscription(context.Background(), d, db.NewSubscription{
+		UserID: userID, Title: "F", FeedURL: "https://x/feed", Created: time.Now().Unix(),
+	})
+	require.NoError(t, err)
+	_, err = d.ExecContext(context.Background(),
+		`INSERT INTO entries (subscription_id, hash, title, author, url, content, published_at, fetched_at, read, saved, user_id)
+		 VALUES (?, 'h', 'E', '', 'https://x/1', '<p>x</p>', ?, ?, 0, 0, ?)`,
+		subID, time.Now().Unix(), time.Now().Unix(), userID)
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("POST",
+		fmt.Sprintf("/api/v1/subscriptions/%d/mark-read", subID), nil))
+	require.Equal(t, http.StatusNoContent, w.Code)
+
+	var n int
+	require.NoError(t, d.QueryRowContext(context.Background(),
+		`SELECT read FROM entries WHERE subscription_id = ?`, subID).Scan(&n))
+	require.Equal(t, 1, n)
+}
+
+func TestSubscriptionsAPI_MarkRead_OtherUserGets404(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	u1 := insertAPITestUser(t, d, "mr-u1")
+	u2 := insertAPITestUser(t, d, "mr-u2")
+	muxAsU2 := NewTestMux(d, TestMuxOpts{TestUser: db.User{ID: u2, Username: "mr-u2"}})
+
+	subID, err := db.InsertSubscription(context.Background(), d, db.NewSubscription{
+		UserID: u1, Title: "F", FeedURL: "https://x/feed", Created: time.Now().Unix(),
+	})
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	muxAsU2.ServeHTTP(w, httptest.NewRequest("POST",
+		fmt.Sprintf("/api/v1/subscriptions/%d/mark-read", subID), nil))
+	require.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestSubscriptionsAPI_MarkRead_BadID(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	userID := insertAPITestUser(t, d, "subuser-bad")
+	mux := NewTestMux(d, TestMuxOpts{TestUser: db.User{ID: userID, Username: "subuser-bad"}})
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/v1/subscriptions/abc/mark-read", nil))
+	require.Equal(t, http.StatusBadRequest, w.Code)
 }

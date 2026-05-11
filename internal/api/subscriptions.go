@@ -366,4 +366,32 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
+
+	m.HandleFunc("POST /api/v1/subscriptions/{id}/mark-read", func(w http.ResponseWriter, r *http.Request) {
+		u, ok := userFromContext(r.Context())
+		if !ok {
+			writeError(w, http.StatusUnauthorized, ErrCodeInvalidSession, "no session")
+			return
+		}
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "invalid id")
+			return
+		}
+		// Ownership check — return 404 on a wrong-user attempt to avoid leaking the
+		// existence of another user's subscription IDs.
+		if _, err := db.GetSubscription(r.Context(), d, id, u.ID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				writeError(w, http.StatusNotFound, ErrCodeNotFound, "subscription not found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())
+			return
+		}
+		if err := db.MarkSubscriptionRead(r.Context(), d, id, u.ID); err != nil {
+			writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
 }

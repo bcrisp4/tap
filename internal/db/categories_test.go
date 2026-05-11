@@ -48,6 +48,51 @@ func TestInsertCategory_SameNameDifferentUsers(t *testing.T) {
 	require.NoError(t, err, "same name for different users should be allowed")
 }
 
+func TestInsertCategory_AssignsNextPosition(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	u1 := insertTestUser(t, d, "alice-nextpos")
+	u2 := insertTestUser(t, d, "bob-nextpos")
+	mk := func(uid int64, name string) Category {
+		id, err := InsertCategory(context.Background(), d, NewCategory{UserID: uid, Name: name, CreatedAt: time.Now().Unix()})
+		require.NoError(t, err)
+		c, err := GetCategory(context.Background(), d, id, uid)
+		require.NoError(t, err)
+		return c
+	}
+	a1 := mk(u1, "A")
+	a2 := mk(u1, "B")
+	a3 := mk(u1, "C")
+	b1 := mk(u2, "X") // different user starts at 0 independently
+	require.Equal(t, int64(0), a1.Position)
+	require.Equal(t, int64(1), a2.Position)
+	require.Equal(t, int64(2), a3.Position)
+	require.Equal(t, int64(0), b1.Position)
+}
+
+func TestListCategories_OrdersByPosition(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	userID := insertTestUser(t, d, "alice-pos")
+	// Insert three categories; we set positions manually.
+	for i, name := range []string{"Charlie", "Alpha", "Bravo"} {
+		id, err := InsertCategory(context.Background(), d, NewCategory{UserID: userID, Name: name, CreatedAt: time.Now().Unix()})
+		require.NoError(t, err)
+		_, err = d.ExecContext(context.Background(),
+			`UPDATE categories SET position = ? WHERE id = ?`, int64(2-i), id)
+		require.NoError(t, err)
+	}
+	cats, err := ListCategories(context.Background(), d, userID)
+	require.NoError(t, err)
+	require.Len(t, cats, 3)
+	require.Equal(t, "Bravo", cats[0].Name)   // position 0
+	require.Equal(t, "Alpha", cats[1].Name)   // position 1
+	require.Equal(t, "Charlie", cats[2].Name) // position 2
+	require.Equal(t, int64(0), cats[0].Position)
+	require.Equal(t, int64(1), cats[1].Position)
+	require.Equal(t, int64(2), cats[2].Position)
+}
+
 func TestGetCategory_WrongUser(t *testing.T) {
 	t.Parallel()
 	d := newTestDB(t)
@@ -158,4 +203,66 @@ func TestUpdateCategoryName_WrongUser(t *testing.T) {
 	require.NoError(t, err)
 	err = UpdateCategoryName(context.Background(), d, id, u2, "New")
 	require.ErrorIs(t, err, ErrCategoryNotFound)
+}
+
+func TestReorderCategories_RewritesPositions(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	uid := insertTestUser(t, d, "reorder-alice")
+	ids := make([]int64, 3)
+	for i, n := range []string{"A", "B", "C"} {
+		id, err := InsertCategory(context.Background(), d, NewCategory{UserID: uid, Name: n, CreatedAt: time.Now().Unix()})
+		require.NoError(t, err)
+		ids[i] = id
+	}
+	// Reverse order: C, B, A.
+	require.NoError(t, ReorderCategories(context.Background(), d, uid, []int64{ids[2], ids[1], ids[0]}))
+	cats, err := ListCategories(context.Background(), d, uid)
+	require.NoError(t, err)
+	require.Equal(t, "C", cats[0].Name)
+	require.Equal(t, "B", cats[1].Name)
+	require.Equal(t, "A", cats[2].Name)
+}
+
+func TestReorderCategories_RejectsMissingIDs(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	uid := insertTestUser(t, d, "reorder-bob")
+	a, err := InsertCategory(context.Background(), d, NewCategory{UserID: uid, Name: "A", CreatedAt: time.Now().Unix()})
+	require.NoError(t, err)
+	_, err = InsertCategory(context.Background(), d, NewCategory{UserID: uid, Name: "B", CreatedAt: time.Now().Unix()})
+	require.NoError(t, err)
+	err = ReorderCategories(context.Background(), d, uid, []int64{a}) // missing B
+	require.ErrorIs(t, err, ErrCategoryReorderMismatch)
+}
+
+func TestReorderCategories_RejectsExtraOrCrossUserIDs(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	u1 := insertTestUser(t, d, "reorder-u1")
+	u2 := insertTestUser(t, d, "reorder-u2")
+	a, err := InsertCategory(context.Background(), d, NewCategory{UserID: u1, Name: "A", CreatedAt: time.Now().Unix()})
+	require.NoError(t, err)
+	b, err := InsertCategory(context.Background(), d, NewCategory{UserID: u2, Name: "B", CreatedAt: time.Now().Unix()})
+	require.NoError(t, err)
+	err = ReorderCategories(context.Background(), d, u1, []int64{a, b}) // b belongs to u2
+	require.ErrorIs(t, err, ErrCategoryReorderMismatch)
+}
+
+func TestReorderCategories_Atomic(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	uid := insertTestUser(t, d, "reorder-carol")
+	a, _ := InsertCategory(context.Background(), d, NewCategory{UserID: uid, Name: "A", CreatedAt: time.Now().Unix()})
+	b, _ := InsertCategory(context.Background(), d, NewCategory{UserID: uid, Name: "B", CreatedAt: time.Now().Unix()})
+	// Duplicate ID in the order list — must be rejected, and positions must remain unchanged.
+	err := ReorderCategories(context.Background(), d, uid, []int64{a, a})
+	require.ErrorIs(t, err, ErrCategoryReorderMismatch)
+	cats, err := ListCategories(context.Background(), d, uid)
+	require.NoError(t, err)
+	require.Equal(t, "A", cats[0].Name)
+	require.Equal(t, int64(0), cats[0].Position)
+	require.Equal(t, "B", cats[1].Name)
+	require.Equal(t, int64(1), cats[1].Position)
+	_ = b
 }
