@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Sidebar from '../components/Sidebar.svelte';
   import { onMount } from 'svelte';
   import { get } from 'svelte/store';
   import { auth } from '../lib/auth';
@@ -116,80 +117,87 @@
 {#if authState?.user?.role !== 'admin'}
   <p>Access denied.</p>
 {:else}
-  <div class="admin">
-    <h1>User Management</h1>
-    {#if error}
-      <p role="alert" class="error">{error}</p>
-    {/if}
+  <div class="layout">
+    <Sidebar />
+    <main class="admin-main">
+      <div class="admin">
+        <h1>User Management</h1>
+        {#if error}
+          <p role="alert" class="error">{error}</p>
+        {/if}
 
-    {#if tempPassword}
-      <div class="modal">
-        <p>Temporary password (shown once):</p>
-        <code>{tempPassword}</code>
-        <button onclick={() => tempPassword = ''}>Close</button>
+        {#if tempPassword}
+          <div class="modal">
+            <p>Temporary password (shown once):</p>
+            <code>{tempPassword}</code>
+            <button onclick={() => tempPassword = ''}>Close</button>
+          </div>
+        {/if}
+
+        <button onclick={() => showCreateForm = !showCreateForm} disabled={busy}>
+          {showCreateForm ? 'Cancel' : 'Create user'}
+        </button>
+
+        {#if showCreateForm}
+          <form onsubmit={(e) => { e.preventDefault(); createUser(); }} class="create-form">
+            <input type="text" bind:value={newUsername} placeholder="Username" required />
+            <input type="password" bind:value={newPassword} placeholder="Password" required minlength="8" />
+            <select bind:value={newRole}>
+              <option value="user">User</option>
+              <option value="admin">Admin</option>
+            </select>
+            <button type="submit" disabled={busy}>Create</button>
+          </form>
+        {/if}
+
+        <table>
+          <thead>
+            <tr>
+              <th>Username</th>
+              <th>Role</th>
+              <th>Created</th>
+              <th>Status</th>
+              <th>2FA</th>
+              <th>Passkeys</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each users as user (user.id)}
+              <tr class:disabled={!!user.disabled_at}>
+                <td>{user.username}</td>
+                <td>{user.role}</td>
+                <td>{formatDate(user.created_at)}</td>
+                <td>{user.disabled_at ? 'Disabled' : 'Active'}</td>
+                <td>{user.has_totp ? 'Enabled' : '—'}</td>
+                <td>{user.passkey_count}</td>
+                <td class="actions">
+                  <button onclick={() => resetPassword(user.id)} disabled={busy}>Reset password</button>
+                  {#if user.has_totp}
+                    <button onclick={() => disableTOTP(user.id)} disabled={busy}>Disable 2FA</button>
+                  {/if}
+                  <button onclick={() => toggleDisabled(user)} disabled={busy}>
+                    {user.disabled_at ? 'Re-enable' : 'Disable'}
+                  </button>
+                  {#if user.id !== authState?.user?.id}
+                    <button onclick={() => deleteUser(user.id, user.username)} disabled={busy} class="danger">
+                      Delete
+                    </button>
+                  {/if}
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
       </div>
-    {/if}
-
-    <button onclick={() => showCreateForm = !showCreateForm} disabled={busy}>
-      {showCreateForm ? 'Cancel' : 'Create user'}
-    </button>
-
-    {#if showCreateForm}
-      <form onsubmit={(e) => { e.preventDefault(); createUser(); }} class="create-form">
-        <input type="text" bind:value={newUsername} placeholder="Username" required />
-        <input type="password" bind:value={newPassword} placeholder="Password" required minlength="8" />
-        <select bind:value={newRole}>
-          <option value="user">User</option>
-          <option value="admin">Admin</option>
-        </select>
-        <button type="submit" disabled={busy}>Create</button>
-      </form>
-    {/if}
-
-    <table>
-      <thead>
-        <tr>
-          <th>Username</th>
-          <th>Role</th>
-          <th>Created</th>
-          <th>Status</th>
-          <th>2FA</th>
-          <th>Passkeys</th>
-          <th>Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        {#each users as user (user.id)}
-          <tr class:disabled={!!user.disabled_at}>
-            <td>{user.username}</td>
-            <td>{user.role}</td>
-            <td>{formatDate(user.created_at)}</td>
-            <td>{user.disabled_at ? 'Disabled' : 'Active'}</td>
-            <td>{user.has_totp ? 'Enabled' : '—'}</td>
-            <td>{user.passkey_count}</td>
-            <td class="actions">
-              <button onclick={() => resetPassword(user.id)} disabled={busy}>Reset password</button>
-              {#if user.has_totp}
-                <button onclick={() => disableTOTP(user.id)} disabled={busy}>Disable 2FA</button>
-              {/if}
-              <button onclick={() => toggleDisabled(user)} disabled={busy}>
-                {user.disabled_at ? 'Re-enable' : 'Disable'}
-              </button>
-              {#if user.id !== authState?.user?.id}
-                <button onclick={() => deleteUser(user.id, user.username)} disabled={busy} class="danger">
-                  Delete
-                </button>
-              {/if}
-            </td>
-          </tr>
-        {/each}
-      </tbody>
-    </table>
+    </main>
   </div>
 {/if}
 
 <style>
-  .admin { max-width: 64rem; margin: 2rem auto; }
+  .layout { display: flex; height: 100vh; }
+  .admin-main { flex: 1; overflow-y: auto; background: var(--bg); padding: 24px 32px; }
+  .admin { max-width: 64rem; margin: 0 auto; }
   table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
   th, td { text-align: left; padding: 0.5rem; border-bottom: 1px solid #eee; }
   .disabled td { opacity: 0.6; }
