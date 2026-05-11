@@ -227,6 +227,7 @@
   }
   .tl-error-ico { margin-top: 1px; flex-shrink: 0; }
   .tl-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+  .tl-actions :global(.btn.variant-primary) { min-height: 42px; }
   .otp-row { display: flex; flex-direction: column; gap: 8px; }
   .otp-label { font-family: var(--mono); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3); }
   /* Mobile overrides per tap-login.css §MOBILE */
