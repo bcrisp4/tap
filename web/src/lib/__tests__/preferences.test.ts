@@ -143,3 +143,28 @@ describe('measure pref', () => {
     expect(store['tap.measure']).toBe('wide');
   });
 });
+
+describe('markOnScroll preference', () => {
+  it('defaults to true when no value is stored', async () => {
+    const { markOnScroll } = await import('../preferences.svelte');
+    expect(markOnScroll.value).toBe(true);
+  });
+
+  it('round-trips false via setter', async () => {
+    const { markOnScroll } = await import('../preferences.svelte');
+    markOnScroll.value = false;
+    expect(markOnScroll.value).toBe(false);
+  });
+
+  it('persists false to localStorage as "0"', async () => {
+    const { markOnScroll } = await import('../preferences.svelte');
+    markOnScroll.value = false;
+    expect(store['tap.markOnScroll']).toBe('0');
+  });
+
+  it('persists true to localStorage as "1"', async () => {
+    const { markOnScroll } = await import('../preferences.svelte');
+    markOnScroll.value = true;
+    expect(store['tap.markOnScroll']).toBe('1');
+  });
+});

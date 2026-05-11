@@ -20,10 +20,10 @@ func TestMigrate_AppliesAllMigrationsExactlyOnce(t *testing.T) {
 
 	require.NoError(t, Migrate(context.Background(), d))
 
-	// schema_migrations should have version 11 recorded (0001 through 0011).
+	// schema_migrations should have version 12 recorded (0001 through 0012).
 	var version int
 	require.NoError(t, d.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version))
-	require.Equal(t, 11, version)
+	require.Equal(t, 12, version)
 
 	// subscriptions table should exist (introduced in 0001).
 	// user_id is NOT NULL after 0006, so we need a user first.
@@ -38,7 +38,7 @@ func TestMigrate_AppliesAllMigrationsExactlyOnce(t *testing.T) {
 	// Re-running Migrate must be a no-op.
 	require.NoError(t, Migrate(context.Background(), d))
 	require.NoError(t, d.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version))
-	require.Equal(t, 11, version)
+	require.Equal(t, 12, version)
 }
 
 func TestMigrate_AddsAuthTables(t *testing.T) {
@@ -139,10 +139,10 @@ func TestMigrate_AddsExtractionColumns(t *testing.T) {
 		require.Equal(t, c.def, defaultVal.String, "%s.%s default", c.table, c.column)
 	}
 
-	// schema_migrations should be at the latest version (M4-redesign added 0011).
+	// schema_migrations should be at the latest version (0012 = category_position).
 	var version int
 	require.NoError(t, d.QueryRowContext(ctx, `SELECT MAX(version) FROM schema_migrations`).Scan(&version))
-	require.Equal(t, 11, version)
+	require.Equal(t, 12, version)
 }
 
 func TestMigrate_0006_UserDataIsolation(t *testing.T) {
@@ -184,21 +184,19 @@ func TestMigrate_0006_UserDataIsolation(t *testing.T) {
 	require.Contains(t, err.Error(), "UNIQUE constraint failed")
 }
 
-func TestMigrate_0011_CategoryPosition_OnPopulatedDB(t *testing.T) {
+func TestMigrate_0012_CategoryPosition_OnPopulatedDB(t *testing.T) {
 	t.Parallel()
-	// Open a fresh DB and apply only migrations 0001-0010, insert two categories,
-	// then apply 0011 and verify position column exists with default 0.
+	// Apply migrations through 0011 only, insert two categories with the
+	// pre-0012 schema, then apply 0012 and verify position column exists with
+	// default 0 on both rows.
 	d, err := Open(context.Background(), ":memory:")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = d.Close() })
 
-	// Apply all migrations — after 0011 lands, newTestDB applies it too.
-	// We need to apply through 0010 only. Use a scoped helper below.
-	require.NoError(t, applyMigrationsUpTo(t, d, 10))
+	require.NoError(t, applyMigrationsUpTo(t, d, 11))
 
-	// Insert a user and two categories using the pre-0011 schema.
 	res, err := d.ExecContext(context.Background(),
-		`INSERT INTO users (username, password_hash, role, created_at) VALUES ('alice0011', 'x', 'admin', 0)`)
+		`INSERT INTO users (username, password_hash, role, created_at) VALUES ('alice0012', 'x', 'admin', 0)`)
 	require.NoError(t, err)
 	uid, _ := res.LastInsertId()
 	_, err = d.ExecContext(context.Background(),
@@ -206,7 +204,7 @@ func TestMigrate_0011_CategoryPosition_OnPopulatedDB(t *testing.T) {
 		uid, uid)
 	require.NoError(t, err)
 
-	// Now apply remaining migrations (0011).
+	// Now apply remaining migrations (0012).
 	require.NoError(t, Migrate(context.Background(), d))
 
 	var pa, pb int64

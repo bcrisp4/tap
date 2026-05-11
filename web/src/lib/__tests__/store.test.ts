@@ -305,10 +305,51 @@ describe('entriesStore.toggleSaved', () => {
   });
 });
 
+describe('entriesStore.loadSaved', () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('fetches saved=true and populates items', async () => {
+    const { api } = await import('../api');
+    vi.mocked(api.listEntries).mockResolvedValueOnce({
+      data: [makeEntry({ id: 1, saved: true })],
+    });
+
+    const { entries: store } = await import('../store');
+    await store.loadSaved();
+
+    expect(api.listEntries).toHaveBeenCalledWith({ saved: true, limit: 100 });
+    const state = getStoreValue(store);
+    expect(state.loading).toBe(false);
+    expect(state.error).toBeNull();
+    expect(state.items).toHaveLength(1);
+    expect(state.items[0].saved).toBe(true);
+  });
+
+  it('records the error and clears items when the API rejects', async () => {
+    const { api } = await import('../api');
+    vi.mocked(api.listEntries).mockRejectedValueOnce(new Error('boom'));
+
+    const { entries: store } = await import('../store');
+    await store.loadSaved();
+
+    const state = getStoreValue(store);
+    expect(state.items).toHaveLength(0);
+    expect(state.loading).toBe(false);
+    expect(state.error).toBe('boom');
+  });
+});
+
 describe('categories store', () => {
   beforeEach(() => {
     vi.resetModules();
   });
+
   afterEach(() => {
     vi.clearAllMocks();
   });

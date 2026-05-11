@@ -1,28 +1,44 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { getStatus } from '../status';
 
-const mockFetch = vi.fn();
-(globalThis as typeof globalThis & { fetch: typeof fetch }).fetch = mockFetch;
-
 describe('getStatus', () => {
-  beforeEach(() => { mockFetch.mockReset(); });
+  beforeEach(() => { vi.restoreAllMocks(); });
 
-  it('returns status on 200', async () => {
-    mockFetch.mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        version: '0.12.0', uptime_seconds: 100, db: 'ok',
-        polls_active: 0, polls_total: 0, last_poll_at: null, recent_errors: []
-      })
-    });
+  it('returns parsed status on 200 including admin metric fields', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      version: 'v1.4.2',
+      uptime_seconds: 86_400,
+      db: 'ok',
+      polls_active: 3,
+      polls_total: 24,
+      last_poll_at: 1_700_000_000,
+      recent_errors: [
+        { time: '2026-05-11T10:42:14Z', level: 'error', event: 'phoronix.com 502', attrs: {} },
+      ],
+      metrics_ok: true,
+      feeds_total: 24,
+      feeds_ok: 22,
+      feeds_with_errors: 2,
+      offending_feeds: ['Phoronix', 'LWN'],
+      entries_total: 14_820,
+      entries_24h: 1_402,
+    }), { status: 200 }));
+
     const s = await getStatus();
-    expect(s.version).toBe('0.12.0');
-    expect(s.uptime_seconds).toBe(100);
-    expect(s.recent_errors).toHaveLength(0);
+    expect(s.version).toBe('v1.4.2');
+    expect(s.db).toBe('ok');
+    expect(s.metrics_ok).toBe(true);
+    expect(s.feeds_total).toBe(24);
+    expect(s.feeds_ok).toBe(22);
+    expect(s.feeds_with_errors).toBe(2);
+    expect(s.offending_feeds).toEqual(['Phoronix', 'LWN']);
+    expect(s.entries_total).toBe(14_820);
+    expect(s.entries_24h).toBe(1_402);
+    expect(s.recent_errors).toHaveLength(1);
   });
 
-  it('throws on 403', async () => {
-    mockFetch.mockResolvedValue({ ok: false, status: 403 });
-    await expect(getStatus()).rejects.toThrow('status 403');
+  it('throws on non-2xx', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response('forbidden', { status: 403 }));
+    await expect(getStatus()).rejects.toThrow(/403/);
   });
 });

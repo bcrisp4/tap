@@ -19,6 +19,8 @@ function makeCtx() {
     onNext: vi.fn(), onPrev: vi.fn(), onOpen: vi.fn(),
     onToggleRead: vi.fn(), onToggleSaved: vi.fn(), onViewOriginal: vi.fn(),
     onEscape: vi.fn(), setModalOpen: vi.fn(),
+    onMeasureNarrow: vi.fn(), onMeasureComfortable: vi.fn(), onMeasureWide: vi.fn(),
+    onBack: vi.fn(),
   };
 }
 
@@ -65,6 +67,18 @@ describe('buildHandler', () => {
     const ctx = makeCtx(); buildHandler(ctx)(fire('Escape'));
     expect(ctx.onEscape).toHaveBeenCalledOnce();
   });
+  it('does not throw when optional handlers are absent', () => {
+    const ctx = {
+      onNext: vi.fn(), onPrev: vi.fn(), onOpen: vi.fn(),
+      onToggleRead: vi.fn(), onToggleSaved: vi.fn(), onViewOriginal: vi.fn(),
+      onEscape: vi.fn(), setModalOpen: vi.fn(),
+    };
+    expect(() => {
+      const h = buildHandler(ctx);
+      h(fire('1')); h(fire('2')); h(fire('3')); h(fire('h'));
+    }).not.toThrow();
+  });
+
   it('suppresses all bindings when target is INPUT', () => {
     const ctx = makeCtx(); const h = buildHandler(ctx);
     const inp = document.createElement('input');
@@ -72,5 +86,35 @@ describe('buildHandler', () => {
     expect(ctx.onNext).not.toHaveBeenCalled();
     expect(ctx.onToggleRead).not.toHaveBeenCalled();
     expect(ctx.setModalOpen).not.toHaveBeenCalled();
+  });
+});
+
+describe('measure and back key bindings', () => {
+  it('calls onMeasureNarrow for 1', () => {
+    const ctx = makeCtx(); buildHandler(ctx)(fire('1'));
+    expect(ctx.onMeasureNarrow).toHaveBeenCalledOnce();
+  });
+  it('calls onMeasureComfortable for 2', () => {
+    const ctx = makeCtx(); buildHandler(ctx)(fire('2'));
+    expect(ctx.onMeasureComfortable).toHaveBeenCalledOnce();
+  });
+  it('calls onMeasureWide for 3', () => {
+    const ctx = makeCtx(); buildHandler(ctx)(fire('3'));
+    expect(ctx.onMeasureWide).toHaveBeenCalledOnce();
+  });
+  it('calls onBack for h', () => {
+    const ctx = makeCtx(); buildHandler(ctx)(fire('h'));
+    expect(ctx.onBack).toHaveBeenCalledOnce();
+  });
+  it('does not throw when optional handlers are absent', () => {
+    const ctx = {
+      onNext: vi.fn(), onPrev: vi.fn(), onOpen: vi.fn(),
+      onToggleRead: vi.fn(), onToggleSaved: vi.fn(), onViewOriginal: vi.fn(),
+      onEscape: vi.fn(), setModalOpen: vi.fn(),
+    };
+    expect(() => {
+      const h = buildHandler(ctx);
+      h(fire('1')); h(fire('2')); h(fire('3')); h(fire('h'));
+    }).not.toThrow();
   });
 });

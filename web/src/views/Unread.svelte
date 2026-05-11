@@ -1,12 +1,16 @@
 <script lang="ts">
   import { onMount, onDestroy, getContext } from 'svelte';
   import EntryRow from '../components/EntryRow.svelte';
+  import GroupHeading from '../components/GroupHeading.svelte';
   import Button from '../components/Button.svelte';
-  import EmptyState from '../components/EmptyState.svelte';
   import { entries, subscriptions } from '../lib/store';
   import { navigate } from '../lib/router';
   import { pullToRefresh } from '../lib/pulltorefresh';
+  import { bucketByDay } from '../lib/dayBands';
+  import { density } from '../lib/preferences.svelte';
+  import type { Subscription } from '../lib/types';
 
+  let mainEl = $state<HTMLElement | null>(null);
   let refreshing = $state(false);
   let selectedId = $state<number | null>(null);
 
@@ -38,7 +42,11 @@
         const e = $entries.items.find(x => x.id === selectedId);
         if (e) entries.toggleRead(e.id, !e.read);
       };
-      dispatch.onToggleSaved = () => {};
+      dispatch.onToggleSaved = () => {
+        if (selectedId == null) return;
+        const e = $entries.items.find(x => x.id === selectedId);
+        if (e) entries.toggleSaved(e.id, !e.saved);
+      };
     }
   });
 
@@ -62,9 +70,15 @@
     await Promise.allSettled(ids.map(id => entries.toggleRead(id, true)));
   }
 
-  function feedFor(subId: number) {
+  function feedFor(subId: number): Subscription | undefined {
     return $subscriptions.find(s => s.id === subId);
   }
+
+  const bands = $derived(bucketByDay($entries.items));
+  const BAND_LABELS = ['today', 'yesterday', 'thisWeek', 'earlier'] as const;
+  const BAND_DISPLAY: Record<typeof BAND_LABELS[number], string> = {
+    today: 'Today', yesterday: 'Yesterday', thisWeek: 'This week', earlier: 'Earlier',
+  };
 </script>
 
 <div class="actions">
@@ -77,41 +91,55 @@
 {:else if $entries.error}
   <p class="status err">{$entries.error}</p>
 {:else if $entries.items.length === 0}
-  <EmptyState title="No unread entries." subtitle="Add a feed from the Feeds tab." />
+  <p class="status">No unread entries. Add a feed from the Feeds tab.</p>
 {:else}
-  <ul
-    class="list"
-    role="list"
+  <div
+    class="ts-main"
+    bind:this={mainEl}
+    role="region"
     aria-label="Unread entries"
     {@attach pullToRefresh({
       onRefresh: doRefresh,
-      getScrollTop: () => window.scrollY,
+      getScrollTop: () => mainEl?.scrollTop ?? 0,
     })}
   >
     {#if refreshing}
-      <li class="refresh-indicator" aria-live="polite">
+      <div class="refresh-indicator" aria-live="polite">
         <span class="pulse" aria-hidden="true"></span>
-      </li>
+      </div>
     {/if}
-    {#each $entries.items as entry (entry.id)}
-      <li role="listitem">
-        <EntryRow
-          {entry}
-          feed={feedFor(entry.subscription_id)}
-          isSelected={selectedId === entry.id}
-          onToggleRead={() => entries.toggleRead(entry.id, !entry.read)}
-          onToggleSaved={() => {}}
-        />
-      </li>
-    {/each}
-  </ul>
+    <ul class="ts-list" role="list" aria-label="Unread entries">
+      {#each BAND_LABELS as label (label)}
+        {@const bandItems = bands[label]}
+        {#if bandItems.length > 0}
+          <li class="band-heading" role="presentation">
+            <GroupHeading label={BAND_DISPLAY[label]} count={bandItems.length} />
+          </li>
+          {#each bandItems as entry (entry.id)}
+            <li role="listitem">
+              <EntryRow
+                {entry}
+                feed={feedFor(entry.subscription_id)}
+                isSelected={selectedId === entry.id}
+                density={density.value}
+                onToggleRead={() => entries.toggleRead(entry.id, !entry.read)}
+                onToggleSaved={() => entries.toggleSaved(entry.id, !entry.saved)}
+              />
+            </li>
+          {/each}
+        {/if}
+      {/each}
+    </ul>
+  </div>
 {/if}
 
 <style>
   .actions { display: flex; gap: 8px; justify-content: flex-end; margin: 8px 0 16px; }
   .status { padding: 24px; color: var(--ink-3); font-family: var(--mono); font-size: 11px; }
   .status.err { color: #b14; }
-  .list { flex: 1; list-style: none; margin: 0; padding: 0; }
+  .ts-main { flex: 1; overflow-y: auto; }
+  .ts-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+  .band-heading { list-style: none; }
   .refresh-indicator { display: flex; justify-content: center; padding: 12px 0; }
   .pulse {
     width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
