@@ -9,6 +9,7 @@
       <input
         class="input"
         type="search"
+        aria-label="Search entries"
         autofocus
         placeholder="Search (M2 will implement)"
         value={searchOverlay.query}

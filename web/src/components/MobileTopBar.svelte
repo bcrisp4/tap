@@ -1,10 +1,11 @@
 <script lang="ts">
+  import { navigate } from '../lib/router';
   type Props = { title: string; count?: number; countLabel?: string };
   let { title, count, countLabel }: Props = $props();
 </script>
 
 <header class="mhead">
-  <a class="wordmark" href="/" aria-label="Tap home">tap<span class="dot" aria-hidden="true"></span></a>
+  <a class="wordmark" href="/" aria-label="Tap home" onclick={(e) => { e.preventDefault(); navigate('/'); }}>tap<span class="dot" aria-hidden="true"></span></a>
   <h1 class="title">{title}</h1>
   {#if count !== undefined}
     <span class="count"><b>{count}</b>{#if countLabel}<span> {countLabel}</span>{/if}</span>

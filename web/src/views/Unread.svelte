@@ -7,7 +7,6 @@
   import { navigate } from '../lib/router';
   import { pullToRefresh } from '../lib/pulltorefresh';
 
-  let mainEl = $state<HTMLElement | null>(null);
   let refreshing = $state(false);
   let selectedId = $state<number | null>(null);
 
@@ -78,16 +77,15 @@
 {:else if $entries.error}
   <p class="status err">{$entries.error}</p>
 {:else if $entries.items.length === 0}
-  <EmptyState title="No unread entries." subtitle="Subscribe to a feed in the sidebar." />
+  <EmptyState title="No unread entries." subtitle="Add a feed from the Feeds tab." />
 {:else}
   <ul
     class="list"
     role="list"
     aria-label="Unread entries"
-    bind:this={mainEl}
     {@attach pullToRefresh({
       onRefresh: doRefresh,
-      getScrollTop: () => mainEl?.scrollTop ?? 0,
+      getScrollTop: () => window.scrollY,
     })}
   >
     {#if refreshing}

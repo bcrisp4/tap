@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
+  import Button from './Button.svelte';
   type Props = {
     title: string;
     subtitle?: string | Snippet;
@@ -18,7 +19,9 @@
     <p class="ts-empty-sub">{@render subtitle()}</p>
   {/if}
   {#if cta}
-    <button type="button" class="ts-btn is-primary" onclick={cta.onClick}>{cta.label}</button>
+    <div class="ts-empty-cta">
+      <Button variant="primary" onclick={cta.onClick}>{cta.label}</Button>
+    </div>
   {/if}
 </div>
 
@@ -42,5 +45,5 @@
     max-width: 360px; margin: 0 auto;
     line-height: 1.5;
   }
-  .ts-empty .ts-btn { margin-top: 18px; }
+  .ts-empty-cta { margin-top: 18px; }
 </style>
