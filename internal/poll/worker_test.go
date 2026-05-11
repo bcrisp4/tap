@@ -1149,3 +1149,34 @@ func TestWorker_EmitsPollFailureLogEvent(t *testing.T) {
 
 	require.True(t, h.hasEvent("poll.failure"), "expected poll.failure event in logs")
 }
+
+func TestWorker_AutoSetsSubscriptionTitle(t *testing.T) {
+	t.Parallel()
+	rss := `<?xml version="1.0"?>
+<rss version="2.0"><channel>
+<title>FixtureFeed</title>
+<link>https://example.test/</link>
+<description>fx</description>
+<item><title>Item 1</title><link>https://example.test/1</link><guid>1</guid></item>
+</channel></rss>`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/rss+xml")
+		_, _ = w.Write([]byte(rss))
+	}))
+	defer srv.Close()
+
+	d, uid := newDBUser(t)
+	subID, err := db.InsertSubscription(context.Background(), d, db.NewSubscription{
+		UserID: uid, Title: srv.URL, FeedURL: srv.URL, NextPoll: 0, Created: 0,
+	})
+	require.NoError(t, err)
+
+	worker := NewWorker(d, http.DefaultClient, WorkerOpts{
+		Processor: processor.New(sanitise.DefaultPolicy(), nil),
+	})
+	worker.Run(context.Background(), db.DueSubscription{UserID: uid, ID: subID, FeedURL: srv.URL})
+
+	s, err := db.GetSubscription(context.Background(), d, subID, uid)
+	require.NoError(t, err)
+	require.Equal(t, "FixtureFeed", s.Title)
+}

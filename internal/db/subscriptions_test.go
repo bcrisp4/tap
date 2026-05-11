@@ -299,6 +299,52 @@ func TestInsertAndGetSubscriptionWithCreds(t *testing.T) {
 	require.Equal(t, "secret", s.BasicAuthPass)
 }
 
+func TestUpdateAfterPoll_OverwritesURLDefaultTitle(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	uid := insertTestUser(t, d, "u-overwrite")
+	ctx := context.Background()
+	id, err := InsertSubscription(ctx, d, NewSubscription{
+		UserID: uid, Title: "https://example.test/feed.xml",
+		FeedURL: "https://example.test/feed.xml",
+		NextPoll: 0, Created: 1,
+	})
+	require.NoError(t, err)
+
+	_, err = UpdateAfterPoll(ctx, d, id, PollResult{
+		UserID: uid, NowUnix: 100, FeedTitle: "Example News",
+		Floor: 15 * time.Minute, Ceiling: 24 * time.Hour,
+	})
+	require.NoError(t, err)
+
+	s, err := GetSubscription(ctx, d, id, uid)
+	require.NoError(t, err)
+	require.Equal(t, "Example News", s.Title)
+}
+
+func TestUpdateAfterPoll_PreservesUserSetTitle(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	uid := insertTestUser(t, d, "u-preserve")
+	ctx := context.Background()
+	id, err := InsertSubscription(ctx, d, NewSubscription{
+		UserID: uid, Title: "My Custom Name",
+		FeedURL: "https://example.test/feed.xml",
+		NextPoll: 0, Created: 1,
+	})
+	require.NoError(t, err)
+
+	_, err = UpdateAfterPoll(ctx, d, id, PollResult{
+		UserID: uid, NowUnix: 100, FeedTitle: "Example News",
+		Floor: 15 * time.Minute, Ceiling: 24 * time.Hour,
+	})
+	require.NoError(t, err)
+
+	s, err := GetSubscription(ctx, d, id, uid)
+	require.NoError(t, err)
+	require.Equal(t, "My Custom Name", s.Title)
+}
+
 func TestListDuePollsCarriesCreds(t *testing.T) {
 	t.Parallel()
 	d, uid := newTestUserAndDB(t)
