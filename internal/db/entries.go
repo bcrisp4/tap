@@ -27,6 +27,7 @@ type PollResult struct {
 	UserID          int64
 	NewETag         sql.NullString
 	NewLastModified sql.NullString
+	FeedTitle       string        // empty means leave the existing title alone
 	NowUnix         int64
 	NewEntries      []NewEntry
 	Floor           time.Duration
