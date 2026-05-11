@@ -8,7 +8,7 @@
   import { pullToRefresh } from '../lib/pulltorefresh';
   import { bucketByDay } from '../lib/dayBand';
   import { density } from '../lib/preferences.svelte';
-  import type { EntryListItem, Subscription } from '../lib/types';
+  import type { Subscription } from '../lib/types';
 
   let mainEl = $state<HTMLElement | null>(null);
   let refreshing = $state(false);

@@ -58,13 +58,13 @@
 </script>
 
 {#if searchOverlay.open}
+  <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
   <div class="search-overlay" role="dialog" aria-modal="true" aria-label="Search entries"
-       onclick={onScrimClick} onkeydown={onKeyDown}>
+       tabindex="-1" onclick={onScrimClick} onkeydown={onKeyDown}>
     <div class="panel" onclick={(e) => e.stopPropagation()}>
       <input
         bind:this={inputEl}
         type="search"
-        role="searchbox"
         placeholder="Search…"
         value={searchOverlay.query}
         oninput={onInput}

@@ -76,9 +76,7 @@ describe('EntryRow — Unread consumer contract', () => {
     const { container } = render(EntryRow, {
       props: { entry: entry({ author: 'A summary line' }), feed: baseFeed, density: 'compact' },
     });
-    const summary = container.querySelector('.summary');
-    // density-compact hides via CSS (display:none); summary element may still be in DOM
-    // Verify via class that compact density is applied
+    // density-compact hides via CSS (display:none); verify the class is applied
     expect(container.querySelector('.entry.density-compact')).toBeTruthy();
   });
 
