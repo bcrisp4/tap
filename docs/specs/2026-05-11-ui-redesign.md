@@ -198,7 +198,7 @@ Eight milestones, each its own dated spec, each its own PR or PR-cluster. TDD po
 | 5 | M-Redesign-5 (Feeds management) | New `/feeds` page: search+add toolbar, filter chips (All/Errors/Unread/Stale), sort dropdown, bulk action bar, per-feed row, expanded health panel, add-feed dialog with discovery list, import OPML dialog, export OPML | Largest non-foundations milestone. Bulk ops N×1 to start. |
 | 6 | M-Redesign-6 (Settings) | Numbered eyebrow sections (`01 · APPEARANCE` … `07 · DATA`), segmented controls (theme/font/density/measure), reading toggles, sync settings, account, security (TOTP enrol + passkey list + recovery codes via new `Dialog`), sessions, data export/import/delete | TOTP / passkey flows already work; this is a chrome rebuild |
 | 7 | M-Redesign-7 (Admin) | Metric grid (FEEDS / ENTRIES / ERRORS / POLL), errors table, existing user-management surface restyled into new design language | Metric data already exposed by existing admin endpoints |
-| 8 | M-Redesign-8 (History) | New `/history` page: flat chronological list of read entries (`?unread=0` against existing endpoint), day-band groupings | Smallest milestone; pure frontend |
+| 8 | M-Redesign-8 (History) | New `/history` page: flat chronological list of all entries received (`/api/v1/entries` with no unread filter — returns everything newest-first), day-band groupings | Smallest milestone; pure frontend |
 
 Mobile parity is **not** a separate milestone — each milestone ships desktop + mobile + all three themes for the page(s) it owns.
 
