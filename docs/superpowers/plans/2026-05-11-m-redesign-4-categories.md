@@ -81,7 +81,7 @@ The backend cost is small: one migration, one column, one endpoint, one DB helpe
 - `web/src/views/__tests__/Categories.test.ts` — view-level behaviour tests.
 - `web/src/components/CategoryCard.svelte` — single `.ts-cat` (desktop) or `.m-cat-card` (mobile) — owns rename input, action row, feeds list, reassign trigger.
 - `web/src/components/__tests__/CategoryCard.test.ts`
-- `web/src/components/CategoryReassignPopover.svelte` — desktop popover (built on `Popover.svelte`) listing categories + Uncategorised + leading check on current.
+- `web/src/components/CategoryReassignPopover.svelte` — **cross-milestone shared component.** Desktop popover (built on M1's `Popover.svelte`) listing categories + Uncategorised + leading check on current. M4 owns it; M-Redesign-5 (Feeds management) consumes it as-is for both per-row and bulk reassign actions. Public contract documented in Task 7.
 - `web/src/components/__tests__/CategoryReassignPopover.test.ts`
 - `web/src/components/CategoryReassignSheet.svelte` — mobile bottom sheet variant (`.m-cat-sheet`).
 - `web/src/components/__tests__/CategoryReassignSheet.test.ts`
@@ -1274,16 +1274,61 @@ git commit -m "spa: extend categories store with create/rename/remove/reorder/re
 
 ---
 
-### Task 7: `CategoryReassignPopover.svelte` (desktop)
+### Task 7: `CategoryReassignPopover.svelte` (cross-milestone shared component)
 
 **Files:**
 - Create: `web/src/components/CategoryReassignPopover.svelte`, `web/src/components/__tests__/CategoryReassignPopover.test.ts`
+
+**Ownership and scope (load-bearing).** M4 owns this component per the team-lead's cross-plan decision: M4 ships first in milestone order and owns category semantics (Uncategorised pseudo-category, ordering, etc.). **M-Redesign-5 (Feeds management) consumes this component as-is** — once for the per-row category change action on a feed row, and once for the bulk "Set category…" action in the multi-select toolbar. M5 will **not** create its own popover.
+
+Path: `web/src/components/CategoryReassignPopover.svelte`, directly under `components/` (not `components/categories/`) — keep the path stable across milestones so M5 imports cleanly.
+
+**Public contract (frozen).** The prop shape below is the cross-milestone contract. Do not break it without coordinating with M5's planner; if a new prop is needed, add it as optional with a sensible default. Any breaking change must be flagged in the umbrella spec.
+
+```ts
+type Props = {
+  /** Whether the popover is visible. M4's parent toggles this on click. M5 mirrors. */
+  open: boolean;
+  /** The anchor element the popover positions itself against. Passed through
+   *  to M1's Popover primitive. May be null while opening; the primitive should
+   *  no-op until anchor is non-null. */
+  anchor: HTMLElement | null;
+  /** Subject feed's display name — rendered in the eyebrow ("Move <b>jvns</b> to"). */
+  feedName: string;
+  /** Current category id, or null for an uncategorised feed. The matching item
+   *  renders bold accent + leading check. */
+  currentCategoryId: number | null;
+  /** Full category list. Caller is responsible for ordering (typically by
+   *  position ASC, name COLLATE NOCASE — the same order ListCategories returns). */
+  categories: Category[];
+  /** Eyebrow verb. Defaults to "Move"; pass "Assign" when the feed is currently uncategorised. */
+  label?: 'Move' | 'Assign';
+  /** Called with the new category id (or null for Uncategorised). The consumer
+   *  is responsible for closing the popover after dispatch — typically by
+   *  setting open=false in the onPick handler. */
+  onPick: (id: number | null) => void;
+  /** Called when the user dismisses without picking (Esc, outside-click,
+   *  clicking the trigger again). Primitive owns the keystroke + click-outside
+   *  detection; this callback just notifies the consumer. */
+  onClose: () => void;
+};
+```
+
+The component composes M1's `Popover` primitive — it does **not** re-implement positioning, click-outside detection, or Esc-to-close. It only owns the menu content (the category list, current-item check, Uncategorised pseudo-row) and the visual treatment (`.ts-cat-pop` chrome).
 
 - [ ] **Step 1: Write failing tests**
 
 ```ts
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/svelte';
+
+// Mock M1's Popover primitive to a transparent pass-through so the test
+// exercises this component's content + callbacks, not the primitive's
+// positioning math. The primitive has its own tests in M1.
+vi.mock('../Popover.svelte', () => ({
+  default: (await import('./helpers/PopoverPassThrough.svelte')).default,
+}));
+
 import CategoryReassignPopover from '../CategoryReassignPopover.svelte';
 
 const cats = [
@@ -1291,45 +1336,72 @@ const cats = [
   { id: 2, name: 'Systems', unread: 0, created_at: 0, position: 1 },
 ];
 
+function baseProps(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    open: true,
+    anchor: document.createElement('div'),
+    feedName: 'jvns',
+    currentCategoryId: 1 as number | null,
+    categories: cats,
+    onPick: () => {},
+    onClose: () => {},
+    ...overrides,
+  };
+}
+
 describe('CategoryReassignPopover', () => {
-  it('renders every category plus Uncategorised', () => {
-    render(CategoryReassignPopover, { feedName: 'jvns', currentCategoryId: 1, categories: cats, onSelect: () => {} });
+  it('renders every category plus Uncategorised when open', () => {
+    render(CategoryReassignPopover, baseProps());
     expect(screen.getByText('People')).toBeTruthy();
     expect(screen.getByText('Systems')).toBeTruthy();
     expect(screen.getByText('Uncategorised')).toBeTruthy();
   });
 
+  it('does not render content when open=false', () => {
+    const { container } = render(CategoryReassignPopover, baseProps({ open: false }));
+    expect(container.querySelector('.ts-cat-pop')).toBeNull();
+  });
+
   it('marks the current category with .is-current', () => {
-    const { container } = render(CategoryReassignPopover, {
-      feedName: 'jvns', currentCategoryId: 1, categories: cats, onSelect: () => {},
-    });
+    const { container } = render(CategoryReassignPopover, baseProps({ currentCategoryId: 1 }));
     const current = container.querySelector('.ts-cat-pop-item.is-current');
     expect(current?.textContent).toContain('People');
   });
 
   it('marks Uncategorised current when currentCategoryId is null', () => {
-    const { container } = render(CategoryReassignPopover, {
-      feedName: 'jvns', currentCategoryId: null, categories: cats, onSelect: () => {},
-    });
+    const { container } = render(CategoryReassignPopover, baseProps({ currentCategoryId: null }));
     const current = container.querySelector('.ts-cat-pop-item.is-current');
     expect(current?.textContent).toContain('Uncategorised');
   });
 
-  it('calls onSelect(id) when an item is clicked', async () => {
-    const onSelect = vi.fn();
-    render(CategoryReassignPopover, { feedName: 'jvns', currentCategoryId: 1, categories: cats, onSelect });
+  it('calls onPick(id) when an item is clicked', async () => {
+    const onPick = vi.fn();
+    render(CategoryReassignPopover, baseProps({ onPick }));
     await fireEvent.click(screen.getByText('Systems'));
-    expect(onSelect).toHaveBeenCalledWith(2);
+    expect(onPick).toHaveBeenCalledWith(2);
   });
 
-  it('calls onSelect(null) when Uncategorised is clicked', async () => {
-    const onSelect = vi.fn();
-    render(CategoryReassignPopover, { feedName: 'jvns', currentCategoryId: 1, categories: cats, onSelect });
+  it('calls onPick(null) when Uncategorised is clicked', async () => {
+    const onPick = vi.fn();
+    render(CategoryReassignPopover, baseProps({ onPick }));
     await fireEvent.click(screen.getByText('Uncategorised'));
-    expect(onSelect).toHaveBeenCalledWith(null);
+    expect(onPick).toHaveBeenCalledWith(null);
+  });
+
+  it('renders the eyebrow with the "Move" label by default', () => {
+    render(CategoryReassignPopover, baseProps());
+    expect(screen.getByText(/Move/)).toBeTruthy();
+    expect(screen.getByText('jvns')).toBeTruthy();
+  });
+
+  it('renders the eyebrow with the "Assign" label when passed', () => {
+    render(CategoryReassignPopover, baseProps({ label: 'Assign' }));
+    expect(screen.getByText(/Assign/)).toBeTruthy();
   });
 });
 ```
+
+The `PopoverPassThrough.svelte` helper is a one-line shim — a Svelte component that renders its child slot/snippet unconditionally so the test bypasses M1's positioning. If M1's `Popover` API is snippet-based (`{#snippet content()}`), the helper renders `{@render content?.()}`; if it's a default slot, the helper renders `{@render children?.()}`. Implementer creates `web/src/components/__tests__/helpers/PopoverPassThrough.svelte` matching M1's actual API.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -1342,46 +1414,51 @@ Expected: FAIL — component does not exist.
 
 ```svelte
 <script lang="ts">
+  import Popover from './Popover.svelte';
   import type { Category } from '../lib/types';
 
   type Props = {
+    open: boolean;
+    anchor: HTMLElement | null;
     feedName: string;
     currentCategoryId: number | null;
     categories: Category[];
-    onSelect: (id: number | null) => void;
-    /** Suffix on the eyebrow: "Move" when feed has a current category, "Assign" when uncategorised. */
     label?: 'Move' | 'Assign';
+    onPick: (id: number | null) => void;
+    onClose: () => void;
   };
-  const { feedName, currentCategoryId, categories, onSelect, label = 'Move' }: Props = $props();
+  const { open, anchor, feedName, currentCategoryId, categories, label = 'Move', onPick, onClose }: Props = $props();
 </script>
 
-<div class="ts-cat-pop" role="menu" aria-label="{label} {feedName}">
-  <div class="ts-cat-pop-eyebrow">{label} <b>{feedName}</b> to</div>
-  <div class="ts-cat-pop-rule"></div>
-  {#each categories as cat (cat.id)}
+<Popover {open} {anchor} {onClose}>
+  <div class="ts-cat-pop" role="menu" aria-label="{label} {feedName}">
+    <div class="ts-cat-pop-eyebrow">{label} <b>{feedName}</b> to</div>
+    <div class="ts-cat-pop-rule"></div>
+    {#each categories as cat (cat.id)}
+      <button
+        class="ts-cat-pop-item"
+        class:is-current={cat.id === currentCategoryId}
+        onclick={() => onPick(cat.id)}
+        role="menuitem"
+      >
+        <span class="check" aria-hidden="true">✓</span>
+        <span>{cat.name}</span>
+        <span class="ts-cat-pop-item-ct">{cat.unread}</span>
+      </button>
+    {/each}
+    <div class="ts-cat-pop-rule"></div>
     <button
-      class="ts-cat-pop-item"
-      class:is-current={cat.id === currentCategoryId}
-      onclick={() => onSelect(cat.id)}
+      class="ts-cat-pop-item is-uncat"
+      class:is-current={currentCategoryId === null}
+      onclick={() => onPick(null)}
       role="menuitem"
     >
       <span class="check" aria-hidden="true">✓</span>
-      <span>{cat.name}</span>
-      <span class="ts-cat-pop-item-ct">{cat.unread}</span>
+      <span>Uncategorised</span>
+      <span class="ts-cat-pop-item-ct"></span>
     </button>
-  {/each}
-  <div class="ts-cat-pop-rule"></div>
-  <button
-    class="ts-cat-pop-item is-uncat"
-    class:is-current={currentCategoryId === null}
-    onclick={() => onSelect(null)}
-    role="menuitem"
-  >
-    <span class="check" aria-hidden="true">✓</span>
-    <span>Uncategorised</span>
-    <span class="ts-cat-pop-item-ct"></span>
-  </button>
-</div>
+  </div>
+</Popover>
 
 <style>
   /* Ports .ts-cat-pop, .ts-cat-pop-eyebrow, .ts-cat-pop-rule, .ts-cat-pop-item,
@@ -1389,12 +1466,11 @@ Expected: FAIL — component does not exist.
      .ts-cat-pop-item-ct from ui_design/styles.css:3002-3064.
      Tokens (--bg, --rule, --ink, --ink-3, --ink-4, --accent, --bg-soft) come from
      web/src/styles/tokens.css. Keep selector names identical to the upstream so
-     theme overrides (.theme-dark .ts-cat-pop ...) work without re-prefixing. */
+     theme overrides (.theme-dark .ts-cat-pop ...) work without re-prefixing.
+     Positioning rules (position: absolute, top, right, z-index) are NOT ported
+     here — M1's Popover primitive owns positioning. The .ts-cat-pop block below
+     only owns visual chrome. */
   .ts-cat-pop {
-    position: absolute;
-    top: calc(100% + 6px);
-    right: 0;
-    z-index: 30;
     min-width: 220px;
     background: var(--bg);
     border: 1px solid var(--rule);
@@ -1434,6 +1510,8 @@ Expected: FAIL — component does not exist.
   }
 </style>
 ```
+
+Note on M1's `Popover` API: this implementation assumes a default-slot/children-render API (`<Popover {open} {anchor} {onClose}>...content...</Popover>`). If M1 lands a snippet-based API (`{#snippet content()}...{/snippet}`), the implementer wraps the inner `<div class="ts-cat-pop">` in the appropriate snippet and updates the `PopoverPassThrough.svelte` helper to match. The contract `(open, anchor, onClose) -> content` stays the same.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -2097,6 +2175,9 @@ Expected: FAIL — component does not exist.
   let renameValue = $state('');
   let renameInput = $state<HTMLInputElement | null>(null);
   let openPickerFeedId = $state<number | null>(null);
+  // Trigger DOM refs keyed by feed id — passed to CategoryReassignPopover as
+  // its `anchor` prop so M1's Popover primitive can position itself.
+  const triggerByFeedId: Record<number, HTMLButtonElement | null> = $state({});
 
   function beginRename() {
     if (isUncategorised) return;
@@ -2181,20 +2262,24 @@ Expected: FAIL — component does not exist.
               class:is-open={openPickerFeedId === f.id}
               aria-expanded={openPickerFeedId === f.id}
               aria-haspopup="menu"
+              bind:this={triggerByFeedId[f.id]}
               onclick={() => openPickerFeedId = openPickerFeedId === f.id ? null : f.id}
             >
               <span>{isUncategorised ? 'Assign' : 'Move'}</span>
             </button>
-            {#if openPickerFeedId === f.id && !isMobile}
+            {#if !isMobile}
               <CategoryReassignPopover
+                open={openPickerFeedId === f.id}
+                anchor={triggerByFeedId[f.id] ?? null}
                 feedName={f.title}
                 currentCategoryId={f.category_id}
                 categories={allCategories}
                 label={isUncategorised ? 'Assign' : 'Move'}
-                onSelect={(catId) => {
+                onPick={(catId) => {
                   openPickerFeedId = null;
                   onReassignFeed(f.id, catId);
                 }}
+                onClose={() => { if (openPickerFeedId === f.id) openPickerFeedId = null; }}
               />
             {/if}
           </span>
