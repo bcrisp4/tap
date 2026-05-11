@@ -5,14 +5,7 @@ import { api } from '../../lib/api';
 vi.mock('../../components/Sidebar.svelte', () => ({ default: vi.fn() }));
 vi.mock('../../components/TopBar.svelte', () => ({ default: vi.fn() }));
 
-// EntryRow mock renders the title text so tests can find the entry.
-vi.mock('../../components/EntryRow.svelte', () => ({
-  default: vi.fn().mockImplementation(({ entry }: { entry: { title: string } }) => {
-    const el = document.createElement('span');
-    el.textContent = entry?.title ?? '';
-    return el;
-  }),
-}));
+vi.mock('../../components/EntryRow.svelte', () => ({ default: vi.fn() }));
 
 const { default: Saved } = await import('../Saved.svelte');
 
