@@ -20,12 +20,23 @@
       ],
     },
     {
+      title: 'Go to',
+      rows: [
+        { keys: ['g', 'u'], desc: 'Unread' },
+        { keys: ['g', 's'], desc: 'Saved' },
+        { keys: ['g', 'f'], desc: 'Feeds' },
+        { keys: ['g', 'c'], desc: 'Categories' },
+        { keys: ['g', ','], desc: 'Settings' },
+      ],
+    },
+    {
       title: 'Actions',
       rows: [
         { keys: ['m'], desc: 'Toggle read' },
         { keys: ['s'], desc: 'Toggle saved' },
         { keys: ['v'], desc: 'View original' },
-        { keys: ['r'], desc: 'Refresh' },
+        { keys: ['Shift+R'], desc: 'Refresh all feeds' },
+        { keys: ['Shift+A'], desc: 'Mark scope as read' },
       ],
     },
     {
@@ -42,6 +53,7 @@
       title: 'App',
       rows: [
         { keys: ['/'], desc: 'Search' },
+        { keys: ['t'], desc: 'Cycle theme' },
         { keys: ['?'], desc: 'This help' },
       ],
     },

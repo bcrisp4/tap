@@ -7,6 +7,7 @@
   import { warmCache } from './lib/warmCache';
   import { theme, font, density, measure } from './lib/preferences.svelte';
   import { buildHandler } from './lib/keyboard';
+  import { subscriptions, entries, categories } from './lib/store';
   import { searchOverlay } from './lib/searchOverlay.svelte';
   import { useRegisterSW } from 'virtual:pwa-register/svelte';
 
@@ -50,6 +51,26 @@
     onMeasureComfortable: () => { if ($route.name === 'reader') measure.value = 'comfortable'; },
     onMeasureWide: () => { if ($route.name === 'reader') measure.value = 'wide'; },
     onBack: () => { if ($route.name === 'reader') navigate('/'); },
+    onNavigate: (path: string) => { navigate(path); },
+    onRefreshAll: () => {
+      const ids = get(subscriptions).map((s) => s.id);
+      if (ids.length > 0) void subscriptions.refreshMany(ids);
+    },
+    onMarkScopeRead: () => {
+      const routeName = $route.name;
+      if (routeName === 'unread' || routeName === 'history') {
+        const unreadIds = get(entries).items.filter((e) => !e.read).map((e) => e.id);
+        void Promise.allSettled(unreadIds.map((id) => entries.toggleRead(id, true)));
+      } else if (routeName === 'saved') {
+        const savedIds = get(entries).items.filter((e) => e.saved).map((e) => e.id);
+        void Promise.allSettled(savedIds.map((id) => entries.toggleRead(id, true)));
+      }
+    },
+    onCycleTheme: () => {
+      const order = ['light', 'sepia', 'dark'] as const;
+      const idx = order.indexOf(theme.resolved);
+      theme.stored = order[(idx + 1) % order.length];
+    },
   });
 
   onMount(() => {
