@@ -283,4 +283,15 @@ describe('entriesStore.toggleSaved', () => {
       expect.objectContaining({ type: 'invalidate', paths: expect.arrayContaining(['/api/v1/entries']) }),
     );
   });
+
+  it('is a graceful no-op when the entry is not in the store (direct navigation)', async () => {
+    const { api } = await import('../api');
+    vi.mocked(api.listEntries).mockResolvedValueOnce({ data: [] });
+    vi.mocked(api.patchEntry).mockResolvedValueOnce(makeEntry({ id: 999, saved: true }));
+
+    const { entries: store } = await import('../store');
+    await store.load();
+
+    await expect(store.toggleSaved(999, true)).resolves.not.toThrow();
+  });
 });

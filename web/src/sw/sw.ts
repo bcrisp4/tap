@@ -65,8 +65,9 @@ self.addEventListener('message', (event: ExtendableMessageEvent) => {
       })
     );
   } else if (data.type === 'invalidate') {
-    const paths = (data as SWMessage & { type: 'invalidate' }).paths;
-    if (userId !== null) {
+    const raw = (data as SWMessage & { type: 'invalidate' }).paths;
+    const paths = Array.isArray(raw) ? raw.filter((p): p is string => typeof p === 'string') : [];
+    if (userId !== null && paths.length > 0) {
       const cacheName = apiCacheName('tap-api', userId);
       event.waitUntil(
         caches.open(cacheName).then(cache =>

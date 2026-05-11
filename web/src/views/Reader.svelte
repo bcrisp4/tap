@@ -51,8 +51,10 @@
     entry = { ...entry, read: want };
     try {
       await entries.toggleRead(entry.id, want);
-    } catch {
+      error = null;
+    } catch (e) {
       entry = { ...entry, read: !want };
+      error = (e as Error).message;
     }
   }
 
@@ -62,8 +64,10 @@
     entry = { ...entry, saved: want };
     try {
       await entries.toggleSaved(entry.id, want);
-    } catch {
+      error = null;
+    } catch (e) {
       entry = { ...entry, saved: !want };
+      error = (e as Error).message;
     }
   }
 
