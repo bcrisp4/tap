@@ -788,13 +788,13 @@ Replace the empty branch:
   {:else if items.length === 0}
     <EmptyState
       title="No history yet"
-      sub="Subscribed feeds will accumulate here as they're polled. Come back after the next poll."
+      subtitle="Subscribed feeds will accumulate here as they're polled. Come back after the next poll."
     />
 ```
 
-(The sub copy is concrete and short, matches the design's voice — see brand spec §1.3. Adjust at review only if the reviewer prefers different copy; if you change it, update the regex in Step 1's test to match the new wording.)
+(The subtitle copy is concrete and short, matches the design's voice — see brand spec §1.3. Adjust at review only if the reviewer prefers different copy; if you change it, update the regex in Step 1's test to match the new wording.)
 
-**Precondition note:** this assumes M1's `EmptyState.svelte` accepts `title` and `sub` props and renders them as visible text. Confirm by reading `web/src/components/EmptyState.svelte` before this step. If M1 named the props differently (e.g. `heading` / `body` / `description`), use M1's names and update the regex assertions to match the rendered text — the assertion shape (text match via `findByText`) does not change.
+**Precondition note:** M1's `EmptyState.svelte` accepts `title: string` and `subtitle: string | Snippet` props (confirmed via team-lead's M1 decisions on 2026-05-11). This plan passes a plain string for `subtitle`. Confirm the prop names by reading `web/src/components/EmptyState.svelte` before this step in case of further drift.
 
 - [ ] **Step 4: Run all tests for the file and confirm green**
 
