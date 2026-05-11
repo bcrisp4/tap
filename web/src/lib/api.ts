@@ -325,6 +325,12 @@ export const api = {
       body: JSON.stringify({ url }),
     }),
 
+  deleteAccount: (currentPassword: string) =>
+    request<void>('/me', {
+      method: 'DELETE',
+      body: JSON.stringify({ current_password: currentPassword }),
+    }),
+
   // Wrapper around /healthz for SPA-side display only. Public endpoint;
   // does not flow through request() because /healthz lives outside /api/v1.
   health: async (): Promise<{ polls_active: number; last_poll_at?: number }> => {

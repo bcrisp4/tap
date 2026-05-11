@@ -123,3 +123,5 @@ export type TOTPRequiredResponse = {
 };
 
 export type LoginResponse = SessionResponse | TOTPRequiredResponse;
+
+export type DeleteAccountRequest = { current_password: string };
