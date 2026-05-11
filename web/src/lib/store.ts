@@ -21,6 +21,15 @@ function entriesStore() {
         set({ items: [], loading: false, error: (e as Error).message });
       }
     },
+    async loadSaved() {
+      set({ items: [], loading: true, error: null });
+      try {
+        const r = await api.listEntries({ saved: true, limit: 100 });
+        set({ items: r.data, loading: false, error: null });
+      } catch (e) {
+        set({ items: [], loading: false, error: (e as Error).message });
+      }
+    },
     async toggleRead(id: number, read: boolean) {
       let prev: boolean | null = null;
       update(s => {
