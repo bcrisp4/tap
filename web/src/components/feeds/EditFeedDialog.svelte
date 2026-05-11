@@ -12,14 +12,16 @@
   };
   let { feed, categories, onClose, onSaved, onDelete }: Props = $props();
 
-  let title = $state(feed.title);
-  let extract = $state(feed.extract);
-  let extractSelector = $state(feed.extract_selector);
+  // Snapshot feed values on open — intentional for edit-form pattern.
+  const init = $state.snapshot(feed);
+  let title = $state(init.title);
+  let extract = $state(init.extract);
+  let extractSelector = $state(init.extract_selector);
   let cookie = $state('');
   let basicAuthUser = $state('');
   let basicAuthPass = $state('');
-  let selectedCategory = $state<number | null>(feed.category_id);
-  const originalCategoryId = feed.category_id;
+  let selectedCategory = $state<number | null>(init.category_id);
+  const originalCategoryId = init.category_id;
 
   let busy = $state(false);
   let error = $state<string | null>(null);

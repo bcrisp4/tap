@@ -150,7 +150,6 @@
   .ts-import-result-eyebrow { font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--ink-3); margin: 0; }
   .ts-import-result-stats { display: flex; gap: 16px; }
   .stat { font-family: var(--sans); font-size: 14px; color: var(--ink-2); }
-  .stat b { font-family: var(--mono); font-size: 18px; font-weight: 600; color: var(--ink); }
   .stat.muted { color: var(--ink-3); }
   .ts-import-errors { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
   .ts-import-error-item { font-family: var(--mono); font-size: 11.5px; color: var(--color-error-light, #c43a3a); }

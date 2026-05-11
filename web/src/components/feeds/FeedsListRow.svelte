@@ -30,6 +30,7 @@
 <div
   class="ts-feed-row"
   class:is-selected={isSelected}
+  class:any-selected={anySelected}
   class:has-error={feed.error_count > 0}
   class:is-busy={isRefreshing}
 >
@@ -116,6 +117,18 @@
       <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
         <path d="M13.5 2.5A7 7 0 1 0 15 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
         <polyline points="11,0 14,3 11,6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </button>
+    <button
+      class="ts-feed-act"
+      data-action="delete"
+      type="button"
+      onclick={onDelete}
+      aria-label="Delete feed"
+    >
+      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <polyline points="2,4 14,4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+        <path d="M6 4V2h4v2M5 4v9h6V4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
     </button>
     <button

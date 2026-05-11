@@ -172,13 +172,13 @@
     {#if visible.length === 0 && decorated.length === 0}
       <EmptyState
         title="No feeds yet"
-        sub="Add a feed by URL, or import an OPML export from another reader."
+        subtitle="Add a feed by URL, or import an OPML export from another reader."
         cta={{ label: 'Add a feed', onClick: () => { dialog = { type: 'add' }; } }}
       />
     {:else if visible.length === 0}
       <EmptyState
         title="No feeds match"
-        sub="Nothing matches the current filter."
+        subtitle="Nothing matches the current filter."
         cta={{ label: 'Reset filters', onClick: () => { search = ''; filter = 'all'; } }}
       />
     {:else}
@@ -229,24 +229,26 @@
 {/if}
 
 {#if dialog?.type === 'edit'}
-  {@const f = $subscriptions.find((x) => x.id === dialog.feedId)}
+  {@const editDialog = dialog as { type: 'edit'; feedId: number }}
+  {@const f = $subscriptions.find((x) => x.id === editDialog.feedId)}
   {#if f}
     <EditFeedDialog
       feed={f}
       categories={$categories}
       onClose={() => { dialog = null; }}
       onSaved={() => { dialog = null; void subscriptions.load(); }}
-      onDelete={() => { if (dialog?.type === 'edit') dialog = { type: 'delete', feedIds: [dialog.feedId] }; }}
+      onDelete={() => { dialog = { type: 'delete', feedIds: [editDialog.feedId] }; }}
     />
   {/if}
 {/if}
 
 {#if dialog?.type === 'delete'}
-  {@const fs = $subscriptions.filter((x) => dialog.feedIds.includes(x.id))}
+  {@const deleteDialog = dialog as { type: 'delete'; feedIds: number[] }}
+  {@const fs = $subscriptions.filter((x) => deleteDialog.feedIds.includes(x.id))}
   <DeleteFeedsDialog
     feeds={fs}
     onClose={() => { dialog = null; }}
-    onConfirm={() => bulkDelete(dialog.feedIds)}
+    onConfirm={() => bulkDelete(deleteDialog.feedIds)}
   />
 {/if}
 
