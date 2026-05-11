@@ -8,15 +8,17 @@
 
 **Tech Stack:** Svelte 5 (runes, `{@attach}` directive, `<svelte:window>`), TypeScript, Vite, Vitest + `@testing-library/svelte`. No new dependencies.
 
-**Depends on M-Redesign-1 (Foundations).** This plan assumes M1 has already shipped:
+**Hard preconditions on M-Redesign-1 (Foundations).** This plan does not ship until M1 has delivered all of the following. If any are missing or renamed at execution time, fix M1 first and rebase — do not work around them in M3:
 
-- The `.ts-shell` simple-centred desktop chrome (`AppShell.svelte`, `TopTabs.svelte`, `AccountAvatar.svelte`, `StatusFoot.svelte`).
-- The mobile chrome (`MobileTopBar.svelte`, `MobileTabBar.svelte`, `MobileMoreSheet.svelte`) and the `isMobile` context branch in `App.svelte`.
-- The `EmptyState.svelte` primitive (accent-dot + serif title + sans subtitle + optional CTA), `KbdChip.svelte`, `FeedAvatar.svelte` (restyled).
-- The token + global-stylesheet structure under `web/src/styles/`.
-- Router awareness of the `/saved` route name (already routed in M1; M3 only rewrites the view body).
-
-If any of those primitives is missing or renamed, fix forward in M1's branch and rebase this plan — do not work around it here. (See "Risks" §3.)
+- The `.ts-shell` simple-centred desktop chrome (`AppShell.svelte`, `TopTabs.svelte`, `AccountAvatar.svelte`, `StatusFoot.svelte`) wired in `App.svelte` so the `/saved` route renders inside the new shell.
+- The mobile chrome (`MobileTopBar.svelte`, `MobileTabBar.svelte`, `MobileMoreSheet.svelte`).
+- **`isMobile`** — exported as a `Readable<boolean>` from `web/src/lib/preferences.svelte.ts` (or an equivalent location M1 chooses; the export name is `isMobile`). Subscribed via `$isMobile` store syntax in views. (M1 currently keeps `isMobile` as a local `$state` rune inside `App.svelte`; promoting it to a module-level `Readable<boolean>` is part of M1's chrome work because every route needs to know.)
+- **`EmptyState.svelte`** — primitive accepting `title: string`, `subtitle: Snippet` (so an inline `<KbdChip>S</KbdChip>` can be slotted into the "Press S on any entry…" line), and `tone: 'accent' | 'muted'` (defaults to accent dot). The Snippet-bearing subtitle is required by M3.
+- **`KbdChip.svelte`** — primitive rendering `.ts-kbd` for a single key. M3 consumes this directly; it does not ship a local `<kbd>` reimplementation.
+- **`FeedAvatar.svelte`** — restyled to the new 14×14 / 11×11 / 10×10 size conventions; same `feedURL` + `size` + `radius` prop surface as today.
+- The token + global-stylesheet structure under `web/src/styles/` (tokens.css, global.css).
+- Router awareness of the `/saved` route name (already routed; M3 only rewrites the view body).
+- **EntryRow / SavedRow primitive ownership** is being settled between planner-m2, planner-m3, and team-lead before this plan merges. See "Risks" §1 below — M3 currently ships a sibling `SavedRow.svelte` (option (a)); if the team agrees on a variant prop (option (b)) instead, Task 2 and the file-structure table need to be rewritten to consume `EntryRow` with `variant="saved"` and the standalone `SavedRow.svelte` is deleted.
 
 ---
 
@@ -49,15 +51,16 @@ MCP tools:
 | `web/src/views/__tests__/Saved.test.ts` | **create** | Load → list, load → error, load → empty, optimistic unsave from row, mobile swipe-left unsave, mobile swipe-right toggle-read. |
 | `web/src/components/SavedToolbar.svelte` | **create** | The pinned `.ts-saved-toolbar` count banner with serif "Saved" eyebrow + mono count + `Find /` kbd hint. No sort menu in M3 (out of scope; see §"Out of scope"). |
 | `web/src/components/__tests__/SavedToolbar.test.ts` | **create** | Renders correct count for 0 / 1 / N (verifies singular/plural). |
-| `web/src/components/SavedRow.svelte` | **create** | Desktop row primitive — `.ts-saved-row` body (eyebrow, serif title, byline, summary) + revealed `.ts-saved-actions` row (Open, Mark read/unread, Unsave). Reuses `FeedAvatar.svelte` from M1. |
+| `web/src/components/SavedRow.svelte` | **create** | Desktop row primitive — `.ts-saved-row` body (eyebrow, serif title, byline) + revealed `.ts-saved-actions` row (Open, Mark read/unread, Unsave). Reuses `FeedAvatar.svelte` from M1. (Brand spec §6.3 does not list a row summary on the Saved row; the underlying `EntryListItem` DTO has no `summary` field either, so this primitive renders title + byline only.) |
 | `web/src/components/__tests__/SavedRow.test.ts` | **create** | Renders read / unread variants; click-row navigates; action buttons fire correct callback and stop propagation; correct icon swap for Mark read vs Mark unread. |
 | `web/src/components/SavedMobileRow.svelte` | **create** | Mobile row primitive — wraps `.ts-saved-m-card` in two reveal layers (`.ts-saved-m-rev-left`, `.ts-saved-m-rev-right`) plus a `{@attach swipe(...)}` directive that toggles `is-swipe-left` / `is-swipe-right` classes and, on release past threshold, fires the destructive / read-toggle action. |
 | `web/src/components/__tests__/SavedMobileRow.test.ts` | **create** | Swipe-left fires `onUnsave`; swipe-right fires `onToggleRead`; reveal classes apply mid-swipe (visual feedback); release past threshold commits the action; release before threshold rolls back the class. |
 | `web/src/views/Saved.svelte` `<style>` block | **CSS port** | Owns view-level layout: `.list` wrapper around `SavedRow`s, optional vertical spacing under the toolbar. References `ui_design/styles.css` lines 4920–5113 (desktop) and 5115–5250 (mobile) for visual truth; selectors are renamed inside scoped styles. |
 | `web/src/components/SavedToolbar.svelte` `<style>` block | **CSS port** | `.ts-saved-toolbar` family — lines 4796–4843 in `ui_design/styles.css`. |
 | `web/src/components/SavedRow.svelte` `<style>` block | **CSS port** | `.ts-saved-row` + `.ts-saved-rail` + `.ts-saved-body` + `.ts-saved-eyebrow` + `.ts-saved-title` + `.ts-saved-byline` + `.ts-saved-summary` + `.ts-saved-actions` + `.ts-saved-action` — lines 4920–5057 in `ui_design/styles.css`. |
-| `web/src/components/SavedMobileRow.svelte` `<style>` block | **CSS port** | `.ts-saved-m-row` family — lines 5137–5250 in `ui_design/styles.css`. |
-| `web/src/components/EmptyState.svelte` | (no change) | M1 ships this. M3 calls it from `Saved.svelte` with prop overrides: title "Nothing saved yet", subtitle "Press <kbd>S</kbd> on any entry to keep it here.", accent dot. If M1's `EmptyState` is too constrained for the keyboard-chip in the subtitle, M3 owns a small inline empty state instead — see Task 5. |
+| `web/src/components/SavedMobileRow.svelte` `<style>` block | **CSS port** | `.ts-saved-m-row` family — lines 5137–5250 in `ui_design/styles.css`. **Do not port lines 5177–5178** (`.ts-saved-m-row.is-swipe-left .ts-saved-m-card { transform: translateX(-110px); }` and `.is-swipe-right .ts-saved-m-card { transform: translateX(140px); }`) — these depend on a touchmove stream that `web/src/lib/swipe.ts` does not emit (the recogniser fires only on `touchend`). Porting them would render an inert hover-state rule that would mislead a future reader. Likewise, do not author the `.is-swipe-left` / `.is-swipe-right` classes themselves in the component. |
+| `web/src/components/EmptyState.svelte` | (no change) | M1 ships this. M3 calls it from `Saved.svelte` with: `title="Nothing saved yet"`, `tone="accent"`, and a `subtitle` snippet that renders "Press " + `<KbdChip>S</KbdChip>` + " on any entry to keep it here." The Snippet-bearing subtitle is a hard precondition on M1 (see "Hard preconditions" above) — M3 must not ship its own inline empty state. |
+| `web/src/components/KbdChip.svelte` | (no change) | M1 ships this. M3 consumes it inside `SavedToolbar.svelte` (the `Find /` hint) and inside the `EmptyState` subtitle snippet. M3 must not ship a local `<kbd>` reimplementation. |
 
 ### Out of scope for M3 (explicit)
 
@@ -109,10 +112,12 @@ describe('SavedToolbar', () => {
   });
 
   it('renders the find hint with the / kbd chip', () => {
-    render(SavedToolbar, { props: { count: 3 } });
-    const find = screen.getByText(/find/i);
-    expect(find).toBeInTheDocument();
-    expect(find.textContent).toContain('/');
+    const { container } = render(SavedToolbar, { props: { count: 3 } });
+    const find = container.querySelector('.find');
+    expect(find).not.toBeNull();
+    // KbdChip is a child component; assert via textContent rather than a child-specific selector.
+    expect(find!.textContent).toMatch(/find/i);
+    expect(find!.textContent).toContain('/');
   });
 
   it('renders the "Saved" serif eyebrow', () => {
@@ -136,6 +141,8 @@ Replace the contents of `web/src/components/SavedToolbar.svelte` with:
 
 ```svelte
 <script lang="ts">
+  import KbdChip from './KbdChip.svelte';
+
   type Props = { count: number };
   let { count }: Props = $props();
   const word = count === 1 ? 'entry' : 'entries';
@@ -147,7 +154,7 @@ Replace the contents of `web/src/components/SavedToolbar.svelte` with:
     <span class="count"><b>{count}</b> {word}</span>
   </div>
   <div class="right">
-    <span class="find">Find <kbd class="kbd">/</kbd></span>
+    <span class="find">Find <KbdChip>/</KbdChip></span>
   </div>
 </div>
 
@@ -171,20 +178,17 @@ Replace the contents of `web/src/components/SavedToolbar.svelte` with:
   .count :global(b) { color: var(--ink); font-weight: 500; }
   .right { display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
   .find {
-    font-family: var(--mono); font-size: 10px;
-    letter-spacing: 0.06em; color: var(--ink-3); text-transform: uppercase;
+    font-family: var(--mono); font-size: 11px;
+    letter-spacing: 0.04em; color: var(--ink-3);
     display: inline-flex; align-items: center; gap: 6px;
-  }
-  .kbd {
-    font-family: var(--mono); font-size: 10.5px;
-    padding: 1px 5px; border: 1px solid var(--rule);
-    border-bottom-width: 2px; border-radius: 3px;
-    background: var(--surface); color: var(--ink-2);
   }
 </style>
 ```
 
-(The `<b>` element inside `.count` is selected via `:global(b)` because Svelte's CSS scoper drops selectors that target elements rendered inside child interpolations — `<b>{count}</b>` here. The `kbd` class is a local one-off so M3 does not couple to M1's `KbdChip.svelte` if M1 renames it; if M1 actually exports `KbdChip`, swap the local `<kbd>` for `<KbdChip>` in Task 8.)
+Notes:
+- The `<b>` element inside `.count` is selected via `:global(b)` because Svelte's CSS scoper drops selectors that target elements rendered inside child interpolations (`<b>{count}</b>`).
+- "Find" is mixed-case (matches `tap-saved.jsx:148`'s `Find` text inside `.ts-saved-toolbar-find`). The brand spec mono rule for labels is UPPER, but this is a hint, not a label.
+- The keyboard chip is rendered by `<KbdChip>/</KbdChip>` — this primitive is a hard precondition on M1. If `KbdChip.svelte` is missing at execution time, fix M1, do not stub it locally.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -225,10 +229,11 @@ const entry: EntryListItem = {
   id: 7, subscription_id: 3, title: 'Reasons bugs feel impossible',
   url: 'https://jvns.ca/x', author: 'Julia Evans',
   published_at: Math.floor(Date.now() / 1000) - 60 * 32,
-  read: false, saved: true,
-} as EntryListItem;
+  fetched_at: Math.floor(Date.now() / 1000),
+  read: false, saved: true, extract_failed: false,
+};
 
-const feed: Subscription = {
+const feed = {
   id: 3, feed_url: 'https://jvns.ca/feed.xml', title: 'Julia Evans',
 } as Subscription;
 
@@ -349,10 +354,6 @@ Replace the contents of `web/src/components/SavedRow.svelte` with:
         <span class="author">{entry.author}</span>
       {/if}
     </div>
-
-    {#if entry.summary}
-      <p class="summary">{entry.summary}</p>
-    {/if}
   </div>
 
   <div class="actions" role="group" aria-label="Saved entry actions">
@@ -447,18 +448,6 @@ Replace the contents of `web/src/components/SavedRow.svelte` with:
   .row.is-read .source { color: var(--ink-2); font-weight: 400; }
   .author { color: var(--ink-2); font-style: italic; }
 
-  .summary {
-    font-family: var(--serif); font-size: 14.5px; line-height: 1.55;
-    color: var(--ink-2);
-    margin: 4px 0 0;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-    text-wrap: pretty;
-  }
-  .row.is-read .summary { color: var(--ink-3); }
-
   .sep::before {
     content: ""; display: inline-block;
     width: 3px; height: 3px; border-radius: 50%;
@@ -538,10 +527,11 @@ const entry: EntryListItem = {
   id: 7, subscription_id: 3, title: 'A mobile saved entry',
   url: 'https://jvns.ca/x', author: 'Julia Evans',
   published_at: Math.floor(Date.now() / 1000) - 60 * 60 * 24,
-  read: false, saved: true, summary: 'Summary text',
-} as EntryListItem;
+  fetched_at: Math.floor(Date.now() / 1000),
+  read: false, saved: true, extract_failed: false,
+};
 
-const feed: Subscription = {
+const feed = {
   id: 3, feed_url: 'https://jvns.ca/feed.xml', title: 'Julia Evans',
 } as Subscription;
 
@@ -666,9 +656,6 @@ Replace the contents of `web/src/components/SavedMobileRow.svelte` with:
         <span>{entry.author}</span>
       {/if}
     </div>
-    {#if entry.summary}
-      <p class="summary">{entry.summary}</p>
-    {/if}
     <div class="foot">
       <span>published {publishedLabel(entry.published_at)}</span>
     </div>
@@ -749,16 +736,6 @@ Replace the contents of `web/src/components/SavedMobileRow.svelte` with:
   .source { color: var(--ink); font-weight: 500; }
   .row.is-read .source { color: var(--ink-2); font-weight: 400; }
 
-  .summary {
-    font-family: var(--serif); font-size: 14px; line-height: 1.5;
-    color: var(--ink-2);
-    margin: 0 0 8px;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-  }
-
   .foot {
     display: flex; align-items: center; gap: 8px;
     font-family: var(--mono); font-size: 10px;
@@ -783,7 +760,7 @@ pnpm --dir web test -- src/components/__tests__/SavedMobileRow.test.ts
 
 Expected: PASS, all 4 tests.
 
-If the swipe tests fail because happy-dom does not synthesise the `touches` array exactly as `web/src/lib/swipe.ts` expects, check `web/src/lib/__tests__/swipe.test.ts` for the canonical mock pattern (M1 / M8 used this same pattern) and copy it. Do not modify `web/src/lib/swipe.ts`.
+The `touchEvent()` helper in this test file is **new** — it is the first TouchEvent attachment mock in the codebase. `web/src/lib/__tests__/swipe.test.ts` only exercises the pure `recogniseSwipe(dx, dy, startX)` function and does not synthesise TouchEvents. If happy-dom's TouchEvent semantics change in a future Vitest upgrade and the helper breaks, adjust the helper here — do not modify `web/src/lib/swipe.ts` (the recogniser is canonical and shipped by M-Redesign-1 / M8). If the helper proves load-bearing for future milestones, consider promoting it to `web/src/lib/__tests__/_touch.ts` as a shared test utility in a follow-up.
 
 - [ ] **Step 5: Commit**
 
@@ -840,9 +817,11 @@ describe('Saved view', () => {
     vi.mocked(api.listEntries).mockResolvedValueOnce({
       data: [
         { id: 1, subscription_id: 3, title: 'Saved one',  url: 'a', author: '',
-          published_at: 1700000000, read: false, saved: true, summary: '' },
+          published_at: 1700000000, fetched_at: 1700000000,
+          read: false, saved: true, extract_failed: false },
         { id: 2, subscription_id: 3, title: 'Saved two',  url: 'b', author: '',
-          published_at: 1700000100, read: true,  saved: true, summary: '' },
+          published_at: 1700000100, fetched_at: 1700000100,
+          read: true,  saved: true, extract_failed: false },
       ],
       next_cursor: null,
     });
@@ -875,8 +854,10 @@ describe('Saved view', () => {
     vi.mocked(api.listEntries).mockResolvedValueOnce({
       data: Array.from({ length: 4 }).map((_, i) => ({
         id: i + 1, subscription_id: 3, title: `Title ${i}`,
-        url: 'u', author: '', published_at: 1700000000 + i, read: false, saved: true,
-      })) as unknown[],
+        url: 'u', author: '', published_at: 1700000000 + i,
+        fetched_at: 1700000000 + i,
+        read: false, saved: true, extract_failed: false,
+      })),
       next_cursor: null,
     });
     render(Saved);
@@ -890,7 +871,8 @@ describe('Saved view', () => {
     vi.mocked(api.listEntries).mockResolvedValueOnce({
       data: [
         { id: 1, subscription_id: 3, title: 'Saved one',  url: 'a', author: '',
-          published_at: 1700000000, read: false, saved: true, summary: '' },
+          published_at: 1700000000, fetched_at: 1700000000,
+          read: false, saved: true, extract_failed: false },
       ],
       next_cursor: null,
     });
@@ -928,6 +910,8 @@ Replace the contents of `web/src/views/Saved.svelte` with:
   import SavedToolbar from '../components/SavedToolbar.svelte';
   import SavedRow from '../components/SavedRow.svelte';
   import SavedMobileRow from '../components/SavedMobileRow.svelte';
+  import EmptyState from '../components/EmptyState.svelte';
+  import KbdChip from '../components/KbdChip.svelte';
   import { api } from '../lib/api';
   import { subscriptions } from '../lib/store';
   import { navigate } from '../lib/router';
@@ -1010,18 +994,20 @@ Replace the contents of `web/src/views/Saved.svelte` with:
   });
 </script>
 
+{#snippet emptySubtitle()}
+  Press <KbdChip>S</KbdChip> on any entry to keep it here.
+{/snippet}
+
 {#if loading}
   <p class="status" role="status">Loading…</p>
 {:else if error}
   <p class="status err" role="alert">{error}</p>
 {:else if items.length === 0}
-  <section class="empty" aria-label="Empty saved list">
-    <div class="empty-dot" aria-hidden="true"></div>
-    <h2 class="empty-title">Nothing saved yet</h2>
-    <p class="empty-sub">
-      Press <kbd class="kbd">S</kbd> on any entry to keep it here.
-    </p>
-  </section>
+  <EmptyState
+    tone="accent"
+    title="Nothing saved yet"
+    subtitle={emptySubtitle}
+  />
 {:else}
   <SavedToolbar count={items.length} />
   <ul class="list" role="list" aria-label="Saved entries">
@@ -1065,54 +1051,12 @@ Replace the contents of `web/src/views/Saved.svelte` with:
     display: flex;
     flex-direction: column;
   }
-
-  .empty {
-    padding: 64px 24px 80px;
-    text-align: center;
-    color: var(--ink-3);
-    max-width: 480px;
-    margin: 0 auto;
-  }
-  .empty-dot {
-    width: 8px; height: 8px;
-    border-radius: 50%;
-    background: var(--accent);
-    margin: 0 auto 22px;
-  }
-  .empty-title {
-    font-family: var(--serif);
-    font-size: 22px;
-    font-weight: 600;
-    color: var(--ink);
-    letter-spacing: -0.015em;
-    margin: 0 0 12px;
-  }
-  .empty-sub {
-    font-family: var(--sans);
-    font-size: 13px;
-    line-height: 1.55;
-    color: var(--ink-3);
-    margin: 0 auto;
-    max-width: 360px;
-  }
-  .kbd {
-    font-family: var(--mono);
-    font-size: 10.5px;
-    padding: 1px 5px;
-    border: 1px solid var(--rule);
-    border-bottom-width: 2px;
-    border-radius: 3px;
-    background: var(--surface);
-    color: var(--ink-2);
-  }
 </style>
 ```
 
 - [ ] **Step 4: Verify imports compile**
 
-`web/src/lib/preferences.svelte.ts` must export `isMobile` (per M-Redesign-1). If M1 instead names it differently (e.g. `isMobile` is a derived store on `App.svelte` via context), swap the import for `getContext<Writable<boolean>>('isMobile')` and adjust the `$isMobile` usage. M3 must not introduce its own media-query plumbing.
-
-If `isMobile` is unavailable in `preferences.svelte.ts`, fall back to inline media-query detection using `<svelte:window bind:innerWidth>` against a 768px threshold — but flag it in the PR description as a workaround pending M1.
+`web/src/lib/preferences.svelte.ts` exports `isMobile` as a `Readable<boolean>` — this is a hard precondition of M-Redesign-1 (see "Hard preconditions" at the top of this plan). If M1 has not yet shipped `isMobile` as a module-level `Readable<boolean>`, the M3 plan does not execute; coordinate with planner-m1 to fix M1 first. M3 must not ship its own media-query plumbing or a fallback path.
 
 - [ ] **Step 5: Run the test to verify it passes**
 
@@ -1122,7 +1066,7 @@ pnpm --dir web test -- src/views/__tests__/Saved.test.ts
 
 Expected: PASS, all 6 tests.
 
-If the `isMobile` mock is required for the tests (the default desktop branch uses `SavedRow`), mock the module:
+Add the following mock at the top of the test file (immediately under the `vi.mock('../../lib/api', …)` call) so the desktop branch is selected for all six unit tests:
 
 ```typescript
 vi.mock('../../lib/preferences.svelte', () => ({
@@ -1130,7 +1074,7 @@ vi.mock('../../lib/preferences.svelte', () => ({
 }));
 ```
 
-Add this at the top of the test file if the test run produces an unhandled-import error for `preferences.svelte`.
+Mobile-branch coverage lives in `SavedMobileRow.test.ts` (Task 3); the view-level test does not need to assert mobile-specific behaviour.
 
 - [ ] **Step 6: Type-check the whole SPA**
 
@@ -1281,9 +1225,10 @@ A reviewer should be able to verify, using **selectors and behaviour**, that:
 1. **DOM structure**
    - `web/src/views/Saved.svelte` no longer imports `Sidebar.svelte` or `TopBar.svelte`. (These are slated for deletion in M-Redesign-1; M3 must not depend on them.)
    - When `items.length > 0`, the rendered DOM contains exactly one `SavedToolbar` element and an `<ul role="list" aria-label="Saved entries">` with one `<li>` per saved entry.
-   - When `items.length === 0`, the rendered DOM contains a `<section aria-label="Empty saved list">` with a serif `<h2>` reading "Nothing saved yet" and a `<kbd>` chip containing `S`.
+   - When `items.length === 0`, the rendered DOM contains the output of M1's `<EmptyState tone="accent" title="Nothing saved yet" subtitle={emptySubtitle} />` — i.e. an accent dot, a serif title reading "Nothing saved yet", and a subtitle containing "Press" + the `<KbdChip>S</KbdChip>` output + "on any entry to keep it here.". The exact selector shape (whether `EmptyState` renders `<section>`, `<div>`, etc.) is M1's choice; the test asserts via visible text only.
    - Each desktop row is an `<article class="row">` (or `<button>` semantically — the test asserts via accessible name).
    - Each mobile row is a `<div class="row">` wrapping a `<button class="card">` plus two `aria-hidden` reveal layers.
+   - `Saved.svelte` does not declare a local `.kbd` class or inline `<kbd>` element — it consumes `<KbdChip>` from M1 inside the `emptySubtitle` snippet and inside `<SavedToolbar>`.
 
 2. **API contract**
    - `Saved.svelte` calls `api.listEntries({ saved: true, limit: 100 })` exactly once on mount.
@@ -1329,13 +1274,15 @@ A reviewer should be able to verify, using **selectors and behaviour**, that:
 
 ## Risks
 
-1. **M-Redesign-1 primitives are not yet final.** M3 depends on M1's `AppShell`, `MobileTopBar`, `EmptyState`, `FeedAvatar` (restyled), and the `isMobile` reactivity. If any of these are renamed or relocated between M1 and M3, every import in `Saved.svelte`, `SavedRow.svelte`, and `SavedMobileRow.svelte` needs to be updated. The plan's import paths use the most likely M1 names (`../components/FeedAvatar.svelte`, `../lib/preferences.svelte`); if the actual M1 names differ, fix forward in this branch.
-2. **`isMobile` reactivity is not yet defined.** M1's foundations milestone is responsible for deciding how `isMobile` is exposed to views — Svelte store, context, or media-query directive. M3 assumes a `Readable<boolean>` named `isMobile` exported from `web/src/lib/preferences.svelte`. If M1 chooses a different shape, swap the import in Task 4 step 4 — this is a 2-line change.
-3. **The mobile swipe is "tap to fire", not "drag to reveal".** The current `web/src/lib/swipe.ts` is a `touchstart` → `touchend` recogniser; it does not emit a position-as-you-drag stream. The design's mid-swipe `.is-swipe-left` transform on `.ts-saved-m-card` is therefore dead in M3 — the card never visually translates. This is intentional and consistent with the existing `EntryRow` swipe wiring; if reviewers flag it, the fix is a follow-up that extends `swipe.ts` to emit `touchmove` events. Not in scope for M3.
-4. **`saved_at` is not in the DB.** The JSX mockup's "saved Xd ago" eyebrow line is not implementable without a schema change. M3 ships "published <date>" instead. If a future iteration wants saved-at, it needs a new column on `entries` (or a side table) and a backend migration.
-5. **Default `published_at` sort.** Backend returns entries newest by `published_at`. The user may expect "most recently saved first" instead. If usability testing surfaces this, add a `?sort=saved_at` query parameter to `GET /api/v1/entries` — but that requires the `saved_at` column above.
-6. **`Saved.svelte` no longer mounts `Sidebar.svelte` or `TopBar.svelte`.** Until M-Redesign-1 has fully shipped (and `App.svelte` mounts the new `.ts-shell` chrome around every route), a developer running the Saved view in isolation will see an unstyled page. This is acceptable inside the M-Redesign sequence; it is NOT acceptable to ship M3 to `main` before M1 is merged.
-7. **Existing tests for the old Saved view.** `web/src/views/__tests__/` may already contain a `Saved.test.ts` (check before writing one). If it tests the deleted `Sidebar + TopBar + EntryRow` shape, the new test file replaces it; do not preserve the old assertions.
+1. **EntryRow / SavedRow primitive ownership — open coordination item.** Umbrella spec §3.2 lists `EntryRow.svelte (rewritten)` as M1-owned and asserts "every view uses these." This plan currently ships `SavedRow.svelte` as a deliberate sibling primitive, because `styles.css` lines 4920–5057 define visually distinct chrome (bookmark rail-mark instead of junction dot, hover-revealed action strip, 20px serif title vs 17–19px on EntryRow, "published <date>" eyebrow). Two acceptable outcomes per the reviewer:
+   - **(a) Siblings** — `EntryRow` for Unread/History/Reader-rail; `SavedRow` for Saved. Umbrella §3.2 amends to "Unread/History/Reader-rail use EntryRow; Saved uses SavedRow." The current plan ships option (a).
+   - **(b) Variant prop** — M1's `EntryRow` gains `variant: 'unread' | 'saved'` and M3 consumes it. The standalone `SavedRow.svelte` is deleted; Task 2 becomes a small change to `Saved.svelte` to render `<EntryRow variant="saved" ... />`.
+   Resolution is in flight via messages to planner-m2 and team-lead. **Until the choice is recorded** (in either an umbrella spec amendment for (a) or a fresh M1 primitive contract for (b)), this plan must not be implemented. The plan body has been written assuming (a) and will need a small Task 2 rewrite if the team chooses (b).
+2. **Mobile swipe is "tap to fire", not "drag to reveal".** The current `web/src/lib/swipe.ts` is a `touchstart` → `touchend` recogniser; it does not emit a position-as-you-drag stream. The design's mid-swipe `.is-swipe-left` transform on `.ts-saved-m-card` is therefore inert and **deliberately omitted from the CSS port** (see the file-structure note on `SavedMobileRow.svelte`'s `<style>` block). This is consistent with the existing `EntryRow` swipe wiring; a follow-up that wants the drag-as-you-swipe affordance needs to extend `swipe.ts` to emit `touchmove`. Not in scope for M3.
+3. **`saved_at` is not in the DB.** The JSX mockup's "saved Xd ago" eyebrow line is not implementable without a schema change. M3 ships "published <date>" instead. If a future iteration wants saved-at, it needs a new column on `entries` (or a side table) and a backend migration.
+4. **Default `published_at` sort.** Backend returns entries newest by `published_at`. The user may expect "most recently saved first" instead. If usability testing surfaces this, add a `?sort=saved_at` query parameter to `GET /api/v1/entries` — but that requires the `saved_at` column above.
+5. **`Saved.svelte` no longer mounts `Sidebar.svelte` or `TopBar.svelte`.** Until M-Redesign-1 has fully shipped (and `App.svelte` mounts the new `.ts-shell` chrome around every route), a developer running the Saved view in isolation will see an unstyled page. This is acceptable inside the M-Redesign sequence; it is NOT acceptable to ship M3 to `main` before M1 is merged.
+6. **Existing tests for the old Saved view.** `web/src/views/__tests__/` does not currently contain a `Saved.test.ts` (verified against the worktree at plan-write time). If a test file appears there before M3 executes and it tests the deleted `Sidebar + TopBar + EntryRow` shape, the new test file replaces it; do not preserve the old assertions.
 
 ---
 
@@ -1345,19 +1292,19 @@ Spec coverage:
 
 - **§5 row M3 ("flat chronological list of every entry where saved===true")** — Task 4 wires `api.listEntries({ saved: true })` and renders a flat list. No grouping.
 - **§5 row M3 ("pinned count banner")** — `SavedToolbar` is rendered above the list in Task 4; tested in Task 1.
-- **§5 row M3 ("empty state")** — Task 4 renders the accent-dot + serif title + sans subtitle + kbd chip inline in `Saved.svelte`; the JSX's "hints panel" is dropped (not in Brand spec §6.3).
+- **§5 row M3 ("empty state")** — Task 4 consumes M1's `<EmptyState tone="accent" title="Nothing saved yet" subtitle={emptySubtitle} />` and renders the kbd chip via `<KbdChip>S</KbdChip>` inside the snippet. The JSX's "hints panel" is dropped (not in Brand spec §6.3).
 - **§5 row M3 (mobile swipe-to-unsave)** — `SavedMobileRow` ships swipe-left / swipe-right; tested in Task 3.
 - **§6.3 ("flat chronological list of every entry where saved === true. No grouping by feed. Pinned banner at top showing the count.")** — Tasks 1 and 4 cover this.
-- **§6.3 ("Press <kbd>S</kbd> on any entry to keep it here.")** — Task 4 step 3 renders this exact copy.
-- **§4.4 entry row primitives (junction dot, title, meta, summary)** — `SavedRow` is a Saved-specific variant (rail mark instead of junction dot, "published <date>" eyebrow instead of meta). This deviates from the generic `EntryRow` because the Saved view's row has different chrome (the design's `.ts-saved-row`, not `.entry`). The plan's choice to ship a dedicated `SavedRow` instead of reusing M1's `EntryRow` is intentional and is consistent with the JSX mockup, which uses `.ts-saved-row`. Reviewers should confirm this is acceptable.
+- **§6.3 ("Press <kbd>S</kbd> on any entry to keep it here.")** — Task 4 step 3 renders this exact copy, with `S` wrapped in `<KbdChip>`.
+- **§3.2 primitive consumption ("every view uses these")** — `Saved.svelte` consumes `EmptyState`, `KbdChip`, `FeedAvatar` from M1 directly. `SavedToolbar.svelte` consumes `KbdChip` for the `Find /` hint. The `SavedRow` / `SavedMobileRow` decision is the open coordination item (Risks §1); M1's `EntryRow` is **not** consumed here under option (a), and **is** consumed under option (b).
 
 Placeholder scan: none.
 
 Type consistency:
 
-- `EntryListItem` is the canonical entry type (`web/src/lib/types.ts:36`) — every component uses this name.
+- `EntryListItem` is the canonical entry type (`web/src/lib/types.ts:36`) — every component uses this name. The DTO has no `summary` field, so neither row primitive renders one; this matches Brand spec §6.3 which makes no mention of a row summary on Saved.
 - `Subscription` is the feed type (per `web/src/lib/types.ts`) — every component uses this name.
-- `feedFor(subId)` is the lookup helper; named consistently across `Saved.svelte` and the mockup-style `feedFor` already used in `Unread.svelte`.
+- `feedFor(subId)` is the lookup helper; named consistently across `Saved.svelte` and the existing `feedFor` already used in `Unread.svelte`.
 - The handler trio is `onOpen` / `onToggleRead` / `onUnsave` — consistent across `SavedRow`, `SavedMobileRow`, and `Saved.svelte`'s `<SavedRow>` / `<SavedMobileRow>` calls.
 
 End of plan.
