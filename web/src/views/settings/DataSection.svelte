@@ -47,7 +47,7 @@
       <Button onclick={exportOPML} disabled={busy}>Export OPML</Button>
     {/snippet}
   </SetRow>
-  <SetRow label="Export saved entries (JSON)" desc="One-time snapshot of every entry you've saved.">
+  <SetRow label="Export saved entries (JSON)" desc="One-time snapshot of your most recent 1,000 saved entries.">
     {#snippet control()}
       <Button onclick={exportSavedJSON} disabled={busy}>Export saved JSON</Button>
     {/snippet}

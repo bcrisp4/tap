@@ -15,6 +15,7 @@
   let error = $state('');
 
   async function load() {
+    error = '';
     try { passkeys = await api.listPasskeys(); }
     catch (e) { error = e instanceof Error ? e.message : 'Could not load passkeys.'; }
   }

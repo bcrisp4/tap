@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -159,6 +160,13 @@ func TestDeleteUser_RemovesRowAndCascades(t *testing.T) {
 	_, err = InsertSession(ctx, d, NewSession{UserID: id, TokenHash: "th", CSRFToken: "csrf"})
 	require.NoError(t, err)
 
+	// Insert an entry so the entries-cascade assertion is load-bearing.
+	_, err = UpdateAfterPoll(ctx, d, sub, PollResult{
+		UserID: id, NowUnix: 1, Floor: 15 * time.Minute, Ceiling: 24 * time.Hour,
+		NewEntries: []NewEntry{{Hash: "h1", Title: "T", URL: "https://example.com/1", Content: "c", PublishedAt: 1}},
+	})
+	require.NoError(t, err)
+
 	require.NoError(t, DeleteUser(ctx, d, id))
 
 	_, err = GetUserByID(ctx, d, id)
@@ -169,8 +177,6 @@ func TestDeleteUser_RemovesRowAndCascades(t *testing.T) {
 	require.Equal(t, 0, count, "subscriptions cascade failed")
 	require.NoError(t, d.QueryRowContext(ctx, "SELECT COUNT(*) FROM sessions WHERE user_id = ?", id).Scan(&count))
 	require.Equal(t, 0, count, "sessions cascade failed")
-
-	// entries cascade via subscription FK.
 	require.NoError(t, d.QueryRowContext(ctx, "SELECT COUNT(*) FROM entries WHERE subscription_id = ?", sub).Scan(&count))
 	require.Equal(t, 0, count, "entries cascade failed")
 }

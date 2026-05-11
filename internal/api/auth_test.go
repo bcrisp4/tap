@@ -431,6 +431,11 @@ func TestDeleteAccount_HappyPath_204AndCascades(t *testing.T) {
 
 	_, err = db.GetUserByID(context.Background(), d, uid)
 	require.ErrorIs(t, err, sql.ErrNoRows)
+
+	// Session must also be gone (cascade via FK).
+	var count int
+	require.NoError(t, d.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM sessions WHERE user_id = ?", uid).Scan(&count))
+	require.Equal(t, 0, count, "session cascade failed")
 }
 
 func TestDeleteAccount_WrongPassword_401(t *testing.T) {
