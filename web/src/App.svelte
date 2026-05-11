@@ -5,7 +5,7 @@
   import { auth } from './lib/auth';
   import { offlineQueue } from './lib/offlineQueue';
   import { warmCache } from './lib/warmCache';
-  import { theme, font, density } from './lib/preferences.svelte';
+  import { theme, font, density, measure } from './lib/preferences.svelte';
   import { buildHandler } from './lib/keyboard';
   import { searchOverlay } from './lib/searchOverlay.svelte';
   import { useRegisterSW } from 'virtual:pwa-register/svelte';
@@ -46,6 +46,10 @@
       if ($route.name === 'reader') navigate('/');
     },
     setModalOpen: (open: boolean) => { hotkeysOpen = open; },
+    onMeasureNarrow: () => { if ($route.name === 'reader') measure.value = 'narrow'; },
+    onMeasureComfortable: () => { if ($route.name === 'reader') measure.value = 'comfortable'; },
+    onMeasureWide: () => { if ($route.name === 'reader') measure.value = 'wide'; },
+    onBack: () => { if ($route.name === 'reader') navigate('/'); },
   });
 
   onMount(() => {

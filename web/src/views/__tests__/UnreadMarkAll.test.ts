@@ -4,6 +4,10 @@ import type { EntryListItem, Subscription } from '../../lib/types';
 
 // Mock heavy child components but NOT Button — we need real Button to test the button.
 vi.mock('../../components/EntryRow.svelte', () => ({ default: vi.fn() }));
+vi.mock('../../components/GroupHeading.svelte', () => ({ default: vi.fn() }));
+vi.mock('../../lib/preferences.svelte', () => ({
+  density: { get value() { return 'comfortable'; } },
+}));
 
 // Mock the router.
 vi.mock('../../lib/router', () => ({
