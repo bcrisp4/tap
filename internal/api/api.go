@@ -106,6 +106,7 @@ func NewMux(db *sql.DB, opts MuxOpts) *http.ServeMux {
 	m.Handle("GET /api/v1/sessions/current", authed(getSessionCurrentHandler(db)))
 	m.Handle("DELETE /api/v1/sessions/current", authedCSRF(logoutHandler(deps)))
 	m.Handle("PATCH /api/v1/me/password", authedCSRF(passwordChangeHandler(deps, opts.HashParams)))
+	m.Handle("DELETE /api/v1/me", authedCSRF(deleteAccountHandler(deps)))
 
 	// Session listing and revocation.
 	m.Handle("GET /api/v1/sessions", authed(listSessionsHandler(db)))

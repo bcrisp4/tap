@@ -607,3 +607,53 @@ func revokeAllOtherSessionsHandler(d *sql.DB) http.Handler {
 		w.WriteHeader(http.StatusNoContent)
 	})
 }
+
+type deleteAccountRequest struct {
+	CurrentPassword string `json:"current_password"`
+}
+
+// deleteAccountHandler returns DELETE /api/v1/me. Re-authenticates with
+// the user's current password and then deletes the user row, relying on FK
+// cascades to clean up sessions, subscriptions, entries, categories,
+// passkeys, and tombstones. CSRF is enforced by the surrounding mux chain.
+func deleteAccountHandler(dep authDeps) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		var req deleteAccountRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			var mbe *http.MaxBytesError
+			if errors.As(err, &mbe) {
+				writeError(w, http.StatusRequestEntityTooLarge, ErrCodeBadRequest, "request body too large")
+				return
+			}
+			writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "invalid JSON body")
+			return
+		}
+		if req.CurrentPassword == "" {
+			writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "current_password required")
+			return
+		}
+		user, ok := userFromContext(r.Context())
+		if !ok {
+			writeError(w, http.StatusUnauthorized, ErrCodeInvalidSession, "no session")
+			return
+		}
+		ok, err := auth.Verify(user.PasswordHash, req.CurrentPassword)
+		if err != nil {
+			slog.ErrorContext(r.Context(), "delete account: verify failed", "err", err)
+			writeError(w, http.StatusInternalServerError, ErrCodeInternal, "internal error")
+			return
+		}
+		if !ok {
+			writeError(w, http.StatusUnauthorized, ErrCodeInvalidCredentials, "invalid credentials")
+			return
+		}
+		if err := db.DeleteUser(r.Context(), dep.d, user.ID); err != nil {
+			slog.ErrorContext(r.Context(), "delete account: db delete failed", "err", err)
+			writeError(w, http.StatusInternalServerError, ErrCodeInternal, "internal error")
+			return
+		}
+		clearSessionCookie(w, dep.cookieSecure)
+		w.WriteHeader(http.StatusNoContent)
+	})
+}

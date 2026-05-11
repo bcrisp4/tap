@@ -403,3 +403,71 @@ func TestLogin_RehashOnWeakParams(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, needs, "hash should have been upgraded to current params")
 }
+
+func TestDeleteAccount_HappyPath_204AndCascades(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	uid := seedUser(t, d, "ada@example.com", "correctpassword", "user")
+
+	sid, err := db.InsertSession(context.Background(), d, db.NewSession{
+		UserID: uid, TokenHash: "tok", CSRFToken: "csrf",
+		CreatedAt: 0, LastSeenAt: 0, IdleExpiresAt: 9999999999, AbsoluteExpiresAt: 9999999999,
+	})
+	require.NoError(t, err)
+
+	u, err := db.GetUserByID(context.Background(), d, uid)
+	require.NoError(t, err)
+	s := db.Session{ID: sid, UserID: uid, CSRFToken: "csrf"}
+
+	deps := authDeps{d: d, cookieSecure: false, hashParams: testHashParams}
+	h := withFakeAuth(t, u, s, deleteAccountHandler(deps))
+
+	body := `{"current_password":"correctpassword"}`
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/me", strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusNoContent, rr.Code, rr.Body.String())
+
+	_, err = db.GetUserByID(context.Background(), d, uid)
+	require.ErrorIs(t, err, sql.ErrNoRows)
+}
+
+func TestDeleteAccount_WrongPassword_401(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	uid := seedUser(t, d, "ada@example.com", "correctpassword", "user")
+
+	u, err := db.GetUserByID(context.Background(), d, uid)
+	require.NoError(t, err)
+	s := db.Session{ID: 1, UserID: uid, CSRFToken: "csrf"}
+
+	deps := authDeps{d: d, cookieSecure: false, hashParams: testHashParams}
+	h := withFakeAuth(t, u, s, deleteAccountHandler(deps))
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/me", strings.NewReader(`{"current_password":"nope"}`))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusUnauthorized, rr.Code)
+	require.Contains(t, rr.Body.String(), "invalid_credentials")
+}
+
+func TestDeleteAccount_MissingPassword_400(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	uid := seedUser(t, d, "ada@example.com", "correctpassword", "user")
+
+	u, err := db.GetUserByID(context.Background(), d, uid)
+	require.NoError(t, err)
+	s := db.Session{ID: 1, UserID: uid, CSRFToken: "csrf"}
+
+	deps := authDeps{d: d, cookieSecure: false, hashParams: testHashParams}
+	h := withFakeAuth(t, u, s, deleteAccountHandler(deps))
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/me", strings.NewReader(`{}`))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusBadRequest, rr.Code)
+}
