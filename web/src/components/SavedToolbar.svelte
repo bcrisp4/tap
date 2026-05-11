@@ -6,7 +6,7 @@
   const word = $derived(count === 1 ? 'entry' : 'entries');
 </script>
 
-<div class="toolbar" role="heading" aria-level={1}>
+<h1 class="toolbar">
   <div class="left">
     <span class="eyebrow">Saved</span>
     <span class="count"><b>{count}</b> {word}</span>
@@ -14,7 +14,7 @@
   <div class="right">
     <span class="find">Find <KbdChip>/</KbdChip></span>
   </div>
-</div>
+</h1>
 
 <style>
   .toolbar {
