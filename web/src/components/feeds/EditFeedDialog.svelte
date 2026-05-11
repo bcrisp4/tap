@@ -60,7 +60,6 @@
   {/snippet}
 
   <div class="ts-feeds-edit-grid">
-    <!-- Basics section -->
     <div class="head">01 · BASICS</div>
     <label class="ts-feeds-edit-field">
       <span class="lbl">Title</span>
@@ -81,7 +80,6 @@
       />
     </label>
 
-    <!-- Category -->
     <div class="ts-feeds-edit-field">
       <span class="lbl">Category</span>
       <div class="ts-feeds-edit-cat-list">
@@ -102,7 +100,6 @@
       </div>
     </div>
 
-    <!-- Article extraction section -->
     <div class="head">02 · ARTICLE EXTRACTION</div>
     <div class="ts-feeds-edit-field">
       <span class="lbl">Extract full articles</span>
@@ -129,7 +126,6 @@
       />
     </label>
 
-    <!-- Credentials section -->
     <div class="head">03 · CREDENTIALS</div>
     <label class="ts-feeds-edit-field">
       <span class="lbl">Cookie{feed.has_cookie ? ' (currently set — clear to remove)' : ''}</span>

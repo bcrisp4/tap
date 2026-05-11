@@ -60,7 +60,7 @@
         class:is-uncat={!feed.category_id}
         type="button"
         bind:this={catChipEl}
-        onclick={() => catChipEl && onChangeCategory(catChipEl)}
+        onclick={() => onChangeCategory(catChipEl!)}
       >
         {categoryName ?? 'uncategorised'}
       </button>
