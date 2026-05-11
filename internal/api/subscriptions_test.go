@@ -452,3 +452,98 @@ func TestSubscriptionsAPI_MarkRead_BadID(t *testing.T) {
 	mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/v1/subscriptions/abc/mark-read", nil))
 	require.Equal(t, http.StatusBadRequest, w.Code)
 }
+
+// newPatchHarness spins up an in-memory DB with one user and one subscription, builds a
+// mux with the supplied poke counter, and returns everything the caller needs.
+func newPatchHarness(t *testing.T, poked *int) (db.Subscription, http.Handler, string, string, *sql.DB) {
+	t.Helper()
+	d := newTestDB(t)
+	uid := insertAPITestUser(t, d, "patch-user")
+	u := db.User{ID: uid, Username: "patch-user", Role: "admin"}
+	sess := db.Session{ID: 1, UserID: uid, CSRFToken: "test-csrf"}
+
+	subID, err := db.InsertSubscription(context.Background(), d, db.NewSubscription{
+		UserID: uid, Title: "Test Feed", FeedURL: "https://patch.example/feed", NextPoll: 0, Created: 0,
+	})
+	require.NoError(t, err)
+	sub, err := db.GetSubscription(context.Background(), d, subID, uid)
+	require.NoError(t, err)
+
+	mux := NewTestMux(d, TestMuxOpts{
+		MuxOpts:     MuxOpts{Poke: func() { (*poked)++ }},
+		TestUser:    u,
+		TestSession: sess,
+	})
+	return sub, mux, "tap_session", "test-csrf", d
+}
+
+func TestPatchSubscriptionRefreshNow(t *testing.T) {
+	t.Parallel()
+	poked := 0
+	sub, mux, sessionCookie, csrfToken, d := newPatchHarness(t, &poked)
+
+	futureTime := time.Now().Add(time.Hour).Unix()
+	_, err := d.ExecContext(t.Context(),
+		`UPDATE subscriptions SET next_poll_at = ? WHERE id = ?`, futureTime, sub.ID)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPatch,
+		"/api/v1/subscriptions/"+strconv.FormatInt(sub.ID, 10),
+		strings.NewReader(`{"refresh_now":true}`))
+	req.AddCookie(&http.Cookie{Name: "tap_session", Value: sessionCookie})
+	req.Header.Set("X-CSRF-Token", csrfToken)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var dto subscriptionDTO
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &dto))
+	require.Equal(t, int64(0), dto.NextPollAt, "next_poll_at must reset to 0")
+	require.Equal(t, 1, poked, "scheduler must be poked exactly once")
+}
+
+func TestPatchSubscriptionRefreshNow_WrongType(t *testing.T) {
+	t.Parallel()
+	poked := 0
+	sub, mux, sessionCookie, csrfToken, _ := newPatchHarness(t, &poked)
+
+	req := httptest.NewRequest(http.MethodPatch,
+		"/api/v1/subscriptions/"+strconv.FormatInt(sub.ID, 10),
+		strings.NewReader(`{"refresh_now":"yes"}`))
+	req.AddCookie(&http.Cookie{Name: "tap_session", Value: sessionCookie})
+	req.Header.Set("X-CSRF-Token", csrfToken)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	require.Zero(t, poked)
+}
+
+func TestPatchSubscriptionRefreshNow_False(t *testing.T) {
+	t.Parallel()
+	poked := 0
+	sub, mux, sessionCookie, csrfToken, d := newPatchHarness(t, &poked)
+
+	futureTime := time.Now().Add(time.Hour).Unix()
+	_, err := d.ExecContext(t.Context(),
+		`UPDATE subscriptions SET next_poll_at = ? WHERE id = ?`, futureTime, sub.ID)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPatch,
+		"/api/v1/subscriptions/"+strconv.FormatInt(sub.ID, 10),
+		strings.NewReader(`{"refresh_now":false}`))
+	req.AddCookie(&http.Cookie{Name: "tap_session", Value: sessionCookie})
+	req.Header.Set("X-CSRF-Token", csrfToken)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var dto subscriptionDTO
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &dto))
+	require.Equal(t, futureTime, dto.NextPollAt, "next_poll_at must be unchanged")
+	require.Zero(t, poked)
+}

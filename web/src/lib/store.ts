@@ -100,11 +100,46 @@ function subscriptionsStore() {
       }
     },
     async add(feed_url: string) {
-      // add() callers (AddFeedForm) await and surface errors in the UI,
-      // so propagation is intentional here.
       await api.addSubscription({ feed_url });
       notifySW({ type: 'invalidate', paths: ['/api/v1/subscriptions'] });
       await this.load();
+    },
+    async refresh(id: number) {
+      await api.refreshSubscription(id);
+      notifySW({ type: 'invalidate', paths: ['/api/v1/subscriptions', '/api/v1/entries'] });
+      await this.load();
+    },
+    async remove(id: number) {
+      await api.deleteSubscription(id);
+      notifySW({ type: 'invalidate', paths: ['/api/v1/subscriptions', '/api/v1/entries'] });
+      await this.load();
+    },
+    async setCategory(id: number, categoryId: number | null) {
+      await api.updateSubscription(id, { category_id: categoryId });
+      notifySW({ type: 'invalidate', paths: ['/api/v1/subscriptions', '/api/v1/categories'] });
+      await Promise.all([this.load(), categories.load()]);
+    },
+    // Bulk helpers: call each API once, then invalidate + reload once at the end.
+    // This avoids N store reloads and N SW notifications for N-item bulk ops.
+    async refreshMany(ids: number[]): Promise<PromiseSettledResult<unknown>[]> {
+      const results = await Promise.allSettled(ids.map((id) => api.refreshSubscription(id)));
+      notifySW({ type: 'invalidate', paths: ['/api/v1/subscriptions', '/api/v1/entries'] });
+      await this.load();
+      return results;
+    },
+    async removeMany(ids: number[]): Promise<PromiseSettledResult<unknown>[]> {
+      const results = await Promise.allSettled(ids.map((id) => api.deleteSubscription(id)));
+      notifySW({ type: 'invalidate', paths: ['/api/v1/subscriptions', '/api/v1/entries'] });
+      await this.load();
+      return results;
+    },
+    async setCategoryMany(ids: number[], categoryId: number | null): Promise<PromiseSettledResult<unknown>[]> {
+      const results = await Promise.allSettled(
+        ids.map((id) => api.updateSubscription(id, { category_id: categoryId })),
+      );
+      notifySW({ type: 'invalidate', paths: ['/api/v1/subscriptions', '/api/v1/categories'] });
+      await Promise.all([this.load(), categories.load()]);
+      return results;
     },
   };
 }

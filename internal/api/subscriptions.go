@@ -209,7 +209,8 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 			BasicAuthUser   *string `json:"basic_auth_user"`
 			BasicAuthPass   *string `json:"basic_auth_pass"`
 		}
-		// Re-decode typed fields from map values; return 400 on type mismatch.
+		// Decode and validate all typed fields before any DB write, so a bad
+		// value for refresh_now or category_id never produces a partial update.
 		for k, v := range rawMap {
 			var unmarshalErr error
 			switch k {
@@ -227,6 +228,41 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 			if unmarshalErr != nil {
 				writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "invalid value for field "+k)
 				return
+			}
+		}
+
+		// Validate refresh_now type up front.
+		var refreshNow bool
+		if raw, ok := rawMap["refresh_now"]; ok {
+			if err := json.Unmarshal(raw, &refreshNow); err != nil {
+				writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "refresh_now must be a boolean")
+				return
+			}
+		}
+
+		// Validate category_id type and ownership up front.
+		var (
+			hasCategoryUpdate bool
+			newCatID          *int64
+		)
+		if raw, ok := rawMap["category_id"]; ok {
+			hasCategoryUpdate = true
+			if string(raw) != "null" {
+				var cid int64
+				if err := json.Unmarshal(raw, &cid); err != nil {
+					writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "category_id must be an integer or null")
+					return
+				}
+				owned, err := validateCategoryOwnership(r, d, cid, u.ID)
+				if err != nil {
+					writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())
+					return
+				}
+				if !owned {
+					writeError(w, http.StatusBadRequest, ErrCodeCategoryNotFound, "category not found")
+					return
+				}
+				newCatID = &cid
 			}
 		}
 
@@ -281,32 +317,32 @@ func registerSubscriptionRoutes(m *http.ServeMux, d *sql.DB, poke func()) {
 			return
 		}
 
-		// Handle category_id: if present in the raw map, update it (null = uncategorise).
-		if raw, ok := rawMap["category_id"]; ok {
-			var catID *int64
-			if string(raw) != "null" {
-				var cid int64
-				if err := json.Unmarshal(raw, &cid); err != nil {
-					writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "category_id must be an integer or null")
+		// Apply refresh_now: set next_poll_at = 0 and poke the scheduler.
+		if refreshNow {
+			if err := db.UpdateSubscriptionRefreshNow(r.Context(), d, id, u.ID); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					writeError(w, http.StatusNotFound, ErrCodeNotFound, "subscription not found")
 					return
 				}
-				// Validate the category belongs to this user.
-				owned, err := validateCategoryOwnership(r, d, cid, u.ID)
-				if err != nil {
-					writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())
-					return
-				}
-				if !owned {
-					writeError(w, http.StatusBadRequest, ErrCodeCategoryNotFound, "category not found")
-					return
-				}
-				catID = &cid
-			}
-			if err := db.UpdateSubscriptionCategory(r.Context(), d, id, u.ID, catID); err != nil && !errors.Is(err, sql.ErrNoRows) {
 				writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())
 				return
 			}
-			// Refresh the subscription to get updated category_id.
+			if poke != nil {
+				poke()
+			}
+			s, err = db.GetSubscription(r.Context(), d, id, u.ID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())
+				return
+			}
+		}
+
+		// Apply category_id update.
+		if hasCategoryUpdate {
+			if err := db.UpdateSubscriptionCategory(r.Context(), d, id, u.ID, newCatID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+				writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())
+				return
+			}
 			s, err = db.GetSubscription(r.Context(), d, id, u.ID)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())

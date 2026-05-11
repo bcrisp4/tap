@@ -308,6 +308,25 @@ func MarkSubscriptionRead(ctx context.Context, d *sql.DB, subscriptionID, userID
 	return nil
 }
 
+// UpdateSubscriptionRefreshNow sets next_poll_at = 0 for the given subscription,
+// scoped to the owning user. Returns sql.ErrNoRows if no row matched (wrong user
+// or unknown id) so callers can return a 404.
+func UpdateSubscriptionRefreshNow(ctx context.Context, d *sql.DB, id, userID int64) error {
+	res, err := d.ExecContext(ctx,
+		`UPDATE subscriptions SET next_poll_at = 0 WHERE id = ? AND user_id = ?`, id, userID)
+	if err != nil {
+		return fmt.Errorf("refresh now: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("refresh now rows: %w", err)
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 func UpdateSubscriptionPatch(ctx context.Context, d *sql.DB, id, userID int64,
 	extract bool, selector, cookie, basicAuthUser, basicAuthPass string) error {
 	res, err := d.ExecContext(ctx, `
