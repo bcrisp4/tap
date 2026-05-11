@@ -15,7 +15,7 @@
     <span class="rule" aria-hidden="true"></span>
     {#if tag}<span class="tag">{tag}</span>{/if}
   </div>
-  {@render children()}
+  {#if children}{@render children()}{/if}
 </section>
 
 <style>
