@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { bucketByDay, type EntryLike } from '../dayBand';
+import { bucketByDay, type EntryLike } from '../dayBands';
 
 describe('bucketByDay', () => {
   // Use a fixed NOW and compute local-timezone-relative offsets so tests are tz-safe.
@@ -15,57 +15,53 @@ describe('bucketByDay', () => {
     return { id, published_at: Math.floor(todayStartSec + secFromTodayStart) };
   }
 
-  it('buckets entries from today into Today', () => {
-    // 8h and 1min after local midnight → still today
+  it('buckets entries from today into today', () => {
     const items = [entry(1, 8 * 3600), entry(2, 60)];
     const out = bucketByDay(items, NOW);
-    expect(out.Today.map(e => e.id)).toEqual([1, 2]);
-    expect(out.Yesterday).toHaveLength(0);
+    expect(out.today.map(e => e.id)).toEqual([1, 2]);
+    expect(out.yesterday).toHaveLength(0);
   });
 
-  it('buckets entries from yesterday into Yesterday', () => {
-    // 1 min before local midnight → yesterday; 23h before local midnight → yesterday
+  it('buckets entries from yesterday into yesterday', () => {
     const items = [entry(1, -60), entry(2, -23 * 3600)];
     const out = bucketByDay(items, NOW);
-    expect(out.Yesterday.map(e => e.id)).toEqual([1, 2]);
+    expect(out.yesterday.map(e => e.id)).toEqual([1, 2]);
   });
 
-  it('buckets 2–7 days ago into ThisWeek', () => {
-    // 2 full days before local midnight start (-2d-1h), and 6 days before
+  it('buckets 2–7 days ago into thisWeek', () => {
     const items = [entry(1, -2 * 86400 - 3600), entry(2, -6 * 86400 - 3600)];
     const out = bucketByDay(items, NOW);
-    expect(out.ThisWeek.map(e => e.id)).toEqual([1, 2]);
+    expect(out.thisWeek.map(e => e.id)).toEqual([1, 2]);
   });
 
-  it('buckets >7 days ago into Earlier', () => {
-    // 8 days before local midnight start, and 150 days before
+  it('buckets >7 days ago into earlier', () => {
     const items = [entry(1, -8 * 86400 - 3600), entry(2, -150 * 86400)];
     const out = bucketByDay(items, NOW);
-    expect(out.Earlier.map(e => e.id)).toEqual([1, 2]);
+    expect(out.earlier.map(e => e.id)).toEqual([1, 2]);
   });
 
   it('preserves input order within a band', () => {
     const items = [entry(1, 11 * 3600), entry(2, 9 * 3600), entry(3, 3600)];
     const out = bucketByDay(items, NOW);
-    expect(out.Today.map(e => e.id)).toEqual([1, 2, 3]);
+    expect(out.today.map(e => e.id)).toEqual([1, 2, 3]);
   });
 
   it('returns empty bands when input is empty', () => {
     const out = bucketByDay([], NOW);
-    expect(out.Today).toHaveLength(0);
-    expect(out.Yesterday).toHaveLength(0);
-    expect(out.ThisWeek).toHaveLength(0);
-    expect(out.Earlier).toHaveLength(0);
+    expect(out.today).toHaveLength(0);
+    expect(out.yesterday).toHaveLength(0);
+    expect(out.thisWeek).toHaveLength(0);
+    expect(out.earlier).toHaveLength(0);
   });
 
-  it('uses the local timezone day boundary, not UTC, for Today vs Yesterday', () => {
+  it('uses the local timezone day boundary, not UTC, for today vs yesterday', () => {
     const justBeforeMidnight = todayStartSec - 1;
     const justAfterMidnight = todayStartSec + 1;
     const out = bucketByDay(
       [{ id: 1, published_at: justBeforeMidnight }, { id: 2, published_at: justAfterMidnight }],
       NOW,
     );
-    expect(out.Yesterday.map(e => e.id)).toEqual([1]);
-    expect(out.Today.map(e => e.id)).toEqual([2]);
+    expect(out.yesterday.map(e => e.id)).toEqual([1]);
+    expect(out.today.map(e => e.id)).toEqual([2]);
   });
 });

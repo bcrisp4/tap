@@ -6,7 +6,7 @@
   import { entries, subscriptions } from '../lib/store';
   import { navigate } from '../lib/router';
   import { pullToRefresh } from '../lib/pulltorefresh';
-  import { bucketByDay } from '../lib/dayBand';
+  import { bucketByDay } from '../lib/dayBands';
   import { density } from '../lib/preferences.svelte';
   import type { Subscription } from '../lib/types';
 
@@ -75,9 +75,9 @@
   }
 
   const bands = $derived(bucketByDay($entries.items));
-  const BAND_LABELS = ['Today', 'Yesterday', 'ThisWeek', 'Earlier'] as const;
+  const BAND_LABELS = ['today', 'yesterday', 'thisWeek', 'earlier'] as const;
   const BAND_DISPLAY: Record<typeof BAND_LABELS[number], string> = {
-    Today: 'Today', Yesterday: 'Yesterday', ThisWeek: 'This week', Earlier: 'Earlier',
+    today: 'Today', yesterday: 'Yesterday', thisWeek: 'This week', earlier: 'Earlier',
   };
 </script>
 

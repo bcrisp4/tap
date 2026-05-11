@@ -1,10 +1,10 @@
 export type EntryLike = { id: number; published_at: number };
 
 export type DayBands<T extends EntryLike> = {
-  Today: T[];
-  Yesterday: T[];
-  ThisWeek: T[];
-  Earlier: T[];
+  today: T[];
+  yesterday: T[];
+  thisWeek: T[];
+  earlier: T[];
 };
 
 const DAY = 86400;
@@ -19,12 +19,12 @@ export function bucketByDay<T extends EntryLike>(
   const yesterdayStartSec = todayStartSec - DAY;
   const weekStartSec = todayStartSec - 7 * DAY;
 
-  const out: DayBands<T> = { Today: [], Yesterday: [], ThisWeek: [], Earlier: [] };
+  const out: DayBands<T> = { today: [], yesterday: [], thisWeek: [], earlier: [] };
   for (const item of items) {
-    if (item.published_at >= todayStartSec) out.Today.push(item);
-    else if (item.published_at >= yesterdayStartSec) out.Yesterday.push(item);
-    else if (item.published_at >= weekStartSec) out.ThisWeek.push(item);
-    else out.Earlier.push(item);
+    if (item.published_at >= todayStartSec) out.today.push(item);
+    else if (item.published_at >= yesterdayStartSec) out.yesterday.push(item);
+    else if (item.published_at >= weekStartSec) out.thisWeek.push(item);
+    else out.earlier.push(item);
   }
   return out;
 }
