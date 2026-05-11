@@ -154,6 +154,8 @@ Foundations milestone also delivers the **primitive component library** (every v
 
 **Saved view uses a separate row component, not `EntryRow`.** The design's `.ts-saved-row` family in `styles.css` (lines 4924–5057) is visually distinct from `.entry`: bookmark rail-mark instead of junction dot, hover-reveal `.ts-saved-actions` strip (Open / Mark read / Unsave), date eyebrow ("published Apr 26, 2026") instead of relative time, dedicated is-read styling. Rather than overload `EntryRow` with a `variant` prop for one consumer, the Saved view ships its own `SavedRow.svelte` as a view-specific component built in **M3**, not in M1's primitive library. `EntryRow` remains the primitive for Unread (M2) and History (M8); History reuses `EntryRow` with `is-read` styling plus `GroupHeading`, with no dedicated `HistoryRow`.
 
+**Ownership principle for domain-specific composites.** Components that compose M1 primitives into a domain-specific shape (e.g., `CategoryReassignPopover.svelte` = M1's `Popover` + a category list with "Uncategorised") are owned by the **first milestone that needs them** and imported by subsequent consumers. Example: M4 owns `CategoryReassignPopover.svelte` (used by the Categories management page); M5 imports the same component for per-row and bulk category change on the Feeds page. The component lives at `web/src/components/CategoryReassignPopover.svelte` (flat under `components/`, not under a per-milestone subdir) so cross-milestone imports stay clean.
+
 Per-view composites live in `views/*.svelte` and own only layout for that view.
 
 ### 3.3 Deletes
