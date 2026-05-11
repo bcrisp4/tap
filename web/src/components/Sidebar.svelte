@@ -1,9 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import FeedAvatar from './FeedAvatar.svelte';
+  import FeedRow from './FeedRow.svelte';
+  import SystemActions from './SystemActions.svelte';
   import AddFeedForm from './AddFeedForm.svelte';
   import { subscriptions, categories } from '../lib/store';
   import { navigate, route } from '../lib/router';
+  import { auth } from '../lib/auth';
   import { api } from '../lib/api';
 
   // Inline category creation state.
@@ -145,9 +147,8 @@
     </div>
 
     {#each catFeeds.get(cat.id) ?? [] as sub (sub.id)}
-      <div class="feedrow feedrow--nested">
-        <FeedAvatar feedURL={sub.feed_url} />
-        <span class="feedname" title={sub.title}>{sub.title}</span>
+      <div class="nested-feed">
+        <FeedRow subscription={sub} categories={$categories} />
       </div>
     {/each}
   {/each}
@@ -157,16 +158,18 @@
       <div class="group-title uncat-header">UNCATEGORISED</div>
     {/if}
     {#each catFeeds.get(null) ?? [] as sub (sub.id)}
-      <div class="feedrow">
-        <FeedAvatar feedURL={sub.feed_url} />
-        <span class="feedname" title={sub.title}>{sub.title}</span>
-      </div>
+      <FeedRow subscription={sub} categories={$categories} />
     {/each}
   {/if}
 
   <div class="group-title">SYSTEM</div>
   <a class="navitem" class:active={$route.name === 'settings'} href="/settings"
     onclick={(e) => { e.preventDefault(); navigate('/settings'); }}>Settings</a>
+  {#if $auth.user?.role === 'admin'}
+    <a class="navitem" class:active={$route.name === 'admin'} href="/admin"
+      onclick={(e) => { e.preventDefault(); navigate('/admin'); }}>Admin</a>
+  {/if}
+  <SystemActions />
   <AddFeedForm />
 </nav>
 
@@ -295,19 +298,5 @@
     text-decoration: none;
   }
   .navitem.active { border-left-color: var(--accent); }
-  .feedrow {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 4px 20px;
-  }
-  .feedrow--nested { padding-left: 32px; }
-  .feedname {
-    font-family: var(--sans);
-    font-size: 12px;
-    color: var(--ink-2);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
+  .nested-feed :global(.feedrow) { padding-left: 32px; }
 </style>

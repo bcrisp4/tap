@@ -90,7 +90,7 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
-  patchSubscription: (
+  updateSubscription: (
     id: number,
     patch: {
       extract?: boolean;
@@ -98,12 +98,15 @@ export const api = {
       cookie?: string;
       basic_auth_user?: string;
       basic_auth_pass?: string;
+      category_id?: number | null;
     },
   ) =>
     request<Subscription>(`/subscriptions/${id}`, {
       method: 'PATCH',
       body: JSON.stringify(patch),
     }),
+
+  get patchSubscription() { return this.updateSubscription; },
 
   deleteSubscription: (id: number) =>
     request<void>(`/subscriptions/${id}`, { method: 'DELETE' }),
