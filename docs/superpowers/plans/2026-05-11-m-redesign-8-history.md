@@ -51,7 +51,7 @@
 
 **Depends on (must exist before this plan runs):**
 
-- M-Redesign-1 (Foundations): `.ts-shell` chrome, `EntryRow`, `EmptyState`, `Button` (must accept `onclick`, `disabled`, a `quiet` variant, and pass `data-*` attributes through to the inner `<button>` — see Task 5 precondition), the `/history` route, the desktop top-tab, the mobile More-sheet entry.
+- M-Redesign-1 (Foundations): `.ts-shell` chrome, `EntryRow`, `EmptyState`, `Button` (must accept `onclick`, `disabled`, a `quiet` variant, and pass `data-*` attributes through to the inner `<button>` — see Task 5 precondition), the `/history` route, the desktop top-tab, the mobile More-sheet entry, and a `--err` token in `web/src/styles/tokens.css` exposing the brand spec §2.1 error-text colours (`#c43a3a` light / `#ec7a7a` dark). If M1 names the token differently (e.g. `--err-text`, `--danger`), use M1's name and update Task 1 step 3's `.status.err { color: var(--err); }` rule to match.
 - M-Redesign-2 (Unread + Reader): `web/src/lib/dayBands.ts` exporting `bucketByDay(entries, now?: number): { today: T[]; yesterday: T[]; thisWeek: T[]; earlier: T[] }` and `GroupHeading.svelte`. If M2 places the helper elsewhere or names it differently, coordinate via PR comments and update this plan before implementation begins.
 
 ---
@@ -173,7 +173,7 @@ Expected: FAIL — module `../History.svelte` does not exist.
 <style>
   .ts-main { flex: 1; padding-top: 4px; }
   .status { padding: 24px; color: var(--ink-3); font-family: var(--mono); font-size: 11px; }
-  .status.err { color: #b14; }
+  .status.err { color: var(--err); }
 </style>
 ```
 
@@ -408,21 +408,15 @@ Append:
     } as any);
 
     const { container } = render(History);
-    await waitFor(() => expect(container.querySelector('ul[role="list"]')).toBeTruthy());
+    await waitFor(() => expect(container.querySelector('section[data-band]')).toBeTruthy());
 
-    // GroupHeading is mocked, so we can't read its text directly. Read the
-    // `label` prop the view passes by reading data-attributes on a thin
-    // test helper, OR un-mock GroupHeading and assert via the rendered DOM.
-    // We choose the simpler path: un-mock GroupHeading for this test only.
-    // (Move the GroupHeading mock into a per-test setup rather than the
-    // file-level vi.mock; see Step 3 for the refactor.)
-    const headings = Array.from(container.querySelectorAll('[data-band]'))
+    const headings = Array.from(container.querySelectorAll('section[data-band]'))
       .map(el => el.getAttribute('data-band'));
     expect(headings).toEqual(['today', 'yesterday', 'thisWeek', 'earlier']);
   });
 ```
 
-Why `data-band` and not text? The real `GroupHeading.svelte` (M2) renders human-readable labels (`Today`, `This week`); the test stays robust to copy changes by reading the band *key* via a `data-band` attribute that History.svelte stamps onto the wrapper around each band. This avoids coupling the test to design copy.
+Why `data-band` and not heading text? The `data-band` attribute lives on the `<section>` wrapper that `History.svelte` itself owns (see Step 3 markup) — it does not depend on `GroupHeading`'s rendered DOM at all. That makes the test robust to copy changes in `GroupHeading` and independent of whether `GroupHeading` is mocked. (The file-level `GroupHeading` mock from Task 1 step 1 is still removed in Step 3 below, so the real primitive renders during this test run — but the assertion does not rely on that.)
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -856,7 +850,7 @@ PR is opened separately from the plan PR — execution of this plan happens on a
 ## Acceptance criteria
 
 1. Visiting `/history` (desktop or mobile) shows a flat chronological list of every entry the server returns, grouped into Today / Yesterday / This week / Earlier bands.
-2. No backend changes — the only network call is `GET /api/v1/entries?limit=100` (and `&cursor=…` for subsequent pages).
+2. No backend changes. The History view's entry traffic is `GET /api/v1/entries?limit=100` (and `&cursor=…` for subsequent pages). The view also primes the global `subscriptions` store via `subscriptions.load()` on mount, which issues a `GET /api/v1/subscriptions` — that call is owned by the existing store (see `web/src/lib/store.ts:78–103`) and is shared with Unread, so cold-cache deep-links to `/history` still resolve feed names without bespoke endpoints.
 3. Empty state ("No history yet") renders when the API returns zero entries on the first page.
 4. Error state renders when the API call rejects.
 5. "Load more" pagination is functional: clicking it appends the next page and consumes the cursor; the button disappears when `next_cursor` is undefined.
