@@ -143,4 +143,31 @@ describe('AddFeedForm', () => {
       expect(screen.getByText('already subscribed')).toBeInTheDocument();
     });
   });
+
+  it('disables candidate buttons while a pick is in flight', async () => {
+    vi.mocked(api.discoverFeeds).mockResolvedValue({
+      candidates: [
+        { title: 'Feed D', feed_url: 'https://d/feed.xml', site_url: 'https://d', type: 'rss' },
+        { title: 'Feed E', feed_url: 'https://e/feed.xml', site_url: 'https://e', type: 'rss' },
+      ],
+    });
+    const { subscriptions } = await import('../../lib/store');
+    let resolve!: () => void;
+    vi.mocked(subscriptions.add).mockReturnValue(new Promise<void>(r => { resolve = r; }));
+
+    render(AddFeedForm);
+    await fireEvent.input(screen.getByRole('textbox'), { target: { value: 'https://d' } });
+    await fireEvent.click(screen.getByRole('button', { name: /find/i }));
+
+    const pickBtn = await screen.findByText('Feed D');
+    await fireEvent.click(pickBtn);
+
+    await waitFor(() => {
+      const buttons = screen.getAllByRole('button');
+      const candidateBtns = buttons.filter(b => b.getAttribute('type') === 'button');
+      expect(candidateBtns.every(b => (b as HTMLButtonElement).disabled)).toBe(true);
+    });
+
+    resolve();
+  });
 });

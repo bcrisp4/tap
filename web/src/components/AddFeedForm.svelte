@@ -52,12 +52,12 @@
     required
   />
   <button type="submit" disabled={busy || !url.trim()}>Find feed</button>
-  {#if error}<p class="error">{error}</p>{/if}
+  {#if error}<p role="alert" class="error">{error}</p>{/if}
   {#if candidates}
     <ul class="candidates" aria-label="Discovered feeds">
       {#each candidates as c (c.feed_url)}
         <li>
-          <button type="button" onclick={() => pick(c)}>
+          <button type="button" disabled={busy} onclick={() => pick(c)}>
             <span class="ctitle">{c.title || c.feed_url}</span>
             <span class="ctype">{c.type}</span>
           </button>
