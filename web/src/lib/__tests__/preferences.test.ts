@@ -96,24 +96,50 @@ describe('font', () => {
   });
 });
 
-describe('density', () => {
-  it('falls back to "default" when localStorage contains an invalid density value', async () => {
+describe('density pref (canonical vocabulary)', () => {
+  it('falls back to "comfortable" when localStorage contains an invalid density value', async () => {
     store['tap.density'] = 'ultra-compact';
     const { density } = await import('../preferences.svelte');
-    expect(density.value).toBe('default');
+    expect(density.value).toBe('comfortable');
   });
-  it('defaults to "default"', async () => {
+  it('defaults to comfortable when localStorage empty', async () => {
     const { density } = await import('../preferences.svelte');
-    expect(density.value).toBe('default');
+    expect(density.value).toBe('comfortable');
   });
-  it('reads stored value', async () => {
+  it('migrates legacy "default" value to "comfortable"', async () => {
+    store['tap.density'] = 'default';
+    const { density } = await import('../preferences.svelte');
+    expect(density.value).toBe('comfortable');
+    // Migration persists the new value so it doesn't fire again.
+    expect(store['tap.density']).toBe('comfortable');
+  });
+  it('reads stored value "compact"', async () => {
     store['tap.density'] = 'compact';
     const { density } = await import('../preferences.svelte');
     expect(density.value).toBe('compact');
+  });
+  it('accepts cosy', async () => {
+    const { density } = await import('../preferences.svelte');
+    density.value = 'cosy';
+    expect(density.value).toBe('cosy');
+    expect(store['tap.density']).toBe('cosy');
   });
   it('persists on set', async () => {
     const { density } = await import('../preferences.svelte');
     density.value = 'comfortable';
     expect(store['tap.density']).toBe('comfortable');
+  });
+});
+
+describe('measure pref', () => {
+  it('defaults to comfortable', async () => {
+    const { measure } = await import('../preferences.svelte');
+    expect(measure.value).toBe('comfortable');
+  });
+
+  it('persists to localStorage', async () => {
+    const { measure } = await import('../preferences.svelte');
+    measure.value = 'wide';
+    expect(store['tap.measure']).toBe('wide');
   });
 });
