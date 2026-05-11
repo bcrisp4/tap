@@ -1,205 +1,308 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { get } from 'svelte/store';
+  import { onMount, onDestroy } from 'svelte';
   import { auth } from '../lib/auth';
-  import { api } from '../lib/api';
   import { navigate } from '../lib/router';
+  import { api } from '../lib/api';
+  import { getStatus, type StatusResponse } from '../lib/status';
   import type { AdminUser } from '../lib/types';
+  import EmptyState from '../components/EmptyState.svelte';
+  import SysGrid from '../components/SysGrid.svelte';
+  import ErrorsTable from '../components/ErrorsTable.svelte';
+  import UserTable from '../components/UserTable.svelte';
+  import AdminToolbar, { type AdminFilter } from '../components/AdminToolbar.svelte';
+  import CreateUserDialog from '../components/admin/CreateUserDialog.svelte';
+  import ResetPasswordResultDialog from '../components/admin/ResetPasswordResultDialog.svelte';
+  import ConfirmDialog from '../components/admin/ConfirmDialog.svelte';
 
-  let authState = $derived(get(auth));
+  const isAdmin = $derived($auth.user?.role === 'admin');
+  const currentUserId = $derived($auth.user?.id ?? -1);
 
   let users = $state<AdminUser[]>([]);
-  let error = $state('');
-  let busy = $state(false);
+  let status = $state<StatusResponse | null>(null);
+  let loadError = $state('');
+  let statusError = $state('');
+  let pollInterval: ReturnType<typeof setInterval> | null = null;
+  let nowSec = $state(Math.floor(Date.now() / 1000));
 
-  // Create user form
-  let showCreateForm = $state(false);
-  let newUsername = $state('');
-  let newPassword = $state('');
-  let newRole = $state<'admin' | 'user'>('user');
+  let filter = $state<AdminFilter>('all');
+  let query = $state('');
 
-  // Temp password modal
+  let overlay = $state<'create' | 'resetConfirm' | 'resetResult' | 'disable2fa' | 'disableUser' | 'enable' | 'delete' | null>(null);
+  let overlayUser = $state<AdminUser | null>(null);
   let tempPassword = $state('');
 
+  const filteredUsers = $derived.by(() => {
+    const q = query.trim().toLowerCase();
+    return users.filter((u) => {
+      if (q && !u.username.toLowerCase().includes(q)) return false;
+      switch (filter) {
+        case 'admins':   return u.role === 'admin';
+        case 'users':    return u.role === 'user';
+        case 'disabled': return !!u.disabled_at;
+        default:         return true;
+      }
+    });
+  });
+
   onMount(async () => {
-    if (authState?.user?.role !== 'admin') {
+    if (!isAdmin) {
       navigate('/');
       return;
     }
-    await loadUsers();
+    await Promise.all([loadUsers(), loadStatus()]);
+    pollInterval = setInterval(() => {
+      nowSec = Math.floor(Date.now() / 1000);
+      loadStatus();
+    }, 60_000);
+  });
+
+  onDestroy(() => {
+    if (pollInterval) clearInterval(pollInterval);
   });
 
   async function loadUsers() {
     try {
       users = await api.listUsers();
+      loadError = '';
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Failed to load users';
+      loadError = e instanceof Error ? e.message : 'Failed to load users';
     }
   }
 
-  async function createUser() {
-    busy = true;
-    error = '';
+  async function loadStatus() {
     try {
-      const u = await api.createUser(newUsername, newPassword, newRole);
+      status = await getStatus();
+      statusError = '';
+    } catch (e) {
+      statusError = e instanceof Error ? e.message : 'status load failed';
+    }
+  }
+
+  function onAction(action: 'reset' | 'disable2fa' | 'disableUser' | 'enable' | 'delete', user: AdminUser) {
+    overlayUser = user;
+    if (action === 'reset')            overlay = 'resetConfirm';
+    else if (action === 'disable2fa')  overlay = 'disable2fa';
+    else if (action === 'disableUser') overlay = 'disableUser';
+    else if (action === 'enable')      overlay = 'enable';
+    else if (action === 'delete')      overlay = 'delete';
+  }
+
+  function closeOverlay() {
+    overlay = null;
+    overlayUser = null;
+    tempPassword = '';
+  }
+
+  async function handleCreate(v: { username: string; password: string; role: 'admin' | 'user' }) {
+    try {
+      const u = await api.createUser(v.username, v.password, v.role);
       users = [...users, u];
-      showCreateForm = false;
-      newUsername = '';
-      newPassword = '';
+      closeOverlay();
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Failed to create user';
-    } finally {
-      busy = false;
+      loadError = e instanceof Error ? e.message : 'Create user failed';
     }
   }
 
-  async function resetPassword(id: number) {
-    busy = true;
-    error = '';
+  async function handleResetConfirm() {
+    if (!overlayUser) return;
     try {
-      const result = await api.resetUserPassword(id);
-      tempPassword = result.temporary_password;
+      const r = await api.resetUserPassword(overlayUser.id);
+      tempPassword = r.temporary_password;
+      overlay = 'resetResult';
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Failed to reset password';
-    } finally {
-      busy = false;
+      loadError = e instanceof Error ? e.message : 'Reset password failed';
+      closeOverlay();
     }
   }
 
-  async function disableTOTP(id: number) {
-    if (!confirm('Disable 2FA for this user?')) return;
-    busy = true;
-    error = '';
+  async function handleDisable2FA() {
+    if (!overlayUser) return;
     try {
-      await api.disableUserTOTP(id);
+      await api.disableUserTOTP(overlayUser.id);
       await loadUsers();
+      closeOverlay();
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Failed to disable TOTP';
-    } finally {
-      busy = false;
+      loadError = e instanceof Error ? e.message : 'Disable 2FA failed';
     }
   }
 
-  async function toggleDisabled(user: AdminUser) {
-    busy = true;
-    error = '';
+  async function handleToggleDisabled() {
+    if (!overlayUser) return;
     try {
-      const updated = await api.patchUser(user.id, { disabled: !user.disabled_at });
-      users = users.map(u => u.id === updated.id ? updated : u);
+      const updated = await api.patchUser(overlayUser.id, { disabled: !overlayUser.disabled_at });
+      users = users.map((u) => (u.id === updated.id ? updated : u));
+      closeOverlay();
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Failed to update user';
-    } finally {
-      busy = false;
+      loadError = e instanceof Error ? e.message : 'Toggle disable failed';
     }
   }
 
-  async function deleteUser(id: number, username: string) {
-    if (!confirm(`Delete user '${username}'? This cannot be undone.`)) return;
-    busy = true;
-    error = '';
+  async function handleDelete() {
+    if (!overlayUser) return;
     try {
-      await api.deleteUser(id);
-      users = users.filter(u => u.id !== id);
+      await api.deleteUser(overlayUser.id);
+      users = users.filter((u) => u.id !== overlayUser!.id);
+      closeOverlay();
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Failed to delete user';
-    } finally {
-      busy = false;
+      loadError = e instanceof Error ? e.message : 'Delete failed';
     }
-  }
-
-  function formatDate(ts: number | null): string {
-    if (!ts) return '—';
-    return new Date(ts * 1000).toLocaleDateString();
   }
 </script>
 
-{#if authState?.user?.role !== 'admin'}
-  <p>Access denied.</p>
+{#if !isAdmin}
+  <main class="ts-shell">
+    <EmptyState title="Access denied" subtitle="You don't have permission to view this page." />
+  </main>
 {:else}
-  <div class="admin-wrap">
-    <div class="admin">
-        <h1>User Management</h1>
-        {#if error}
-          <p role="alert" class="error">{error}</p>
-        {/if}
+  <main class="ts-shell ts-shell-admin">
+    <header class="head">
+      <div class="eyebrow">Admin</div>
+      <h1 class="title">Instance &amp; users</h1>
+      <div class="id">
+        <span>Signed in as <b>{$auth.user?.username}</b></span>
+        <span class="dot" aria-hidden="true"></span>
+        <span class="accent">admin</span>
+      </div>
+    </header>
 
-        {#if tempPassword}
-          <div class="modal">
-            <p>Temporary password (shown once):</p>
-            <code>{tempPassword}</code>
-            <button onclick={() => tempPassword = ''}>Close</button>
-          </div>
-        {/if}
+    {#if loadError}
+      <p role="alert" class="err">{loadError}</p>
+    {/if}
 
-        <button onclick={() => showCreateForm = !showCreateForm} disabled={busy}>
-          {showCreateForm ? 'Cancel' : 'Create user'}
-        </button>
+    <section class="section">
+      <div class="section-eyebrow">
+        <span>User management</span>
+        <span class="rule" aria-hidden="true"></span>
+        <span class="tag">{users.length} accounts</span>
+      </div>
+      <AdminToolbar
+        filter={filter}
+        query={query}
+        onFilter={(f) => (filter = f)}
+        onQuery={(q) => (query = q)}
+        onCreate={() => (overlay = 'create')}
+      />
+      <UserTable users={filteredUsers} currentUserId={currentUserId} onAction={onAction} />
+    </section>
 
-        {#if showCreateForm}
-          <form onsubmit={(e) => { e.preventDefault(); createUser(); }} class="create-form">
-            <input type="text" bind:value={newUsername} placeholder="Username" required />
-            <input type="password" bind:value={newPassword} placeholder="Password" required minlength="8" />
-            <select bind:value={newRole}>
-              <option value="user">User</option>
-              <option value="admin">Admin</option>
-            </select>
-            <button type="submit" disabled={busy}>Create</button>
-          </form>
-        {/if}
+    <section class="section">
+      <div class="section-eyebrow">
+        <span>System status</span>
+        <span class="rule" aria-hidden="true"></span>
+      </div>
+      <SysGrid status={status} nextPollAt={null} now={nowSec} error={statusError} />
+      <div class="errors-head">
+        <span>Recent events</span>
+        <span class="rule" aria-hidden="true"></span>
+      </div>
+      <ErrorsTable events={status?.recent_errors ?? []} />
+    </section>
+  </main>
+{/if}
 
-        <table>
-          <thead>
-            <tr>
-              <th>Username</th>
-              <th>Role</th>
-              <th>Created</th>
-              <th>Status</th>
-              <th>2FA</th>
-              <th>Passkeys</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each users as user (user.id)}
-              <tr class:disabled={!!user.disabled_at}>
-                <td>{user.username}</td>
-                <td>{user.role}</td>
-                <td>{formatDate(user.created_at)}</td>
-                <td>{user.disabled_at ? 'Disabled' : 'Active'}</td>
-                <td>{user.has_totp ? 'Enabled' : '—'}</td>
-                <td>{user.passkey_count}</td>
-                <td class="actions">
-                  <button onclick={() => resetPassword(user.id)} disabled={busy}>Reset password</button>
-                  {#if user.has_totp}
-                    <button onclick={() => disableTOTP(user.id)} disabled={busy}>Disable 2FA</button>
-                  {/if}
-                  <button onclick={() => toggleDisabled(user)} disabled={busy}>
-                    {user.disabled_at ? 'Re-enable' : 'Disable'}
-                  </button>
-                  {#if user.id !== authState?.user?.id}
-                    <button onclick={() => deleteUser(user.id, user.username)} disabled={busy} class="danger">
-                      Delete
-                    </button>
-                  {/if}
-                </td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-    </div>
-  </div>
+{#if overlay === 'create'}
+  <CreateUserDialog open={true} onSubmit={handleCreate} onClose={closeOverlay} />
+{:else if overlay === 'resetConfirm' && overlayUser}
+  <ConfirmDialog
+    open={true}
+    title={`Reset password for ${overlayUser.username}?`}
+    body={`A new one-shot password will be generated and shown once. ${overlayUser.username}'s other sessions will be signed out.`}
+    cta="Reset password"
+    onConfirm={handleResetConfirm}
+    onCancel={closeOverlay}
+  />
+{:else if overlay === 'resetResult' && overlayUser}
+  <ResetPasswordResultDialog
+    open={true}
+    username={overlayUser.username}
+    password={tempPassword}
+    onClose={closeOverlay}
+  />
+{:else if overlay === 'disable2fa' && overlayUser}
+  <ConfirmDialog
+    open={true}
+    title={`Disable two-factor for ${overlayUser.username}?`}
+    body={`This removes the authenticator binding from ${overlayUser.username}'s account. They'll sign in with password only until they re-enrol. Recovery codes are invalidated immediately.`}
+    cta="Disable TOTP"
+    danger
+    footNote="acts immediately"
+    onConfirm={handleDisable2FA}
+    onCancel={closeOverlay}
+  />
+{:else if overlay === 'disableUser' && overlayUser}
+  <ConfirmDialog
+    open={true}
+    title={`Disable ${overlayUser.username}?`}
+    body={`${overlayUser.username} will be signed out everywhere and can't sign back in until you re-enable the account. Their data and feeds are preserved.`}
+    cta="Disable account"
+    footNote="reversible"
+    onConfirm={handleToggleDisabled}
+    onCancel={closeOverlay}
+  />
+{:else if overlay === 'enable' && overlayUser}
+  <ConfirmDialog
+    open={true}
+    title={`Re-enable ${overlayUser.username}?`}
+    body={`${overlayUser.username} will be able to sign in again with their existing password. Their feeds and saved entries are unchanged.`}
+    cta="Re-enable account"
+    onConfirm={handleToggleDisabled}
+    onCancel={closeOverlay}
+  />
+{:else if overlay === 'delete' && overlayUser}
+  <ConfirmDialog
+    open={true}
+    title={`Delete ${overlayUser.username}?`}
+    body={`This permanently removes ${overlayUser.username}, all their feeds, saved entries and sessions. This can't be undone.`}
+    cta={`Delete ${overlayUser.username}`}
+    danger
+    footNote="permanent · cannot be undone"
+    list={[
+      `${overlayUser.passkey_count} passkey${overlayUser.passkey_count === 1 ? '' : 's'} revoked`,
+      'subscribed feeds released',
+      'read/save records purged',
+    ]}
+    onConfirm={handleDelete}
+    onCancel={closeOverlay}
+  />
 {/if}
 
 <style>
-  .admin-wrap { padding: 0; }
-  .admin { max-width: 64rem; margin: 0 auto; }
-  table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
-  th, td { text-align: left; padding: 0.5rem; border-bottom: 1px solid #eee; }
-  .disabled td { opacity: 0.6; }
-  .error { color: var(--color-danger, #b00); }
-  .modal { border: 1px solid #ccc; padding: 1rem; margin: 1rem 0; }
-  .modal code { display: block; font-size: 1.2rem; margin: 0.5rem 0; }
-  .create-form { display: flex; gap: 0.5rem; margin: 0.5rem 0; flex-wrap: wrap; }
-  .actions { display: flex; gap: 0.25rem; flex-wrap: wrap; }
-  .danger { color: var(--color-danger, #b00); }
+  .ts-shell { max-width: 1080px; margin: 0 auto; padding: 24px 32px; }
+  .head { padding: 28px 0 18px; border-bottom: 1px solid var(--rule); }
+  .eyebrow {
+    font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--ink-3); margin-bottom: 8px;
+  }
+  .title {
+    font-family: var(--serif); font-size: 34px; font-weight: 600;
+    letter-spacing: -0.02em; line-height: 1.1; margin: 0 0 10px;
+  }
+  .id {
+    font-family: var(--mono); font-size: 11px; color: var(--ink-3);
+    display: inline-flex; align-items: center; gap: 8px;
+  }
+  .id b { color: var(--ink-2); font-weight: 500; }
+  .id .dot { width: 3px; height: 3px; border-radius: 50%; background: var(--ink-4); }
+  .id .accent { color: var(--accent); }
+  .err {
+    font-family: var(--mono); font-size: 12px;
+    color: #c43a3a; margin: 12px 0;
+  }
+  :global(html.theme-dark) .err { color: #ec7a7a; }
+  .section { padding: 36px 0 6px; }
+  .section-eyebrow {
+    display: flex; align-items: center; gap: 12px;
+    font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--ink-3);
+    margin-bottom: 14px;
+  }
+  .section-eyebrow .rule { flex: 1; height: 1px; background: var(--rule); }
+  .section-eyebrow .tag { color: var(--ink-3); }
+  .errors-head {
+    display: flex; align-items: center; gap: 12px;
+    margin-top: 22px; padding-bottom: 8px;
+    font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--ink-3);
+  }
+  .errors-head .rule { flex: 1; height: 1px; background: var(--rule); }
 </style>

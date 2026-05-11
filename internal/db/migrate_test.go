@@ -17,10 +17,10 @@ func TestMigrate_AppliesAllMigrationsExactlyOnce(t *testing.T) {
 
 	require.NoError(t, Migrate(context.Background(), d))
 
-	// schema_migrations should have version 10 recorded (0001 through 0010).
+	// schema_migrations should have version 11 recorded (0001 through 0011).
 	var version int
 	require.NoError(t, d.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version))
-	require.Equal(t, 10, version)
+	require.Equal(t, 11, version)
 
 	// subscriptions table should exist (introduced in 0001).
 	// user_id is NOT NULL after 0006, so we need a user first.
@@ -35,7 +35,7 @@ func TestMigrate_AppliesAllMigrationsExactlyOnce(t *testing.T) {
 	// Re-running Migrate must be a no-op.
 	require.NoError(t, Migrate(context.Background(), d))
 	require.NoError(t, d.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version))
-	require.Equal(t, 10, version)
+	require.Equal(t, 11, version)
 }
 
 func TestMigrate_AddsAuthTables(t *testing.T) {
@@ -136,10 +136,10 @@ func TestMigrate_AddsExtractionColumns(t *testing.T) {
 		require.Equal(t, c.def, defaultVal.String, "%s.%s default", c.table, c.column)
 	}
 
-	// schema_migrations should be at the latest version (M11 added 0010).
+	// schema_migrations should be at the latest version (0011 added fetched_at index).
 	var version int
 	require.NoError(t, d.QueryRowContext(ctx, `SELECT MAX(version) FROM schema_migrations`).Scan(&version))
-	require.Equal(t, 10, version)
+	require.Equal(t, 11, version)
 }
 
 func TestMigrate_0006_UserDataIsolation(t *testing.T) {
