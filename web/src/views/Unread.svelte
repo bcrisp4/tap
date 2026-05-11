@@ -6,6 +6,7 @@
   import { entries, subscriptions } from '../lib/store';
   import { navigate } from '../lib/router';
   import { pullToRefresh } from '../lib/pulltorefresh';
+  import PollerStatus from '../components/PollerStatus.svelte';
 
   let mainEl = $state<HTMLElement | null>(null);
   let refreshing = $state(false);
@@ -58,6 +59,11 @@
     try { await entries.load(true); } finally { refreshing = false; }
   }
 
+  async function markAllRead() {
+    const ids = $entries.items.map(e => e.id);
+    await Promise.allSettled(ids.map(id => entries.toggleRead(id, true)));
+  }
+
   function feedFor(subId: number) {
     return $subscriptions.find(s => s.id === subId);
   }
@@ -71,7 +77,9 @@
       countShown={$entries.items.length}
       countTotal={$entries.items.length}
       onRefresh={doRefresh}
+      onMarkAllRead={markAllRead}
     />
+    <PollerStatus />
     {#if $entries.loading}
       <p class="status">Loading…</p>
     {:else if $entries.error}

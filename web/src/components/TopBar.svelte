@@ -1,20 +1,30 @@
 <script lang="ts">
+  import { navigate } from '../lib/router';
+
   type Props = {
     title: string;
     countShown: number;
     countTotal: number;
     onRefresh?: () => void;
+    onMarkAllRead?: () => void;
+    onSearch?: () => void;
   };
-  let { title, countShown, countTotal, onRefresh }: Props = $props();
+  let { title, countShown, countTotal, onRefresh, onMarkAllRead, onSearch }: Props = $props();
 </script>
 
 <header class="topbar">
   <span class="crumb">{title}</span>
   <span class="count">{countShown} of {countTotal}</span>
   <span class="spacer"></span>
-  {#if onRefresh}
-    <button class="icon" onclick={onRefresh} aria-label="Refresh feeds">↻</button>
-  {/if}
+  <div class="actions">
+    <button class="icon" onclick={() => onSearch ? onSearch() : navigate('/search')} aria-label="Search">🔍</button>
+    {#if onMarkAllRead}
+      <button class="icon" onclick={onMarkAllRead} aria-label="Mark all as read">✓</button>
+    {/if}
+    {#if onRefresh}
+      <button class="icon" onclick={onRefresh} aria-label="Refresh feeds">↻</button>
+    {/if}
+  </div>
 </header>
 
 <style>
@@ -38,6 +48,7 @@
     margin-left: 8px;
   }
   .spacer { flex: 1; }
+  .actions { display: flex; gap: 4px; }
   .icon {
     width: 28px;
     height: 28px;

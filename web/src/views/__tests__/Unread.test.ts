@@ -7,6 +7,7 @@ import type { EntryListItem, Subscription } from '../../lib/types';
 vi.mock('../../components/Sidebar.svelte', () => ({ default: vi.fn() }));
 vi.mock('../../components/TopBar.svelte', () => ({ default: vi.fn() }));
 vi.mock('../../components/EntryRow.svelte', () => ({ default: vi.fn() }));
+vi.mock('../../components/PollerStatus.svelte', () => ({ default: vi.fn() }));
 
 // Mock the router so navigate doesn't touch window.location.
 vi.mock('../../lib/router', () => ({
@@ -33,6 +34,7 @@ vi.mock('../../lib/store', () => ({
       return () => { _entriesSubs.splice(_entriesSubs.indexOf(fn), 1); };
     },
     load: (...args: unknown[]) => mockEntriesLoad(...args),
+    toggleRead: vi.fn(),
   },
   subscriptions: {
     subscribe: (fn: (v: Subscription[]) => void) => {
@@ -100,6 +102,7 @@ describe('Unread view', () => {
     const { container } = render(Unread);
     expect(container.querySelector('ul[role="list"]')).toBeTruthy();
   });
+
 });
 
 describe('Unread keyboard context', () => {
