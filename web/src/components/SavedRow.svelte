@@ -73,7 +73,7 @@
     </div>
   </div>
 
-  <div class="actions" role="group" aria-label="Saved entry actions" onclick={(e) => e.stopPropagation()}>
+  <div class="actions" role="group" aria-label="Saved entry actions">
     <button
       type="button" class="action"
       onclick={(e) => handleAction(e, onOpen)}
