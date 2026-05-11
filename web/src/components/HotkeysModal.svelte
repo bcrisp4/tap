@@ -29,6 +29,16 @@
       ],
     },
     {
+      title: 'Reader',
+      rows: [
+        { keys: ['v'], desc: 'View original' },
+        { keys: ['h', 'Esc'], desc: 'Back to list' },
+        { keys: ['1'], desc: 'Narrow measure' },
+        { keys: ['2'], desc: 'Comfortable measure' },
+        { keys: ['3'], desc: 'Wide measure' },
+      ],
+    },
+    {
       title: 'App',
       rows: [
         { keys: ['/'], desc: 'Search' },
