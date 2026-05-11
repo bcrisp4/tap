@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -182,6 +181,10 @@ func TestStatus_OffendingFeeds_AlwaysArray(t *testing.T) {
 	handler.ServeHTTP(rr, req)
 
 	require.Equal(t, http.StatusOK, rr.Code)
-	assert.True(t, strings.Contains(rr.Body.String(), `"offending_feeds":[]`),
-		"offending_feeds must serialise as [] not null, got: %s", rr.Body.String())
+	var body struct {
+		OffendingFeeds []string `json:"offending_feeds"`
+	}
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
+	assert.NotNil(t, body.OffendingFeeds, "offending_feeds must serialise as [] not null")
+	assert.Empty(t, body.OffendingFeeds)
 }

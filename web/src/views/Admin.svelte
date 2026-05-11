@@ -22,7 +22,7 @@
   let users = $state<AdminUser[]>([]);
   let status = $state<StatusResponse | null>(null);
   let loadError = $state('');
-  let pollInterval = $state<ReturnType<typeof setInterval> | null>(null);
+  let pollInterval: ReturnType<typeof setInterval> | null = null;
   let nowSec = $state(Math.floor(Date.now() / 1000));
 
   let filter = $state<AdminFilter>('all');
@@ -178,7 +178,6 @@
       <AdminToolbar
         filter={filter}
         query={query}
-        count={filteredUsers.length}
         onFilter={(f) => (filter = f)}
         onQuery={(q) => (query = q)}
         onCreate={() => (overlay = 'create')}

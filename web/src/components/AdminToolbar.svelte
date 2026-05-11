@@ -3,14 +3,11 @@
   type Props = {
     filter: AdminFilter;
     query: string;
-    count: number;
     onFilter?: (f: AdminFilter) => void;
     onQuery?: (q: string) => void;
     onCreate?: () => void;
   };
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { filter, query, count, onFilter, onQuery, onCreate }: Props = $props();
-  void count;
+  const { filter, query, onFilter, onQuery, onCreate }: Props = $props();
   const chips: Array<{ id: AdminFilter; label: string }> = [
     { id: 'all', label: 'All' },
     { id: 'admins', label: 'Admins' },

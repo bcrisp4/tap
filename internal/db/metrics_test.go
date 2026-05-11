@@ -9,12 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// mustCreateUser creates a user and returns its ID.
-func mustCreateUser(t *testing.T, d *sql.DB, username string) int64 {
-	t.Helper()
-	return insertTestUser(t, d, username)
-}
-
 // mustInsertSubscriptionFull inserts a subscription with explicit error_count,
 // last_poll_at, and next_poll_at values.
 func mustInsertSubscriptionFull(t *testing.T, d *sql.DB, userID int64, title, feedURL string, errorCount int, lastPollAt, nextPollAt int64) int64 {
@@ -60,7 +54,7 @@ func TestGetAdminMetrics_EmptyDB(t *testing.T) {
 func TestGetAdminMetrics_PopulatedDB(t *testing.T) {
 	d := newTestDB(t)
 	ctx := context.Background()
-	uid := mustCreateUser(t, d, "alice")
+	uid := insertTestUser(t, d, "alice")
 	now := time.Unix(1_700_000_000, 0)
 
 	// 3 feeds: 2 OK, 1 erroring
@@ -85,7 +79,7 @@ func TestGetAdminMetrics_PopulatedDB(t *testing.T) {
 func TestGetAdminMetrics_OffendingFeedsLimitAndOrder(t *testing.T) {
 	d := newTestDB(t)
 	ctx := context.Background()
-	uid := mustCreateUser(t, d, "alice")
+	uid := insertTestUser(t, d, "alice")
 	now := time.Unix(1_700_000_000, 0)
 
 	// 5 erroring feeds, descending error_count

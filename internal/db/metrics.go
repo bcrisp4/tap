@@ -24,23 +24,22 @@ type AdminMetrics struct {
 func GetAdminMetrics(ctx context.Context, d *sql.DB, now time.Time) (AdminMetrics, error) {
 	var m AdminMetrics
 
-	if err := d.QueryRowContext(ctx, `SELECT COUNT(*) FROM subscriptions`).Scan(&m.FeedsTotal); err != nil {
+	if err := d.QueryRowContext(ctx, `
+		SELECT
+			COUNT(*),
+			COALESCE(SUM(CASE WHEN error_count = 0 THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN error_count > 0 THEN 1 ELSE 0 END), 0)
+		FROM subscriptions`,
+	).Scan(&m.FeedsTotal, &m.FeedsOK, &m.FeedsWithErrors); err != nil {
 		return m, fmt.Errorf("count feeds: %w", err)
 	}
-	if err := d.QueryRowContext(ctx, `SELECT COUNT(*) FROM subscriptions WHERE error_count = 0`).Scan(&m.FeedsOK); err != nil {
-		return m, fmt.Errorf("count feeds ok: %w", err)
-	}
-	if err := d.QueryRowContext(ctx, `SELECT COUNT(*) FROM subscriptions WHERE error_count > 0`).Scan(&m.FeedsWithErrors); err != nil {
-		return m, fmt.Errorf("count feeds erroring: %w", err)
-	}
-	if err := d.QueryRowContext(ctx, `SELECT COUNT(*) FROM entries`).Scan(&m.EntriesTotal); err != nil {
-		return m, fmt.Errorf("count entries: %w", err)
-	}
+
 	cutoff := now.Add(-24 * time.Hour).Unix()
-	if err := d.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM entries WHERE fetched_at >= ?`, cutoff,
-	).Scan(&m.Entries24h); err != nil {
-		return m, fmt.Errorf("count entries 24h: %w", err)
+	if err := d.QueryRowContext(ctx, `
+		SELECT COUNT(*), COALESCE(SUM(CASE WHEN fetched_at >= ? THEN 1 ELSE 0 END), 0)
+		FROM entries`, cutoff,
+	).Scan(&m.EntriesTotal, &m.Entries24h); err != nil {
+		return m, fmt.Errorf("count entries: %w", err)
 	}
 
 	rows, err := d.QueryContext(ctx, `
