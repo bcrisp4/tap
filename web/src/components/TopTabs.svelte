@@ -67,14 +67,6 @@
   }
   .tabs { list-style: none; margin: 0; padding: 0; display: flex; align-items: baseline; flex: 1; flex-wrap: wrap; }
   .tabs > li { display: inline-flex; align-items: baseline; }
-  .tabs > li + li::before {
-    content: "/";
-    font-family: var(--mono);
-    font-size: 12px;
-    color: var(--ink-4);
-    padding: 0 6px;
-    user-select: none;
-  }
   .tab {
     position: relative;
     display: inline-flex; align-items: baseline; gap: 8px;
