@@ -49,7 +49,7 @@
     } catch (err) {
       error = err instanceof Error && err.message !== ERR_UNAUTHORIZED
         ? err.message
-        : 'Invalid email or password.';
+        : 'Invalid username or password.';
     } finally {
       busy = false;
     }
@@ -141,10 +141,9 @@
 
         {#if mode === 'password'}
           <Field
-            label="EMAIL"
+            label="USERNAME"
             bind:value={username}
-            type="email"
-            placeholder="you@domain.com"
+            type="text"
             mono
             autofocus
             autocomplete="username"
