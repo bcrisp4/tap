@@ -132,6 +132,11 @@ Invoke these as the implementer:
   # M1 owns the EntryRow rewrite (team-lead ruling 2026-05-11):
   grep -q 'ts-entry' src/components/EntryRow.svelte
   grep -q 'density' src/components/EntryRow.svelte
+  # Canonical density vocabulary (team-lead ruling 2026-05-11):
+  #   'compact' | 'comfortable' | 'cosy', default 'comfortable'.
+  grep -q "'cosy'" src/lib/preferences.svelte.ts
+  grep -q "'comfortable'" src/lib/preferences.svelte.ts
+  ! grep -q "'default'" src/lib/preferences.svelte.ts  # the old name must be gone
   ```
 
   If any of these fail, stop and message `team-lead` — M2 cannot start until M1 lands or is at least branched-from.
@@ -414,7 +419,7 @@ If any of these fail, message `team-lead` before continuing — the gap belongs 
 
 Brand spec §4.4 anatomy: junction dot left of the title, title (serif 17–19/500), meta row (feed-avatar + source name + sep + relative time + sep + read time + optional saved tag), optional 2-line clamped summary, `is-selected` background `var(--accent-soft)`, `is-read` tone-down (weight 400, ink-3), `is-saved` adds the SAVED tag inside meta (per `tap-simple.jsx` line 88–93) — note the simple-shell variant moves the saved indicator *into the meta line* rather than the right-gutter `.saved-mark` from the legacy `.entry`. We follow the simple-shell pattern.
 
-Density: read from `lib/preferences.svelte.ts.density.value` — `compact` hides summary, `default` (= comfortable) shows summary clamped 2 lines, `cosy` shows summary clamped 1 line. Apply via `.density-compact` / `.density-comfortable` / `.density-cosy` *on the row* (not on the list container — the row owns its own scoped CSS). The list container also adds the class for any sibling-aware selectors (e.g., the `:has(+ .ts-group-heading)` no-bottom-border rule).
+Density: read from `lib/preferences.svelte.ts.density.value` — `compact` hides summary, `comfortable` (default) shows summary clamped 2 lines, `cosy` shows summary clamped 1 line. Apply via `.density-compact` / `.density-comfortable` / `.density-cosy` *on the row* (not on the list container — the row owns its own scoped CSS). The list container also adds the class for any sibling-aware selectors (e.g., the `:has(+ .ts-group-heading)` no-bottom-border rule). Canonical density vocabulary per team-lead ruling 2026-05-11: `'compact' | 'comfortable' | 'cosy'` with `'comfortable'` as the default value. M1 owns the migration of the existing `preferences.svelte.ts` density enum (currently `'compact' | 'default' | 'comfortable'`) to the canonical names.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -498,9 +503,9 @@ describe('EntryRow', () => {
     expect(container.querySelector('.ts-entry-summary')).toBeNull();
   });
 
-  it('shows summary when density=default', () => {
+  it('shows summary when density=comfortable', () => {
     const { container } = render(EntryRow, {
-      props: { entry: entry({ author: 'A summary line' }), feed: sub(), density: 'default' },
+      props: { entry: entry({ author: 'A summary line' }), feed: sub(), density: 'comfortable' },
     });
     // EntryRow uses entry.author as the summary stand-in (existing behaviour);
     // when API exposes a proper summary field later, swap to it. Test the slot
@@ -543,7 +548,7 @@ The block below is **reference material** for confirming M1's primitive matches 
   import { navigate } from '../lib/router';
   import { swipe } from '../lib/swipe';
 
-  type Density = 'compact' | 'default' | 'cosy';
+  type Density = 'compact' | 'comfortable' | 'cosy';
   type Props = {
     entry: EntryListItem;
     feed: Subscription | undefined;
@@ -553,7 +558,7 @@ The block below is **reference material** for confirming M1's primitive matches 
     onToggleSaved?: () => void;
   };
   let {
-    entry, feed, isSelected = false, density = 'default',
+    entry, feed, isSelected = false, density = 'comfortable',
     onToggleRead, onToggleSaved,
   }: Props = $props();
 
@@ -1298,7 +1303,7 @@ vi.mock('../../lib/preferences.svelte', () => ({
   measure: { get value() { return prefs.measure; }, set value(v: string) { prefs.measure = v; } },
   font:    { get value() { return prefs.font; },    set value(v: string) { prefs.font = v; } },
   markOnScroll: { get value() { return prefs.markOnScroll; }, set value(v: boolean) { prefs.markOnScroll = v; } },
-  density: { get value() { return 'default'; }, set value(_: string) {} },
+  density: { get value() { return 'comfortable'; }, set value(_: string) {} },
   theme:   { get resolved() { return 'light'; }, get stored() { return 'light'; }, set stored(_: string) {} },
 }));
 
@@ -2370,7 +2375,7 @@ git status # confirm clean or only docs/superpowers/plans/* untracked
 ## Acceptance criteria
 
 1. **EntryRow**: matches `Tap Brand and UI Spec.md` §4.4 — junction dot at `left: 4px; top: 24px` (simple-shell variant), 6×6, solid accent unread / hollow ring read; serif 19px title (`-0.005em`); sans meta with feed-avatar + source name + sep dots; saved tag rendered inside meta (mono 10px uppercase, accent colour). CSS selectors emitted: `.ts-entry`, `.ts-entry.is-read`, `.ts-entry.is-saved`, `.ts-entry.is-selected`, `.ts-entry-dot`, `.ts-entry-title`, `.ts-entry-meta`, `.ts-entry-source`, `.ts-saved-tag`, `.ts-entry-summary`. JSX reference: `tap-simple.jsx` `TSEntryRow` (lines 70–100). Spec line 1587–1661 in `ui_design/styles.css`.
-2. **Density variants** apply on the row: `.density-compact` hides summary, `.density-cosy` clamps summary to 1 line, `.density-default` (= comfortable) clamps to 2 lines. Density source is `lib/preferences.svelte.ts.density.value`.
+2. **Density variants** apply on the row: `.density-compact` hides summary, `.density-cosy` clamps summary to 1 line, `.density-comfortable` (default) clamps to 2 lines. Density source is `lib/preferences.svelte.ts.density.value`. Canonical vocabulary per team-lead ruling 2026-05-11: `'compact' | 'comfortable' | 'cosy'`.
 3. **Day-band groupings**: per `Tap Brand and UI Spec.md` §6.1 — `TODAY` / `YESTERDAY` / `THIS WEEK` / `EARLIER` rendered as `.ts-group-heading` with eyebrow label + flex-1 hairline rule + right-aligned mono count. Empty bands are not rendered. JSX reference: `tap-simple.jsx` `TSGroupHeading` (lines 117–125) and `bucketByDay` (128–137).
 4. **Reader anatomy** matches `Tap Brand and UI Spec.md` §4.5 and `tap-simple.jsx` `TSArticle` (411–471): `.ts-back` row, `.ts-article` wrapper, `.ts-article-source` (feed avatar + name + URL), `.ts-article-title` (serif 38px), `.ts-article-byline` (mono caps), `.ts-article-actions` (Mark unread / Saved / Original each with `.ts-action-dot` and `.ts-kbd`), `.ts-article-rule` (line · accent dot · line), `.ts-article-lede` (serif italic 19px), body, `.ts-article-end`, `.ts-article-foot`.
 5. **Measure control**: `.measure-narrow|comfortable|wide` applied to `.ts-shell-reader` constrains `.ts-article` max-width to 580 / 680 / 760. Preference source: `prefs.measure`. Keys `1` / `2` / `3` cycle while in the reader route.
@@ -2415,7 +2420,7 @@ make dev   # http://localhost:5173 — manual smoke per Task 14 Step 2
 
 ## Risks
 
-1. **M1 coordination boundary on `EntryRow`.** Per team-lead ruling 2026-05-11: M1 owns the EntryRow rewrite in full. M2 only writes the consumer-side tests for the Unread list's usage. If Task 3 Step 0's grep checks fail, M2 *does not* rebuild — instead the executing agent raises the gap via `team-lead`. The risk that remains is *prop-signature drift*: if M1 ships a `density` prop with different values (e.g., `'cozy'` instead of `'cosy'`, or omits `default` in favour of `'comfortable'`) the Unread view will need a small adapter in Task 4. Mitigation: Task 0 Step 1 already greps for the exact prop names; surface mismatches early.
+1. **M1 coordination boundary on `EntryRow`.** Per team-lead ruling 2026-05-11: M1 owns the EntryRow rewrite in full, and the canonical density vocabulary is `'compact' | 'comfortable' | 'cosy'` with `'comfortable'` as default — M1 also owns migrating `preferences.svelte.ts` from the existing `'compact' | 'default' | 'comfortable'` enum. M2 only writes the consumer-side tests for the Unread list's usage. If Task 3 Step 0's grep checks fail, M2 *does not* rebuild — instead the executing agent raises the gap via `team-lead`. The residual risk is *prop-signature drift*: if M1 ships a misspelling (e.g., `'cozy'` for `'cosy'`) or hasn't yet completed the `preferences.svelte.ts` migration, the Unread view will not compile. Mitigation: Task 0 Step 1 greps for the exact prop names; surface mismatches early. The plan code uses the canonical names everywhere — if you see the old `'default'` value in the repo, it is the M1 migration not landing, not an M2 plan error.
 2. **`prefs.measure` ownership.** Umbrella spec line 91 puts `measure` on M1's foundations. If M1 forgets, Task 8 adds it; if M1 ships it, the executing agent verifies and moves on. The plan includes the additive code so either path lands clean.
 3. **`searchOverlay` store ownership.** Umbrella spec line 92 explicitly puts the store, key handler, and *empty* component on M1. If M1 ships them not at all, Task 10 will fail to compile; the executing agent must either land the store first (small addition — copy from this plan's expected shape) or block on M1. **Mitigation:** the Task 0 baseline check fails fast if the store is missing.
 4. **IntersectionObserver in jsdom.** Vitest defaults to jsdom which doesn't implement `IntersectionObserver`. The Task 6 tests stub it via `globalThis.IntersectionObserver = FakeIO`. The integration test in Reader.test.ts mocks `createMarkOnScroll` itself (the test for the observer wiring is unit-level in Task 6; the reader test only asserts the observer is attached, which is observable via the lede element's data attributes or a spy on the imported factory). The plan does not test the live observer in jsdom because the mock surface is cleaner.
@@ -2434,5 +2439,5 @@ make dev   # http://localhost:5173 — manual smoke per Task 14 Step 2
 
 - **Spec coverage:** every bullet of the team-lead's scope section maps to a task: EntryRow *consumer verification* → Task 3 (the rewrite itself is M1's job per the 2026-05-11 ruling); day-band groupings → Tasks 1/2/4; `.ts-article` rebuild → Task 7; action row with kbd chips → Task 7 (markup); measure preference → Tasks 8/9 plus Task 7 (CSS); mark-on-scroll → Tasks 6/7/8; scroll persistence → Tasks 5/7; serif/sans toggle → Task 7 (CSS); SearchOverlay actual implementation → Task 10; mobile reader → Task 13.
 - **Placeholders:** none. Every step has runnable commands or complete code.
-- **Type consistency:** `EntryListItem`, `Subscription`, `EntryDetail` come from `lib/types.ts`. `Density` is `'compact' | 'default' | 'cosy'` everywhere (note: the brand spec uses `comfortable`/`compact`/`cosy`; we keep the existing `default` alias because `preferences.svelte.ts` already exposes that name — renaming is M6/Settings scope). `Measure` is `'narrow' | 'comfortable' | 'wide'`. `MarkOnScroll` is `boolean`. `Band` keys are `'Today' | 'Yesterday' | 'ThisWeek' | 'Earlier'`.
+- **Type consistency:** `EntryListItem`, `Subscription`, `EntryDetail` come from `lib/types.ts`. `Density` is `'compact' | 'comfortable' | 'cosy'` everywhere per team-lead ruling 2026-05-11 (default `'comfortable'`). M1 owns the `preferences.svelte.ts` migration from the prior `'compact' | 'default' | 'comfortable'` enum. `Measure` is `'narrow' | 'comfortable' | 'wide'`. `MarkOnScroll` is `boolean`. `Band` keys are `'Today' | 'Yesterday' | 'ThisWeek' | 'Earlier'`.
 - **CSS selector parity:** every selector mentioned in the team-lead's grep list (`.entry`, `.ts-entry`, `.junction`, `.saved-mark`, `.ts-group-heading`, `.ts-article`, etc.) is owned by a specific task in this plan. `.entry` and `.junction` and `.saved-mark` belong to the *legacy* split-pane shape that we replace with `.ts-entry` + `.ts-entry-dot` + `.ts-saved-tag` — confirmed against the simple-shell JSX (`tap-simple.jsx`) which is the M-Redesign target shell.
