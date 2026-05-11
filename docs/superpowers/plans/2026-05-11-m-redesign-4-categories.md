@@ -4,9 +4,12 @@
 
 **Goal:** Replace the sidebar's inline category UI with a dedicated `/categories` management page (`views/Categories.svelte`) that ships every interaction the new design specifies — inline rename, reassign-feed popover, mark-all-read with confirm, delete with confirm, Uncategorised pseudo-category, empty state, mobile bottom sheet — plus a small additive backend change (a `position` column + reorder endpoint) so categories can be reordered up and down.
 
-**Architecture:** New SPA route `/categories` rendering `Categories.svelte` inside `.ts-shell` (desktop) or the mobile shell. The page reads the existing `categories` and `subscriptions` stores (the latter is queried for category membership and per-feed unread counts), and uses M1 primitives (`Button`, `Popover`, `Dialog`, `Field`, `EmptyState`). Backend gains migration `0011_category_position.sql` adding `categories.position INTEGER NOT NULL DEFAULT 0`; a new endpoint `POST /api/v1/categories/reorder` accepts an ordered ID list and rewrites positions in a single transaction. List endpoint adds `position ASC, name COLLATE NOCASE` ordering. DTO gains a `position` field.
+**Architecture:** New SPA route `/categories` rendering `Categories.svelte` inside `.ts-shell` (desktop) or the mobile shell. The page reads the existing `categories` and `subscriptions` stores (the latter is queried for category membership; per-category unread counts come from the API DTO; Uncategorised unread is computed client-side from the `entries` store). M1 primitives are consumed (`Button`, `Popover`, `Dialog`, `Field`, `EmptyState`). Two additive backend changes:
 
-**Tech Stack:** Svelte 5 runes + TypeScript + Vite (frontend), Go 1.25 + `modernc.org/sqlite` + `database/sql` (backend), `vitest` + `@testing-library/svelte` (frontend tests), `stretchr/testify` (backend tests).
+1. Migration `0011_category_position.sql` adding `categories.position INTEGER NOT NULL DEFAULT 0`; new endpoint `POST /api/v1/categories/reorder` accepts an ordered ID list and rewrites positions in a single transaction. List endpoint adds `position ASC, name COLLATE NOCASE` ordering. DTO gains a `position` field.
+2. New DB function `db.MarkSubscriptionRead(ctx, d, subID, userID)` + endpoint `POST /api/v1/subscriptions/:id/mark-read` (mirrors `POST /api/v1/categories/:id/mark-read`). Used by the SPA to implement "Mark all read" on the Uncategorised pseudo-card without N entry-level PATCHes.
+
+**Tech Stack:** Svelte 5 runes + TypeScript + Vite (frontend), Go 1.26+ + `modernc.org/sqlite` + `database/sql` (backend; `go.mod` declares `go 1.26.2`), `vitest` + `@testing-library/svelte` (frontend tests), `stretchr/testify` (backend tests).
 
 ---
 
@@ -32,6 +35,10 @@
 
 The backend cost is small: one migration, one column, one endpoint, one DB helper, four tests. The risk surface is bounded — the column is `NOT NULL DEFAULT 0`, the endpoint runs in a single transaction, and the list query stays correct if `position` is missing or duplicated (tie-broken by name). The umbrella spec §7 risk 3 already calls this out as the leaning decision.
 
+## Mark-all-read on Uncategorised decision
+
+**Ship `POST /api/v1/subscriptions/:id/mark-read` (Tasks 5a + 5b).** The pseudo-category has no row in `categories`, so `POST /api/v1/categories/null/mark-read` is not a valid path. The alternative (loop unread entries and PATCH each) means N round-trips per uncategorised feed and forces the SPA to pull entire entry lists into memory just to mark them read. A per-subscription endpoint mirrors the existing `MarkCategoryRead` shape: one round-trip per uncategorised feed, no client-side entry enumeration, and the same per-user scoping invariant. Two new DB tests + three new API tests. Lock it in.
+
 ---
 
 ## File map
@@ -40,19 +47,31 @@ The backend cost is small: one migration, one column, one endpoint, one DB helpe
 
 - `internal/db/migrations/0011_category_position.sql`
 - `internal/db/categories_test.go` (new tests appended) — see Task 1, 2, 4
+- `internal/db/subscriptions_test.go` (new tests appended) — see Task 5a
 - `internal/api/categories_test.go` (new tests appended) — see Task 5
+- `internal/api/subscriptions_test.go` (new tests appended) — see Task 5b
 
 ### Backend — modify
 
 - `internal/db/categories.go`
-  - Extend `Category` struct with `Position int64`.
+  - Add `Position int64` field to the existing `Category` struct (alongside the existing `Unread int` — that field stays as-is).
   - Change `ListCategories` `ORDER BY` clause to `ORDER BY c.position ASC, c.name COLLATE NOCASE`.
-  - Add `Scan` for the new `position` column.
+  - Add `position` to the `Scan` call for `ListCategories` and `GetCategory`.
   - Add new function `ReorderCategories(ctx, d, userID, orderedIDs []int64) error`.
   - Update `InsertCategory` to assign `position = (SELECT COALESCE(MAX(position),-1)+1 FROM categories WHERE user_id=?)`.
+- `internal/db/subscriptions.go`
+  - Add new function `MarkSubscriptionRead(ctx, d, subscriptionID, userID int64) error` mirroring `MarkCategoryRead` — sets `entries.read = 1` for every unread entry under the subscription, scoped by `user_id`.
 - `internal/api/categories.go`
   - Add `Position` field to `categoryDTO`.
   - Register new route: `POST /api/v1/categories/reorder` accepting `{"order": [int64, ...]}`.
+- `internal/api/subscriptions.go`
+  - Register new route: `POST /api/v1/subscriptions/{id}/mark-read` returning `204` on success, `404` if the subscription doesn't belong to the user.
+- `internal/api/api.go`
+  - **Outer mux route table extension (load-bearing).** The production mux at `internal/api/api.go:167-187` explicitly enumerates every per-mux route. Two entries must be added or the new endpoints 404 in production:
+    - `{"POST", "/api/v1/categories/reorder", authedCSRF(catsMux)}`
+    - `{"POST", "/api/v1/subscriptions/{id}/mark-read", authedCSRF(subsMux)}`
+- `internal/api/testing.go`
+  - **Test mux route table extension.** The test mux at `internal/api/testing.go:65-85` mirrors `api.go`. Add the same two entries with `inject(catsMux)` / `inject(subsMux)`. Without this the new tests will see 404s under the test mux.
 - `internal/api/errors.go`
   - Add `ErrCodeReorderMismatch = "category_reorder_mismatch"` (rejected when the request omits or adds IDs vs. the user's current set).
 
@@ -249,7 +268,7 @@ Expected: FAIL — `Position` field does not exist on `Category`, or order is by
 
 - [ ] **Step 3: Implement**
 
-Edit `internal/db/categories.go`:
+Edit `internal/db/categories.go` to add the `Position int64` field. The existing fields (`ID`, `UserID`, `Name`, `CreatedAt`, `Unread`) stay as-is — only `Position` is new:
 
 ```go
 type Category struct {
@@ -257,7 +276,7 @@ type Category struct {
 	UserID    int64
 	Name      string
 	CreatedAt int64
-	Position  int64
+	Position  int64 // NEW — every other field is unchanged
 	Unread    int
 }
 ```
@@ -563,10 +582,10 @@ git commit -m "db: ReorderCategories — atomic per-user position rewrite"
 
 ---
 
-### Task 5: API — reorder endpoint + DTO `position`
+### Task 5: API — reorder endpoint + DTO `position` + outer-mux wiring
 
 **Files:**
-- Modify: `internal/api/categories.go`, `internal/api/errors.go`
+- Modify: `internal/api/categories.go`, `internal/api/errors.go`, `internal/api/api.go`, `internal/api/testing.go`
 - Test: `internal/api/categories_test.go` (append)
 
 - [ ] **Step 1: Write failing tests**
@@ -692,7 +711,23 @@ func toCategoryDTO(c db.Category) categoryDTO {
 }
 ```
 
-Append a new route registration inside `registerCategoryRoutes`:
+Append a new route registration inside `registerCategoryRoutes`. **Important:** registering on the inner `catsMux` is necessary but not sufficient. The outer mux at `internal/api/api.go` and `internal/api/testing.go` explicitly enumerates every category route — without adding the new path there, the request never reaches `catsMux` and the endpoint 404s.
+
+In `internal/api/api.go`, inside the production route table (currently lines 167-187), add:
+
+```go
+	{"POST", "/api/v1/categories/reorder", authedCSRF(catsMux)},
+```
+
+In `internal/api/testing.go`, inside the test route table (currently lines 65-85), add:
+
+```go
+	{"POST", "/api/v1/categories/reorder", inject(catsMux)},
+```
+
+Both must be added. The order within the table doesn't matter; grouping it next to the other `/api/v1/categories/*` entries is the natural place.
+
+Now add the handler:
 
 ```go
 	m.HandleFunc("POST /api/v1/categories/reorder", func(w http.ResponseWriter, r *http.Request) {
@@ -737,8 +772,271 @@ Expected: PASS. (This also covers the SPA build dependency.)
 - [ ] **Step 6: Commit**
 
 ```bash
-git add internal/api/categories.go internal/api/categories_test.go internal/api/errors.go
+git add internal/api/categories.go internal/api/categories_test.go internal/api/errors.go internal/api/api.go internal/api/testing.go
 git commit -m "api: POST /categories/reorder; include position in DTO"
+```
+
+---
+
+### Task 5a: `db.MarkSubscriptionRead`
+
+**Files:**
+- Modify: `internal/db/subscriptions.go`
+- Test: `internal/db/subscriptions_test.go` (append)
+
+- [ ] **Step 1: Write failing tests**
+
+Append to `internal/db/subscriptions_test.go`:
+
+```go
+func TestMarkSubscriptionRead_ScopedToUser(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	u1 := insertTestUser(t, d, "alice")
+	u2 := insertTestUser(t, d, "bob")
+	// u1: subscription + unread entry.
+	sub1, err := InsertSubscription(context.Background(), d, NewSubscription{
+		UserID: u1, Title: "F1", FeedURL: "https://u1/feed", Created: time.Now().Unix(),
+	})
+	require.NoError(t, err)
+	_, err = d.ExecContext(context.Background(),
+		`INSERT INTO entries (subscription_id, hash, title, author, url, content, published_at, fetched_at, read, saved, user_id)
+		 VALUES (?, 'h1', 'E1', '', 'https://u1/1', '<p>x</p>', ?, ?, 0, 0, ?)`,
+		sub1, time.Now().Unix(), time.Now().Unix(), u1)
+	require.NoError(t, err)
+	// u2: subscription + unread entry.
+	sub2, err := InsertSubscription(context.Background(), d, NewSubscription{
+		UserID: u2, Title: "F2", FeedURL: "https://u2/feed", Created: time.Now().Unix(),
+	})
+	require.NoError(t, err)
+	_, err = d.ExecContext(context.Background(),
+		`INSERT INTO entries (subscription_id, hash, title, author, url, content, published_at, fetched_at, read, saved, user_id)
+		 VALUES (?, 'h2', 'E2', '', 'https://u2/1', '<p>x</p>', ?, ?, 0, 0, ?)`,
+		sub2, time.Now().Unix(), time.Now().Unix(), u2)
+	require.NoError(t, err)
+
+	require.NoError(t, MarkSubscriptionRead(context.Background(), d, sub1, u1))
+
+	var u1Read, u2Read int
+	require.NoError(t, d.QueryRowContext(context.Background(),
+		`SELECT read FROM entries WHERE subscription_id = ?`, sub1).Scan(&u1Read))
+	require.NoError(t, d.QueryRowContext(context.Background(),
+		`SELECT read FROM entries WHERE subscription_id = ?`, sub2).Scan(&u2Read))
+	require.Equal(t, 1, u1Read)
+	require.Equal(t, 0, u2Read)
+}
+
+func TestMarkSubscriptionRead_WrongUser_NoOp(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	u1 := insertTestUser(t, d, "alice")
+	u2 := insertTestUser(t, d, "bob")
+	sub, err := InsertSubscription(context.Background(), d, NewSubscription{
+		UserID: u1, Title: "F", FeedURL: "https://u1/feed", Created: time.Now().Unix(),
+	})
+	require.NoError(t, err)
+	_, err = d.ExecContext(context.Background(),
+		`INSERT INTO entries (subscription_id, hash, title, author, url, content, published_at, fetched_at, read, saved, user_id)
+		 VALUES (?, 'h', 'E', '', 'https://u1/1', '<p>x</p>', ?, ?, 0, 0, ?)`,
+		sub, time.Now().Unix(), time.Now().Unix(), u1)
+	require.NoError(t, err)
+
+	// u2 cannot mark u1's subscription read — must be a silent no-op (no error,
+	// no rows affected). The handler layer translates "0 affected for wrong
+	// user" into a 404 by checking ownership before calling this helper.
+	require.NoError(t, MarkSubscriptionRead(context.Background(), d, sub, u2))
+
+	var n int
+	require.NoError(t, d.QueryRowContext(context.Background(),
+		`SELECT read FROM entries WHERE subscription_id = ?`, sub).Scan(&n))
+	require.Equal(t, 0, n, "u1's entry must remain unread when u2 tried to mark it read")
+}
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `go test ./internal/db -run TestMarkSubscriptionRead -race -v`
+Expected: FAIL — `MarkSubscriptionRead` does not exist.
+
+- [ ] **Step 3: Implement**
+
+Append to `internal/db/subscriptions.go`:
+
+```go
+// MarkSubscriptionRead sets read = 1 on every unread entry under the given
+// subscription, scoped to userID. Silent no-op when the subscription does not
+// belong to userID. The handler layer is responsible for translating
+// "no matching subscription" into a 404 by calling GetSubscription first.
+func MarkSubscriptionRead(ctx context.Context, d *sql.DB, subscriptionID, userID int64) error {
+	_, err := d.ExecContext(ctx, `
+		UPDATE entries SET read = 1
+		WHERE read = 0
+		  AND subscription_id = ?
+		  AND subscription_id IN (
+		      SELECT id FROM subscriptions WHERE id = ? AND user_id = ?
+		  )
+	`, subscriptionID, subscriptionID, userID)
+	if err != nil {
+		return fmt.Errorf("mark subscription read %d: %w", subscriptionID, err)
+	}
+	return nil
+}
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `go test ./internal/db -run TestMarkSubscriptionRead -race -v`
+Expected: PASS for both cases.
+
+Run: `go test ./internal/db -race`
+Expected: PASS for the full db package.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add internal/db/subscriptions.go internal/db/subscriptions_test.go
+git commit -m "db: MarkSubscriptionRead — per-user, idempotent"
+```
+
+---
+
+### Task 5b: API — `POST /subscriptions/:id/mark-read` + outer-mux wiring
+
+**Files:**
+- Modify: `internal/api/subscriptions.go`, `internal/api/api.go`, `internal/api/testing.go`
+- Test: `internal/api/subscriptions_test.go` (append)
+
+- [ ] **Step 1: Write failing tests**
+
+```go
+func TestSubscriptionsAPI_MarkRead_Happy(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	userID := insertAPITestUser(t, d, "subuser")
+	user := db.User{ID: userID, Username: "subuser", Role: "admin"}
+	mux := NewTestMux(d, TestMuxOpts{TestUser: user})
+
+	subID, err := db.InsertSubscription(context.Background(), d, db.NewSubscription{
+		UserID: userID, Title: "F", FeedURL: "https://x/feed", Created: time.Now().Unix(),
+	})
+	require.NoError(t, err)
+	_, err = d.ExecContext(context.Background(),
+		`INSERT INTO entries (subscription_id, hash, title, author, url, content, published_at, fetched_at, read, saved, user_id)
+		 VALUES (?, 'h', 'E', '', 'https://x/1', '<p>x</p>', ?, ?, 0, 0, ?)`,
+		subID, time.Now().Unix(), time.Now().Unix(), userID)
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("POST",
+		fmt.Sprintf("/api/v1/subscriptions/%d/mark-read", subID), nil))
+	require.Equal(t, http.StatusNoContent, w.Code)
+
+	var n int
+	require.NoError(t, d.QueryRowContext(context.Background(),
+		`SELECT read FROM entries WHERE subscription_id = ?`, subID).Scan(&n))
+	require.Equal(t, 1, n)
+}
+
+func TestSubscriptionsAPI_MarkRead_OtherUserGets404(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	u1 := insertAPITestUser(t, d, "u1")
+	u2 := insertAPITestUser(t, d, "u2")
+	muxAsU2 := NewTestMux(d, TestMuxOpts{TestUser: db.User{ID: u2, Username: "u2"}})
+
+	subID, err := db.InsertSubscription(context.Background(), d, db.NewSubscription{
+		UserID: u1, Title: "F", FeedURL: "https://x/feed", Created: time.Now().Unix(),
+	})
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	muxAsU2.ServeHTTP(w, httptest.NewRequest("POST",
+		fmt.Sprintf("/api/v1/subscriptions/%d/mark-read", subID), nil))
+	require.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestSubscriptionsAPI_MarkRead_BadID(t *testing.T) {
+	t.Parallel()
+	d := newTestDB(t)
+	userID := insertAPITestUser(t, d, "subuser")
+	mux := NewTestMux(d, TestMuxOpts{TestUser: db.User{ID: userID, Username: "subuser"}})
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/v1/subscriptions/abc/mark-read", nil))
+	require.Equal(t, http.StatusBadRequest, w.Code)
+}
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `go test ./internal/api -run TestSubscriptionsAPI_MarkRead -race -v`
+Expected: FAIL — endpoint does not exist; test mux 404s.
+
+- [ ] **Step 3: Implement — outer mux wiring**
+
+In `internal/api/api.go` (inside the route table at lines 167-187), add:
+
+```go
+	{"POST", "/api/v1/subscriptions/{id}/mark-read", authedCSRF(subsMux)},
+```
+
+In `internal/api/testing.go` (inside the route table at lines 65-85), add:
+
+```go
+	{"POST", "/api/v1/subscriptions/{id}/mark-read", inject(subsMux)},
+```
+
+- [ ] **Step 4: Implement — handler**
+
+In `internal/api/subscriptions.go`, register a new handler inside `registerSubscriptionRoutes`:
+
+```go
+	m.HandleFunc("POST /api/v1/subscriptions/{id}/mark-read", func(w http.ResponseWriter, r *http.Request) {
+		u, ok := userFromContext(r.Context())
+		if !ok {
+			writeError(w, http.StatusUnauthorized, ErrCodeInvalidSession, "no session")
+			return
+		}
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, ErrCodeBadRequest, "invalid id")
+			return
+		}
+		// Ownership check — return 404 (not 403) on a wrong-user attempt to
+		// avoid leaking the existence of another user's subscription IDs.
+		// db.GetSubscription wraps sql.ErrNoRows via fmt.Errorf("%w") so
+		// errors.Is(err, sql.ErrNoRows) is the canonical "not found" check.
+		if _, err := db.GetSubscription(r.Context(), d, id, u.ID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				writeError(w, http.StatusNotFound, ErrCodeNotFound, "subscription not found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())
+			return
+		}
+		if err := db.MarkSubscriptionRead(r.Context(), d, id, u.ID); err != nil {
+			writeError(w, http.StatusInternalServerError, ErrCodeInternal, err.Error())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+```
+
+Add `"database/sql"` to the imports of `internal/api/subscriptions.go` if it isn't already present.
+
+- [ ] **Step 5: Run tests to verify they pass**
+
+Run: `go test ./internal/api -run TestSubscriptionsAPI_MarkRead -race -v`
+Expected: PASS for all three.
+
+Run: `make test`
+Expected: PASS.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add internal/api/subscriptions.go internal/api/subscriptions_test.go internal/api/api.go internal/api/testing.go
+git commit -m "api: POST /subscriptions/:id/mark-read"
 ```
 
 ---
@@ -796,13 +1094,11 @@ describe('categories store', () => {
     expect(entriesSpy).toHaveBeenCalled();
   });
 
-  it('markRead(null) marks each uncategorised subscription read via per-feed PATCH', async () => {
-    // Stub subscriptions store with two uncategorised feeds.
-    // (Implementer: use whatever pattern existing tests in store.test.ts use
-    //  to seed the subscriptions store — likely an api.listSubscriptions mock
-    //  followed by subscriptions.load().)
+  it('markRead(null) calls api.markSubscriptionRead for each uncategorised subscription', async () => {
+    // Tasks 5a + 5b shipped POST /api/v1/subscriptions/:id/mark-read and
+    // db.MarkSubscriptionRead. This test asserts the SPA uses the dedicated
+    // endpoint rather than N entry-level PATCHes.
     const markFeed = vi.spyOn(api, 'markSubscriptionRead').mockResolvedValue(undefined as any);
-    // Seed:
     vi.spyOn(api, 'listSubscriptions').mockResolvedValueOnce([
       { id: 1, category_id: null }, { id: 2, category_id: null }, { id: 3, category_id: 4 },
     ] as any);
@@ -812,10 +1108,31 @@ describe('categories store', () => {
     expect(markFeed).toHaveBeenCalledWith(1);
     expect(markFeed).toHaveBeenCalledWith(2);
   });
+
+  it('reorder rolls back the in-memory order when the API rejects', async () => {
+    // Seed the store with [A=1, B=2, C=3] in their natural position order.
+    vi.spyOn(api, 'listCategories').mockResolvedValueOnce([
+      { id: 1, name: 'A', unread: 0, created_at: 0, position: 0 },
+      { id: 2, name: 'B', unread: 0, created_at: 0, position: 1 },
+      { id: 3, name: 'C', unread: 0, created_at: 0, position: 2 },
+    ] as any);
+    await categories.load();
+
+    // First call (the user's reorder attempt) rejects; the rollback path must
+    // restore the original order without a second list call.
+    vi.spyOn(api, 'reorderCategories').mockRejectedValueOnce(new Error('boom'));
+
+    await expect(categories.reorder([3, 1, 2])).rejects.toThrow('boom');
+
+    const after = get(categories);
+    expect(after.map(c => c.id)).toEqual([1, 2, 3]);
+  });
 });
 ```
 
-If `api.markSubscriptionRead` does not exist, the implementer should add it as a thin wrapper around `POST /api/v1/subscriptions/:id/mark-read` (check `internal/api/subscriptions.go` for the route — if absent, the simpler path is to call `api.patchEntry({ read: true })` over the unread entries for those feeds; document the chosen approach in code).
+Note: the rollback test uses `get` from `svelte/store`. Add it to the test file's imports if it isn't already there. The `categories` store snapshot returned by `get()` must equal the pre-reorder list — that's the contract `reorderInMemory` + the catch-block rollback guarantee in Task 6 Step 5.
+
+**Backend dependency note.** Tasks 5a (`db.MarkSubscriptionRead`) and 5b (`POST /api/v1/subscriptions/:id/mark-read`) must merge first; this task assumes they exist. `api.markSubscriptionRead` in step 4 below is a thin wrapper around that endpoint — no fallback path is needed.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -838,15 +1155,32 @@ export type Category = {
 
 - [ ] **Step 4: Implement — api client**
 
-Edit `web/src/lib/api.ts`, alongside the existing categories section:
+Edit `web/src/lib/api.ts`. Two new methods alongside the existing categories and subscriptions sections:
 
 ```ts
+  // Categories — M-Redesign-4.
   reorderCategories: (orderedIds: number[]) =>
     request<void>('/categories/reorder', {
       method: 'POST',
       body: JSON.stringify({ order: orderedIds }),
     }),
+
+  // Subscriptions — M-Redesign-4 (Uncategorised mark-all-read).
+  markSubscriptionRead: (id: number) =>
+    request<void>(`/subscriptions/${id}/mark-read`, { method: 'POST', body: '{}' }),
 ```
+
+If `api.patchSubscription` is not yet defined in this file (M9 added category PATCH on subscriptions; verify before assuming), the implementer adds the standard wrapper:
+
+```ts
+  patchSubscription: (id: number, body: Partial<{ category_id: number | null; extract: boolean; extract_selector: string; cookie: string; basic_auth_user: string; basic_auth_pass: string }>) =>
+    request<Subscription>(`/subscriptions/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+```
+
+— mirroring the existing `PATCH /api/v1/subscriptions/{id}` route in `internal/api/subscriptions.go`. Only add this wrapper if a grep of `web/src/lib/api.ts` for `patchSubscription` returns nothing.
 
 - [ ] **Step 5: Implement — store extensions**
 
@@ -898,10 +1232,9 @@ function categoriesStore() {
       if (categoryId !== null) {
         await api.markCategoryRead(categoryId);
       } else {
-        // Uncategorised: mark every uncategorised sub's entries read.
-        // The simplest robust path: iterate uncategorised subs and call
-        // api.markSubscriptionRead. If that endpoint doesn't exist yet,
-        // see Task 6 step 1 for the fallback.
+        // Uncategorised: hit the dedicated per-subscription endpoint shipped by
+        // Task 5b for each uncategorised feed. No fallback path — the backend
+        // dependency is hard.
         const uncatIds = get(subscriptions).filter(s => s.category_id == null).map(s => s.id);
         await Promise.all(uncatIds.map(id => api.markSubscriptionRead(id)));
       }
@@ -922,9 +1255,7 @@ function reorderInMemory(cs: Category[], orderedIds: number[]): Category[] {
 }
 ```
 
-Add `import { get } from 'svelte/store';` if not already imported.
-
-If `api.patchSubscription` or `api.markSubscriptionRead` is missing, the implementer adds them as thin wrappers in `web/src/lib/api.ts` mirroring the existing `subscriptions/:id` endpoints. The Go side already has PATCH for subscription updates (used by `FeedSettingsModal.svelte` before its M1 deletion — see `web/src/lib/api.ts`); for mark-read-all-of-one-feed, fall back to "loop over unread entries and PATCH each" via `api.listEntries({ subscription_id, unread: true })` + `api.patchEntry({ read: true })` if no dedicated endpoint exists. Either choice is acceptable as long as the tests assert behaviour, not endpoint shape.
+Add `import { get } from 'svelte/store';` to the top of `web/src/lib/store.ts` if not already imported. The factory's `writable` destructure already needs `update` for the optimistic-reorder rollback path — make sure the line reads `const { subscribe, set, update } = writable<Category[]>([]);`, not `const { subscribe, set }` as the current file does.
 
 - [ ] **Step 6: Run tests to verify they pass**
 
@@ -1968,15 +2299,11 @@ git commit -m "spa: CategoryCard component (desktop + mobile)"
 
 - [ ] **Step 1: Write failing tests**
 
+The mock pattern below mirrors `web/src/views/__tests__/Saved.test.ts` and `UnreadMarkAll.test.ts`: hoist `vi.mock` for the whole `lib/store` module, supply per-store `subscribe`/`load`/action stubs as `vi.fn()`, then `vi.mocked(...)` inside each `it` to override default behaviour. The view's `onMount` calls both `categories.load()` and `subscriptions.load()`; without the module-level mock they would hit `api.listCategories()` and crash the test.
+
 ```ts
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
-import { categories, subscriptions } from '../../lib/store';
-
-vi.mock('../../components/AppShell.svelte', () => ({ default: vi.fn() }));
-vi.mock('../../components/TopTabs.svelte', () => ({ default: vi.fn() }));
-
-const { default: Categories } = await import('../Categories.svelte');
 
 const seedCats = [
   { id: 1, name: 'People', unread: 5, created_at: 0, position: 0 },
@@ -1990,11 +2317,52 @@ const seedSubs = [
     created_at: 0, extract: false, extract_selector: '', has_cookie: false, has_basic_auth: false,
     category_id: null },
 ];
+const seedEntries = {
+  items: [
+    { id: 100, subscription_id: 10, title: 'a', url: '', published_at: 0, fetched_at: 0, read: false, saved: false, extract_failed: false },
+    { id: 101, subscription_id: 11, title: 'b', url: '', published_at: 0, fetched_at: 0, read: false, saved: false, extract_failed: false },
+    { id: 102, subscription_id: 11, title: 'c', url: '', published_at: 0, fetched_at: 0, read: false, saved: false, extract_failed: false },
+  ],
+  loading: false,
+  error: null,
+};
+
+let catsValue = seedCats;
+let subsValue = seedSubs;
+let entriesValue = seedEntries;
+
+vi.mock('../../lib/store', () => ({
+  categories: {
+    subscribe: (fn: (v: typeof catsValue) => void) => { fn(catsValue); return () => {}; },
+    load: vi.fn(),
+    create: vi.fn(),
+    rename: vi.fn(),
+    remove: vi.fn(),
+    reorder: vi.fn(),
+    reassignSubscription: vi.fn(),
+    markRead: vi.fn(),
+  },
+  subscriptions: {
+    subscribe: (fn: (v: typeof subsValue) => void) => { fn(subsValue); return () => {}; },
+    load: vi.fn(),
+  },
+  entries: {
+    subscribe: (fn: (v: typeof entriesValue) => void) => { fn(entriesValue); return () => {}; },
+    load: vi.fn(),
+  },
+}));
+
+vi.mock('../../components/AppShell.svelte', () => ({ default: vi.fn() }));
+vi.mock('../../components/TopTabs.svelte', () => ({ default: vi.fn() }));
+
+const { default: Categories } = await import('../Categories.svelte');
+const { categories, subscriptions } = await import('../../lib/store');
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.spyOn(categories, 'subscribe').mockImplementation((fn) => { fn(seedCats); return () => {}; });
-  vi.spyOn(subscriptions, 'subscribe').mockImplementation((fn) => { fn(seedSubs); return () => {}; });
+  catsValue = seedCats;
+  subsValue = seedSubs;
+  entriesValue = seedEntries;
 });
 
 describe('Categories view', () => {
@@ -2010,15 +2378,13 @@ describe('Categories view', () => {
   });
 
   it('does not render the Uncategorised card when all feeds are categorised', () => {
-    vi.spyOn(subscriptions, 'subscribe').mockImplementation((fn) => {
-      fn([seedSubs[0]]); return () => {};
-    });
+    subsValue = [seedSubs[0]];
     const { container } = render(Categories);
     expect(container.querySelector('.ts-cat.is-uncat')).toBeNull();
   });
 
   it('renders the empty state when there are zero categories', () => {
-    vi.spyOn(categories, 'subscribe').mockImplementation((fn) => { fn([]); return () => {}; });
+    catsValue = [];
     const { container } = render(Categories);
     expect(container.querySelector('.ts-cats-empty')).toBeTruthy();
     expect(screen.getByText(/No categories yet/i)).toBeTruthy();
@@ -2031,7 +2397,7 @@ describe('Categories view', () => {
   });
 
   it('Enter on the create input calls categories.create with the trimmed value', async () => {
-    const createSpy = vi.spyOn(categories, 'create').mockResolvedValue({ id: 99, name: 'New', unread: 0, created_at: 0, position: 2 });
+    const createSpy = vi.mocked(categories.create).mockResolvedValue({ id: 99, name: 'New', unread: 0, created_at: 0, position: 2 });
     render(Categories);
     await fireEvent.click(screen.getByRole('button', { name: /new category/i }));
     const input = screen.getByPlaceholderText(/name the category/i) as HTMLInputElement;
@@ -2041,7 +2407,7 @@ describe('Categories view', () => {
   });
 
   it('Esc on the create input cancels without calling categories.create', async () => {
-    const createSpy = vi.spyOn(categories, 'create');
+    const createSpy = vi.mocked(categories.create);
     render(Categories);
     await fireEvent.click(screen.getByRole('button', { name: /new category/i }));
     const input = screen.getByPlaceholderText(/name the category/i) as HTMLInputElement;
@@ -2051,7 +2417,7 @@ describe('Categories view', () => {
   });
 
   it('Reorder up on the second card calls categories.reorder with the swapped order', async () => {
-    const reorderSpy = vi.spyOn(categories, 'reorder').mockResolvedValue();
+    const reorderSpy = vi.mocked(categories.reorder).mockResolvedValue();
     const { container } = render(Categories);
     const cards = container.querySelectorAll('.ts-cat:not(.is-uncat)');
     // Second card's "Reorder up" button.
@@ -2061,7 +2427,7 @@ describe('Categories view', () => {
   });
 
   it('Reorder down on the first card calls categories.reorder with the swapped order', async () => {
-    const reorderSpy = vi.spyOn(categories, 'reorder').mockResolvedValue();
+    const reorderSpy = vi.mocked(categories.reorder).mockResolvedValue();
     const { container } = render(Categories);
     const cards = container.querySelectorAll('.ts-cat:not(.is-uncat)');
     const downBtns = cards[0].querySelectorAll('button[aria-label="Reorder down"]');
@@ -2077,7 +2443,7 @@ describe('Categories view', () => {
   });
 
   it('confirming delete calls categories.remove', async () => {
-    const removeSpy = vi.spyOn(categories, 'remove').mockResolvedValue();
+    const removeSpy = vi.mocked(categories.remove).mockResolvedValue();
     const { container } = render(Categories);
     await fireEvent.click(container.querySelector('.ts-cat:not(.is-uncat) .ts-cat-action.is-danger') as HTMLElement);
     await fireEvent.click(screen.getByText('Delete category'));
@@ -2085,7 +2451,7 @@ describe('Categories view', () => {
   });
 
   it('confirming mark-read calls categories.markRead', async () => {
-    const markSpy = vi.spyOn(categories, 'markRead').mockResolvedValue();
+    const markSpy = vi.mocked(categories.markRead).mockResolvedValue();
     const { container } = render(Categories);
     const markBtn = container.querySelector('.ts-cat:not(.is-uncat) .ts-cat-action[aria-label*="Mark"]') as HTMLElement;
     await fireEvent.click(markBtn);
@@ -2094,7 +2460,7 @@ describe('Categories view', () => {
   });
 
   it('Uncategorised mark-read calls categories.markRead(null)', async () => {
-    const markSpy = vi.spyOn(categories, 'markRead').mockResolvedValue();
+    const markSpy = vi.mocked(categories.markRead).mockResolvedValue();
     const { container } = render(Categories);
     const uncatCard = container.querySelector('.ts-cat.is-uncat') as HTMLElement;
     const markBtn = uncatCard.querySelector('.ts-cat-action[aria-label*="Mark"]') as HTMLElement;
@@ -2104,7 +2470,7 @@ describe('Categories view', () => {
   });
 
   it('renaming a category calls categories.rename', async () => {
-    const renameSpy = vi.spyOn(categories, 'rename').mockResolvedValue();
+    const renameSpy = vi.mocked(categories.rename).mockResolvedValue();
     const { container } = render(Categories);
     await fireEvent.click(screen.getAllByText('People')[0]);
     const input = container.querySelector('.ts-cat-title-input') as HTMLInputElement;
@@ -2124,18 +2490,33 @@ Expected: FAIL — the M1 stub view does not implement any of this behaviour.
 
 Replace the body of `web/src/views/Categories.svelte`:
 
+**M1 precondition (`isMobile`).** Per umbrella spec §2.1, `AppShell.svelte` already exposes the media-query-driven `isMobile` state. The umbrella does not name the exact wire format yet — at the time this plan was written, M1's plan was still in flight. This view must consume M1's `isMobile` exactly as M1 ships it. Three likely shapes:
+
+1. A `Readable<boolean>` exported from `web/src/lib/preferences.svelte.ts` (likely; matches other prefs).
+2. A Svelte context key set by `AppShell.svelte` and read via `getContext('isMobile')`.
+3. A `$state` rune lifted to a module-level export.
+
+Whichever M1 lands, the implementer wires this view to it — no parallel `matchMedia` call. If, for any reason, M1 has not yet shipped a wire and this view must merge first, document the deviation in the PR description and keep the local `matchMedia` block below as a temporary fallback only.
+
 ```svelte
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { categories, subscriptions } from '../lib/store';
+  import { categories, subscriptions, entries } from '../lib/store';
   import type { Category, Subscription } from '../lib/types';
   import CategoryCard from '../components/CategoryCard.svelte';
   import CategoryDeleteDialog from '../components/CategoryDeleteDialog.svelte';
   import CategoryMarkReadDialog from '../components/CategoryMarkReadDialog.svelte';
+  // Replace the next import once M1 lands the canonical isMobile wire.
+  // Example for shape #1 (a Readable<boolean>):
+  //   import { isMobile } from '../lib/preferences.svelte.ts';
+  // Example for shape #2 (a context):
+  //   import { getContext } from 'svelte';
+  //   const isMobile = getContext<Readable<boolean>>('isMobile');
+  // Until M1 lands, use the local fallback below.
 
-  // Sourced from M1 — fall back to a desktop layout if these don't exist yet.
   let isMobile = $state(false);
   $effect(() => {
+    // FALLBACK — remove once M1's isMobile wire is consumed.
     isMobile = typeof window !== 'undefined' && window.matchMedia?.('(max-width: 720px)').matches;
   });
 
@@ -2150,10 +2531,15 @@ Replace the body of `web/src/views/Categories.svelte`:
   onMount(() => {
     void categories.load();
     void subscriptions.load();
+    void entries.load(false); // load all entries (not just unread) — needed for the Uncategorised unread count
   });
 
   const catList = $derived($categories.slice().sort((a, b) => a.position - b.position));
   const uncatFeeds = $derived($subscriptions.filter(s => s.category_id == null));
+  const uncatUnread = $derived(() => {
+    const uncatIds = new Set(uncatFeeds.map(s => s.id));
+    return $entries.items.filter(e => !e.read && uncatIds.has(e.subscription_id)).length;
+  });
   const feedsByCategory = $derived.by(() => {
     const m = new Map<number, Subscription[]>();
     for (const s of $subscriptions) {
@@ -2293,7 +2679,7 @@ Replace the body of `web/src/views/Categories.svelte`:
           <CategoryCard
             category={{ id: -1, name: 'Uncategorised', unread: 0, created_at: 0, position: Number.MAX_SAFE_INTEGER }}
             feeds={uncatFeeds}
-            unread={uncatFeeds.reduce((acc, _f) => acc, 0) /* implementer: replace with real unread count if you track per-feed unread; otherwise pin to 0 and let the action disable itself */}
+            unread={uncatUnread()}
             allCategories={catList}
             isUncategorised
             isMobile={isMobile}
@@ -2323,7 +2709,7 @@ Replace the body of `web/src/views/Categories.svelte`:
   {#if confirmMarkRead}
     <CategoryMarkReadDialog
       categoryName={confirmMarkRead.category.name}
-      unread={confirmMarkRead.category.id == null ? uncatFeeds.length : (confirmMarkRead.category as Category).unread}
+      unread={confirmMarkRead.category.id == null ? uncatUnread() : (confirmMarkRead.category as Category).unread}
       feedCount={confirmMarkRead.category.id == null ? uncatFeeds.length : feedsFor((confirmMarkRead.category as Category).id).length}
       onCancel={() => confirmMarkRead = null}
       onConfirm={performMarkRead}
@@ -2400,9 +2786,12 @@ A reviewer is satisfied when **all** of the following hold:
 
 1. **Backend**
    - `internal/db/migrations/0011_category_position.sql` exists; `make test` applies it on an empty DB and on a DB that has rows under the 0008 schema.
-   - `db.Category` has a `Position int64` field; `db.ListCategories` orders by `position ASC, name COLLATE NOCASE`; `db.InsertCategory` assigns the next per-user position; `db.ReorderCategories` exists, is atomic, scoped per user, and returns `db.ErrCategoryReorderMismatch` on bad input.
+   - `db.Category` has a `Position int64` field (added alongside existing fields); `db.ListCategories` orders by `position ASC, name COLLATE NOCASE`; `db.InsertCategory` assigns the next per-user position; `db.ReorderCategories` exists, is atomic, scoped per user, and returns `db.ErrCategoryReorderMismatch` on bad input.
+   - `db.MarkSubscriptionRead` exists, is scoped per user, and is a silent no-op for cross-user IDs.
    - `categoryDTO` carries `position`; `POST /api/v1/categories/reorder` returns `204` on success, `400 category_reorder_mismatch` on bad input, `401` without a session.
-   - Backend test count grows by at least: migration test (1), DB tests (4 ReorderCategories + 1 InsertCategory + 1 ListCategories = 6), API tests (4) — 11 total new tests.
+   - `POST /api/v1/subscriptions/:id/mark-read` returns `204` on success, `404 not_found` when the subscription belongs to another user, `400 bad_request` on a non-numeric id, `401` without a session.
+   - Outer mux at `internal/api/api.go` and test mux at `internal/api/testing.go` both list the two new routes (`POST /categories/reorder`, `POST /subscriptions/{id}/mark-read`).
+   - Backend test count grows by at least: migration test (1), DB tests (4 ReorderCategories + 1 InsertCategory + 1 ListCategories + 2 MarkSubscriptionRead = 8), API tests (4 reorder + 3 mark-sub-read = 7) — **16 total new tests**.
 
 2. **Frontend chrome**
    - `/categories` renders inside the `.ts-shell` (or `.m-cats-root` on mobile) provided by M1.
@@ -2421,7 +2810,7 @@ A reviewer is satisfied when **all** of the following hold:
 
 4. **Tests**
    - `make test` exits 0.
-   - `pnpm --dir web test` exits 0; new files contribute at least 35 new test cases.
+   - `pnpm --dir web test` exits 0; new files contribute at least 36 new test cases (35 from review pass 1 + 1 reorder-rollback test).
    - `pnpm --dir web run check` exits 0 (no TS/svelte-check errors).
 
 5. **No regressions**
@@ -2456,18 +2845,17 @@ Expected: every command exits 0. Manual smoke per Task 13 passes every checkbox.
 
 1. **Backend migration on populated DBs.** Migration 0011 adds a `NOT NULL DEFAULT 0` column, which SQLite handles cleanly via `ALTER TABLE ADD COLUMN`. Existing rows get `position = 0`; the list query then ties them by name, so order is stable across the upgrade. Mitigation: the migration test in Task 1 explicitly seeds two pre-0011 categories before applying 0011.
 
-2. **The Uncategorised pseudo-card needs a feed-level unread count.** The existing `Subscription` DTO does not carry `unread_count`. Two options (deferred to the implementer):
-   - Option A: extend the subscription DTO with `unread_count` (small additive backend change).
-   - Option B: compute uncategorised unread on the client from the `entries` store.
-   Option B is preferred (no backend change). The plan currently nudges the implementer toward B but doesn't mandate the value to display the stats row; if the count is unreliable, render `—` and disable the Mark-all-read action.
+2. **Uncategorised pseudo-card unread count.** Decision (was open in review pass 1): compute on the client from the `$entries` store via `uncatUnread()` (Task 12 step 3). No DTO extension. The view eagerly loads all entries (`entries.load(false)`) in `onMount` so the count is correct on first paint. The action button is disabled when `uncatUnread() === 0`, which is the same disabled state the test "disables Mark read when unread = 0" exercises.
 
 3. **M1 primitive API drift.** `Dialog.svelte` and `Popover.svelte` are M1's responsibility. This plan assumes a snippet-based API (`{#snippet body()}` / `{#snippet foot()}`). If M1 lands a different shape (default slot, action prop, etc.), the implementer adapts `CategoryDeleteDialog.svelte` and `CategoryMarkReadDialog.svelte` accordingly — but only those wrappers; the test cases stay valid.
 
 4. **The current sidebar's inline category UI is removed by M1 before this milestone lands.** Between M1 merge and M4 merge there is no SPA-visible way to manage categories. This is accepted by the umbrella spec §3.3. If M4 is delayed, users can still use the API directly or fall back to OPML re-import; the operator has the `tap admin` CLI escape hatches.
 
-5. **Mark-all-read on Uncategorised has no dedicated endpoint.** `POST /api/v1/categories/null/mark-read` is not a valid path. The store layer either calls a per-feed mark-read API (if one exists) or loops over uncategorised unread entries and PATCHes each. The plan picks the per-feed approach; if that endpoint doesn't exist, the implementer adds it as a thin wrapper in `internal/api/subscriptions.go` (mirroring `POST /api/v1/categories/:id/mark-read`) or uses entry-level PATCH. Either choice is acceptable as long as it's tested.
+5. **Mark-all-read on Uncategorised dispatches per-subscription, not per-entry.** Decision (was open in review pass 1): ship the dedicated `POST /api/v1/subscriptions/:id/mark-read` endpoint via Tasks 5a + 5b. The SPA fans out one POST per uncategorised feed. For typical user fleets (single-digit uncategorised feeds), this is faster than entry-level PATCH and easier to reason about. If a user has hundreds of uncategorised feeds and feels the latency, a future milestone can add a true bulk endpoint.
 
-6. **Optimistic reorder may visibly flicker on slow connections.** Mitigation: the store rolls back the in-memory order if the API call rejects, and the visible state is the source of truth for the next click. No additional spinner — the page is small enough that flicker is acceptable.
+6. **Optimistic reorder may visibly flicker on slow connections.** Mitigation: the store rolls back the in-memory order if the API call rejects (Task 6 step 5's catch block + the rollback test added in review pass 1). The page is small enough that no spinner is needed.
+
+7. **M1 `isMobile` wire format not yet finalised.** M1's plan is still in flight at the time this plan was written. Task 12 step 3 documents three likely shapes M1 might land (`Readable<boolean>` from preferences, Svelte context, or module-level `$state`) and provides a local `matchMedia` fallback to keep this view shippable in isolation. The implementer replaces the fallback with the canonical wire when M1 lands; the change is purely the `import` line and the `$effect` removal.
 
 ---
 
@@ -2477,11 +2865,14 @@ Re-read against the umbrella spec §5 row M4 and `ui_design/Tap Brand and UI Spe
 
 - **Inline rename** — Task 11. ✓
 - **Reassign-feed popover** — Tasks 7 (desktop), 8 (mobile sheet). ✓
-- **Mark-all-read** — Task 10 (dialog), Task 12 (wiring). ✓
+- **Mark-all-read (per category)** — Task 10 (dialog), Task 12 (wiring). ✓
+- **Mark-all-read (Uncategorised)** — Tasks 5a (`db.MarkSubscriptionRead`), 5b (`POST /subscriptions/:id/mark-read`), 6 (store fans out). ✓
 - **Uncategorised pseudo-cat (italic, no rename/reorder/delete, only Mark all read)** — Task 11 (`isUncategorised` prop) and Task 12 (rendering condition + null target). ✓
 - **Empty state with example chips + dark CTA** — Task 12 markup. ✓
 - **Reorder up/down (backend addition)** — Tasks 1-5. ✓
-- **Mobile sheet variants** — Task 8 + Task 11's `isMobile` branch. ✓
+- **Outer mux wiring for new endpoints** — Task 5 (categories/reorder), Task 5b (subscriptions/mark-read). ✓
+- **Optimistic-reorder rollback** — Task 6 (store impl + test added review pass 1). ✓
+- **Mobile sheet variants** — Task 8 + Task 11's `isMobile` branch + Task 12's `isMobile` consumption. ✓
 - **Confirm dialogs for destructive actions** — Tasks 9, 10. ✓
 
 No placeholder text; every step has runnable commands or actual code. Types are consistent across tasks: `Category.position: number`, `ReorderCategories(ctx, d, userID, []int64)`, `categories.reorder(orderedIds: number[])`, `ErrCategoryReorderMismatch`, `ErrCodeReorderMismatch = "category_reorder_mismatch"`.
