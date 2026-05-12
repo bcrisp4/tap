@@ -735,9 +735,9 @@ The signed-out entry point. Deliberately quiet — no tabs, no footer, no market
 │                                            │
 │            Sign in                         │ ← .tl-title    (serif 34/600)
 │                                            │
-│            EMAIL                           │ ← .ts-field-label (mono caps)
+│            USERNAME                        │ ← .ts-field-label (mono caps)
 │            ┌────────────────────────────┐  │
-│            │ you@domain.com             │  │ ← .ts-field   (mono input)
+│            │                            │  │ ← .ts-field   (mono input)
 │            └────────────────────────────┘  │
 │            PASSWORD                FORGOT? │
 │            ┌────────────────────────────┐  │
@@ -762,7 +762,7 @@ The signed-out entry point. Deliberately quiet — no tabs, no footer, no market
 - **`.tl-title`** — serif 34 / 1.05 / 600, letter-spacing `-0.02em`, `text-wrap: balance`, `margin-bottom: 10px`. Stands alone — no eyebrow, no subtitle. The wordmark in the corner is the page's only label.
 - **`.tl-sub`** — only renders when the mode actually needs context (passkey device callout, 2-step destination). For the default password sign-in there is no sub line; the form speaks for itself.
 - **`.tl-field`** — wraps `.ts-field-label` (mono 10 UPPER `0.14em`, `--ink-3`) and the `.ts-field` input. The label row is `display: flex; justify-content: space-between` so a trailing link like `FORGOT?` aligns right in the same mono.
-- **Email input** is `font-family: var(--mono); font-size: 13px;` — URLs and identities sit in mono throughout Tap, and the sign-in screen is no exception. Password input uses the default sans `.ts-field`.
+- **Username input** (`type="text"`) is `font-family: var(--mono); font-size: 13px;` — URLs and identities sit in mono throughout Tap, and the sign-in screen is no exception. The backend authenticates by username, not email address. Password input uses the default sans `.ts-field`.
 - **`.tl-actions`** — vertical button stack, `gap: 8px`, `margin-top: 14px`.
   - **Primary** `.ts-btn.is-primary.tl-primary` — 42px tall, full-width, content centered, gap 8. Label + `→` icon, plus a tinted `<span class="ts-kbd">Enter</span>` at the right (light-on-dark variant). The keyboard chip is hidden in the mobile variant.
   - **Quiet** `.ts-btn.is-quiet.tl-alt` — 38px tall, full-width, centered, used for the alternate auth path (passkey ↔ password ↔ magic link). One alternate only; never two.
@@ -774,7 +774,7 @@ The same form shell covers four entry points. The mode is taken from the URL (`?
 
 | Mode | Title | Fields | Primary | Alt |
 |---|---|---|---|---|
-| `password` (default) | "Sign in" | email + password | "Continue →" | "⚿ Use a passkey" |
+| `password` (default) | "Sign in" | username + password | "Continue →" | "⚿ Use a passkey" |
 | `passkey` | "Welcome back" | none — `.tl-passkey-card` shows the device | "⚿ Continue with passkey" | "Use a password instead" |
 | `magic` | "Sign in by email" | email only | "Send sign-in link" | "Sign in with a password" |
 | `otp` | "Verification code" | `.ts-otp` six-cell input | "Verify and continue →" | "Use a recovery code" |

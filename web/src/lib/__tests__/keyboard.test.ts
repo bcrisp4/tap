@@ -21,12 +21,13 @@ function makeCtx() {
     onEscape: vi.fn(), setModalOpen: vi.fn(),
     onMeasureNarrow: vi.fn(), onMeasureComfortable: vi.fn(), onMeasureWide: vi.fn(),
     onBack: vi.fn(),
+    onNavigate: vi.fn(), onRefreshAll: vi.fn(), onMarkScopeRead: vi.fn(), onCycleTheme: vi.fn(),
   };
 }
 
-function fire(key: string, target?: Element): KeyboardEvent {
+function fire(key: string, target?: Element, opts: { shiftKey?: boolean } = {}): KeyboardEvent {
   const el = target ?? document.createElement('div');
-  const event = new KeyboardEvent('keydown', { key });
+  const event = new KeyboardEvent('keydown', { key, shiftKey: opts.shiftKey ?? false });
   Object.defineProperty(event, 'target', { value: el, configurable: true });
   return event;
 }
@@ -116,5 +117,82 @@ describe('measure and back key bindings', () => {
       const h = buildHandler(ctx);
       h(fire('1')); h(fire('2')); h(fire('3')); h(fire('h'));
     }).not.toThrow();
+  });
+});
+
+describe('G-chord navigation', () => {
+  it('navigates to unread on g→u', () => {
+    const ctx = makeCtx(); const h = buildHandler(ctx);
+    h(fire('g')); h(fire('u'));
+    expect(ctx.onNavigate).toHaveBeenCalledWith('/');
+  });
+  it('navigates to saved on g→s', () => {
+    const ctx = makeCtx(); const h = buildHandler(ctx);
+    h(fire('g')); h(fire('s'));
+    expect(ctx.onNavigate).toHaveBeenCalledWith('/saved');
+  });
+  it('navigates to feeds on g→f', () => {
+    const ctx = makeCtx(); const h = buildHandler(ctx);
+    h(fire('g')); h(fire('f'));
+    expect(ctx.onNavigate).toHaveBeenCalledWith('/feeds');
+  });
+  it('navigates to categories on g→c', () => {
+    const ctx = makeCtx(); const h = buildHandler(ctx);
+    h(fire('g')); h(fire('c'));
+    expect(ctx.onNavigate).toHaveBeenCalledWith('/categories');
+  });
+  it('navigates to settings on g→,', () => {
+    const ctx = makeCtx(); const h = buildHandler(ctx);
+    h(fire('g')); h(fire(','));
+    expect(ctx.onNavigate).toHaveBeenCalledWith('/settings');
+  });
+  it('does not fire onNext (s→saved) as toggle-saved during chord', () => {
+    const ctx = makeCtx(); const h = buildHandler(ctx);
+    h(fire('g')); h(fire('s'));
+    expect(ctx.onToggleSaved).not.toHaveBeenCalled();
+  });
+  it('does not throw when onNavigate is absent', () => {
+    const ctx = {
+      onNext: vi.fn(), onPrev: vi.fn(), onOpen: vi.fn(),
+      onToggleRead: vi.fn(), onToggleSaved: vi.fn(), onViewOriginal: vi.fn(),
+      onEscape: vi.fn(), setModalOpen: vi.fn(),
+    };
+    expect(() => { const h = buildHandler(ctx); h(fire('g')); h(fire('u')); }).not.toThrow();
+  });
+  it('unrecognized key after g falls through to normal handler', () => {
+    const ctx = makeCtx(); const h = buildHandler(ctx);
+    h(fire('g')); h(fire('m')); // m = toggleRead, should still fire
+    expect(ctx.onToggleRead).toHaveBeenCalledOnce();
+    expect(ctx.onNavigate).not.toHaveBeenCalled();
+  });
+});
+
+describe('Shift shortcuts', () => {
+  it('calls onRefreshAll for Shift+R', () => {
+    const ctx = makeCtx(); buildHandler(ctx)(fire('R', undefined, { shiftKey: true }));
+    expect(ctx.onRefreshAll).toHaveBeenCalledOnce();
+  });
+  it('calls onMarkScopeRead for Shift+A', () => {
+    const ctx = makeCtx(); buildHandler(ctx)(fire('A', undefined, { shiftKey: true }));
+    expect(ctx.onMarkScopeRead).toHaveBeenCalledOnce();
+  });
+  it('does not call onRefreshAll for plain R', () => {
+    const ctx = makeCtx(); buildHandler(ctx)(fire('R'));
+    expect(ctx.onRefreshAll).not.toHaveBeenCalled();
+  });
+});
+
+describe('T key theme cycle', () => {
+  it('calls onCycleTheme for t', () => {
+    const ctx = makeCtx(); buildHandler(ctx)(fire('t'));
+    expect(ctx.onCycleTheme).toHaveBeenCalledOnce();
+  });
+  it('does not throw when onCycleTheme is absent', () => {
+    const ctx = {
+      onNext: vi.fn(), onPrev: vi.fn(), onOpen: vi.fn(),
+      onToggleRead: vi.fn(), onToggleSaved: vi.fn(), onViewOriginal: vi.fn(),
+      onEscape: vi.fn(), setModalOpen: vi.fn(),
+    };
+    expect(() => buildHandler(ctx)(fire('t'))).not.toThrow();
   });
 });

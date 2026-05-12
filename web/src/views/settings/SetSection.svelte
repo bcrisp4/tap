@@ -11,6 +11,7 @@
 <section class="set-section">
   <div class="set-section-eyebrow">
     <span class="num">{num}</span>
+    <span class="sep" aria-hidden="true">·</span>
     <span>{title}</span>
     <span class="rule" aria-hidden="true"></span>
     {#if tag}<span class="tag">{tag}</span>{/if}
@@ -30,6 +31,7 @@
     color: var(--ink-3);
   }
   .set-section-eyebrow .num { color: var(--ink-4); letter-spacing: 0; }
+  .set-section-eyebrow .sep { color: var(--ink-4); }
   .set-section-eyebrow .rule { flex: 1; height: 1px; background: var(--rule); }
   .set-section-eyebrow .tag {
     font-size: 9.5px; color: var(--accent); letter-spacing: 0.08em;

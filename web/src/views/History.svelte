@@ -65,7 +65,7 @@
   });
 </script>
 
-<main class="ts-main" aria-label="History">
+<section class="ts-main" aria-label="History">
   {#if loading}
     <p class="status" role="status">Loading…</p>
   {:else if error}
@@ -108,7 +108,7 @@
       </div>
     {/if}
   {/if}
-</main>
+</section>
 
 <style>
   .ts-main { flex: 1; padding-top: 4px; }

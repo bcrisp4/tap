@@ -12,7 +12,7 @@ describe('Login (rewritten)', () => {
   it('renders password mode by default', () => {
     const { getByText, getByLabelText } = render(Login);
     expect(getByText('Sign in')).toBeTruthy();
-    expect(getByLabelText(/email/i)).toBeTruthy();
+    expect(getByLabelText(/username/i)).toBeTruthy();
     expect(getByLabelText(/password/i)).toBeTruthy();
   });
 
@@ -30,7 +30,7 @@ describe('Login (rewritten)', () => {
       totp_required: true, pending_token: 'pt',
     } as unknown as ReturnType<typeof auth.login> extends Promise<infer R> ? R : never);
     const { getByText, getByLabelText, findByText } = render(Login);
-    await fireEvent.input(getByLabelText(/email/i), { target: { value: 'ada@x' } });
+    await fireEvent.input(getByLabelText(/username/i), { target: { value: 'ada@x' } });
     await fireEvent.input(getByLabelText(/password/i), { target: { value: 'pw' } });
     await fireEvent.click(getByText(/continue/i));
     expect(await findByText(/verification code/i)).toBeTruthy();
@@ -39,7 +39,7 @@ describe('Login (rewritten)', () => {
   it('error chip appears when auth.login throws', async () => {
     vi.spyOn(auth, 'login').mockRejectedValueOnce(new Error('Invalid'));
     const { getByText, getByLabelText, findByRole } = render(Login);
-    await fireEvent.input(getByLabelText(/email/i), { target: { value: 'ada@x' } });
+    await fireEvent.input(getByLabelText(/username/i), { target: { value: 'ada@x' } });
     await fireEvent.input(getByLabelText(/password/i), { target: { value: 'pw' } });
     await fireEvent.click(getByText(/continue/i));
     expect(await findByRole('alert')).toBeTruthy();
@@ -50,7 +50,7 @@ describe('Login (rewritten)', () => {
       totp_required: true, pending_token: 'pt',
     } as unknown as ReturnType<typeof auth.login> extends Promise<infer R> ? R : never);
     const { getByText, getByLabelText } = render(Login);
-    await fireEvent.input(getByLabelText(/email/i), { target: { value: 'ada@x' } });
+    await fireEvent.input(getByLabelText(/username/i), { target: { value: 'ada@x' } });
     await fireEvent.input(getByLabelText(/password/i), { target: { value: 'pw' } });
     await fireEvent.click(getByText(/continue/i));
     await fireEvent.click(getByText(/use a recovery code/i));

@@ -4,8 +4,7 @@
   import ReadingSection from './settings/ReadingSection.svelte';
   import SyncingSection from './settings/SyncingSection.svelte';
   import AccountSection from './settings/AccountSection.svelte';
-  import SecurityTOTPSection from './settings/SecurityTOTPSection.svelte';
-  import SecurityPasskeysSection from './settings/SecurityPasskeysSection.svelte';
+  import SecuritySection from './settings/SecuritySection.svelte';
   import SessionsSection from './settings/SessionsSection.svelte';
   import DataSection from './settings/DataSection.svelte';
 
@@ -34,8 +33,7 @@
   <ReadingSection />
   <SyncingSection />
   <AccountSection />
-  <SecurityTOTPSection />
-  <SecurityPasskeysSection />
+  <SecuritySection />
   <SessionsSection />
   <DataSection />
 </div>

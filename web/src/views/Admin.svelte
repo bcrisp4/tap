@@ -150,11 +150,11 @@
 </script>
 
 {#if !isAdmin}
-  <main class="ts-shell">
+  <div class="ts-shell">
     <EmptyState title="Access denied" subtitle="You don't have permission to view this page." />
-  </main>
+  </div>
 {:else}
-  <main class="ts-shell ts-shell-admin">
+  <div class="ts-shell ts-shell-admin">
     <header class="head">
       <div class="eyebrow">Admin</div>
       <h1 class="title">Instance &amp; users</h1>
@@ -197,7 +197,7 @@
       </div>
       <ErrorsTable events={status?.recent_errors ?? []} />
     </section>
-  </main>
+  </div>
 {/if}
 
 {#if overlay === 'create'}

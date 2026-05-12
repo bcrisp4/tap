@@ -22,6 +22,9 @@
     description, trailing, autocomplete, autofocus = false, required = false,
     disabled = false, inputmode, pattern, maxlength, name, onInput,
   }: Props = $props();
+
+  let inputEl = $state<HTMLInputElement | null>(null);
+  $effect(() => { if (autofocus && inputEl) inputEl.focus(); });
 </script>
 
 <label class="field" class:is-mono={mono}>
@@ -33,7 +36,6 @@
     {type}
     {placeholder}
     {autocomplete}
-    {autofocus}
     {required}
     {disabled}
     {inputmode}
@@ -41,6 +43,7 @@
     {maxlength}
     {name}
     class="input"
+    bind:this={inputEl}
     bind:value
     oninput={(e) => onInput?.((e.currentTarget as HTMLInputElement).value)}
   />

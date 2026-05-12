@@ -7,6 +7,7 @@
   import { warmCache } from './lib/warmCache';
   import { theme, font, density, measure } from './lib/preferences.svelte';
   import { buildHandler } from './lib/keyboard';
+  import { subscriptions, entries } from './lib/store';
   import { searchOverlay } from './lib/searchOverlay.svelte';
   import { useRegisterSW } from 'virtual:pwa-register/svelte';
 
@@ -50,6 +51,32 @@
     onMeasureComfortable: () => { if ($route.name === 'reader') measure.value = 'comfortable'; },
     onMeasureWide: () => { if ($route.name === 'reader') measure.value = 'wide'; },
     onBack: () => { if ($route.name === 'reader') navigate('/'); },
+    onNavigate: (path: string) => { navigate(path); },
+    onRefreshAll: () => {
+      const ids = get(subscriptions).map((s) => s.id);
+      if (ids.length > 0) void subscriptions.refreshMany(ids);
+    },
+    onMarkScopeRead: () => {
+      const routeName = $route.name;
+      let ids: number[] = [];
+      if (routeName === 'unread' || routeName === 'history') {
+        ids = get(entries).items.filter((e) => !e.read).map((e) => e.id);
+      } else if (routeName === 'saved') {
+        ids = get(entries).items.filter((e) => e.saved).map((e) => e.id);
+      }
+      if (ids.length === 0) return;
+      const POOL = 4;
+      void (async () => {
+        for (let i = 0; i < ids.length; i += POOL) {
+          await Promise.allSettled(ids.slice(i, i + POOL).map((id) => entries.toggleRead(id, true)));
+        }
+      })();
+    },
+    onCycleTheme: () => {
+      const order = ['light', 'sepia', 'dark'] as const;
+      const idx = order.indexOf(theme.resolved);
+      theme.stored = order[(idx + 1) % order.length];
+    },
   });
 
   onMount(() => {
@@ -119,14 +146,13 @@
   </div>
 {/if}
 
-<HotkeysModal open={hotkeysOpen} onClose={() => hotkeysOpen = false} />
-<SearchOverlay />
-
 {#if !$auth.bootstrapped}
   <!-- empty during bootstrap window -->
 {:else if $route.name === 'signin' || $auth.user == null}
   <Login />
 {:else}
+  <HotkeysModal open={hotkeysOpen} onClose={() => hotkeysOpen = false} />
+  <SearchOverlay />
   <AppShell>
     {#if $route.name === 'reader'}
       <Reader id={$route.params.id} />

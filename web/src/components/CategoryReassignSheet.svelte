@@ -11,6 +11,9 @@
   };
   const { open, feedName, currentCategoryId, categories, onSelect, onClose }: Props = $props();
 
+  let backdropEl = $state<HTMLDivElement | null>(null);
+  $effect(() => { if (open && backdropEl) backdropEl.focus(); });
+
   function pick(id: number | null) {
     onSelect(id);
     onClose();
@@ -19,13 +22,16 @@
 
 {#if open}
   <div
+    bind:this={backdropEl}
     class="m-cat-sheet"
     role="dialog"
     aria-modal="true"
     aria-label="Move feed"
-    onclick={onClose}
+    tabindex="-1"
+    onclick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    onkeydown={(e) => { if (e.key === 'Escape') onClose(); }}
   >
-    <div class="m-cat-sheet-card" onclick={(e) => e.stopPropagation()}>
+    <div class="m-cat-sheet-card">
       <div class="m-cat-sheet-handle" aria-hidden="true"></div>
       <div class="m-cat-sheet-head">
         <div class="m-cat-sheet-eyebrow">Move feed</div>

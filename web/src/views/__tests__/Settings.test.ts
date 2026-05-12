@@ -43,14 +43,16 @@ vi.mock('../../lib/router', () => ({ navigate: vi.fn() }));
 const { default: Settings } = await import('../Settings.svelte');
 
 describe('Settings page', () => {
-  it('renders the seven numbered eyebrows', () => {
-    const { getByText } = render(Settings);
+  it('renders the numbered eyebrows', () => {
+    const { getByText, getAllByText } = render(Settings);
     expect(getByText('Appearance')).toBeInTheDocument();
     expect(getByText('Reading')).toBeInTheDocument();
     expect(getByText('Syncing')).toBeInTheDocument();
     expect(getByText('Account')).toBeInTheDocument();
-    // Security · Two-factor and Security · Passkeys both contain "Security"
-    expect(getByText(/Security.*Two-factor/i)).toBeInTheDocument();
+    // Merged 05 Security section with TOTP + Passkeys sub-headings
+    expect(getByText('Security')).toBeInTheDocument();
+    expect(getByText(/Two-factor authentication/i)).toBeInTheDocument();
+    expect(getAllByText(/Passkeys/i).length).toBeGreaterThan(0);
     expect(getByText('Sessions')).toBeInTheDocument();
     expect(getByText('Data')).toBeInTheDocument();
   });
