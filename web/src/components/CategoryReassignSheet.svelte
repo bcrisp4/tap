@@ -11,6 +11,9 @@
   };
   const { open, feedName, currentCategoryId, categories, onSelect, onClose }: Props = $props();
 
+  let backdropEl = $state<HTMLDivElement | null>(null);
+  $effect(() => { if (open && backdropEl) backdropEl.focus(); });
+
   function pick(id: number | null) {
     onSelect(id);
     onClose();
@@ -19,6 +22,7 @@
 
 {#if open}
   <div
+    bind:this={backdropEl}
     class="m-cat-sheet"
     role="dialog"
     aria-modal="true"

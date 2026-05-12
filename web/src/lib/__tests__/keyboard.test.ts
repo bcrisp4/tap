@@ -159,6 +159,12 @@ describe('G-chord navigation', () => {
     };
     expect(() => { const h = buildHandler(ctx); h(fire('g')); h(fire('u')); }).not.toThrow();
   });
+  it('unrecognized key after g falls through to normal handler', () => {
+    const ctx = makeCtx(); const h = buildHandler(ctx);
+    h(fire('g')); h(fire('m')); // m = toggleRead, should still fire
+    expect(ctx.onToggleRead).toHaveBeenCalledOnce();
+    expect(ctx.onNavigate).not.toHaveBeenCalled();
+  });
 });
 
 describe('Shift shortcuts', () => {

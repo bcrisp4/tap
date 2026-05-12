@@ -122,7 +122,12 @@ function subscriptionsStore() {
     // Bulk helpers: call each API once, then invalidate + reload once at the end.
     // This avoids N store reloads and N SW notifications for N-item bulk ops.
     async refreshMany(ids: number[]): Promise<PromiseSettledResult<unknown>[]> {
-      const results = await Promise.allSettled(ids.map((id) => api.refreshSubscription(id)));
+      const POOL = 4;
+      const results: PromiseSettledResult<unknown>[] = [];
+      for (let i = 0; i < ids.length; i += POOL) {
+        const batch = ids.slice(i, i + POOL).map((id) => api.refreshSubscription(id));
+        results.push(...await Promise.allSettled(batch));
+      }
       notifySW({ type: 'invalidate', paths: ['/api/v1/subscriptions', '/api/v1/entries'] });
       await this.load();
       return results;

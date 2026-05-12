@@ -39,15 +39,17 @@ export function buildHandler(ctx: KeyboardContext) {
 
     if (chordPending) {
       clearChord();
+      let chordHandled = true;
       switch (e.key) {
         case 'u': ctx.onNavigate?.('/'); break;
         case 's': ctx.onNavigate?.('/saved'); break;
         case 'f': ctx.onNavigate?.('/feeds'); break;
         case 'c': ctx.onNavigate?.('/categories'); break;
         case ',': ctx.onNavigate?.('/settings'); break;
+        default: chordHandled = false;
       }
-      e.preventDefault();
-      return;
+      if (chordHandled) { e.preventDefault(); return; }
+      // Unrecognized key after g — fall through to normal handler below.
     }
 
     if (e.shiftKey) {

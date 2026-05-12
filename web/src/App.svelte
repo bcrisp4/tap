@@ -58,13 +58,19 @@
     },
     onMarkScopeRead: () => {
       const routeName = $route.name;
+      let ids: number[] = [];
       if (routeName === 'unread' || routeName === 'history') {
-        const unreadIds = get(entries).items.filter((e) => !e.read).map((e) => e.id);
-        void Promise.allSettled(unreadIds.map((id) => entries.toggleRead(id, true)));
+        ids = get(entries).items.filter((e) => !e.read).map((e) => e.id);
       } else if (routeName === 'saved') {
-        const savedIds = get(entries).items.filter((e) => e.saved).map((e) => e.id);
-        void Promise.allSettled(savedIds.map((id) => entries.toggleRead(id, true)));
+        ids = get(entries).items.filter((e) => e.saved).map((e) => e.id);
       }
+      if (ids.length === 0) return;
+      const POOL = 4;
+      void (async () => {
+        for (let i = 0; i < ids.length; i += POOL) {
+          await Promise.allSettled(ids.slice(i, i + POOL).map((id) => entries.toggleRead(id, true)));
+        }
+      })();
     },
     onCycleTheme: () => {
       const order = ['light', 'sepia', 'dark'] as const;
